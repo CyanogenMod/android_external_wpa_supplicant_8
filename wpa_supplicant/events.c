@@ -592,9 +592,10 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 			continue;
 		}
 
-		if (bss->caps & IEEE80211_CAP_IBSS) {
+		if ((bss->caps & IEEE80211_CAP_IBSS) &&
+				ssid->mode != IEEE80211_MODE_IBSS) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - IBSS (adhoc) "
-				"network");
+				"mismatch");
 			continue;
 		}
 
