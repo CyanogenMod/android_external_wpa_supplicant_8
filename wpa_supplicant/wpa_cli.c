@@ -1220,6 +1220,58 @@ static int wpa_cli_cmd_bssid(struct wpa_ctrl *ctrl, int argc, char *argv[])
 }
 
 
+static int wpa_cli_cmd_blacklist(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256], *pos, *end;
+	int i, ret;
+
+	end = cmd + sizeof(cmd);
+	pos = cmd;
+	ret = os_snprintf(pos, end - pos, "BLACKLIST");
+	if (ret < 0 || ret >= end - pos) {
+		printf("Too long BLACKLIST command.\n");
+		return -1;
+	}
+	pos += ret;
+	for (i = 0; i < argc; i++) {
+		ret = os_snprintf(pos, end - pos, " %s", argv[i]);
+		if (ret < 0 || ret >= end - pos) {
+			printf("Too long BLACKLIST command.\n");
+			return -1;
+		}
+		pos += ret;
+	}
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_log_level(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256], *pos, *end;
+	int i, ret;
+
+	end = cmd + sizeof(cmd);
+	pos = cmd;
+	ret = os_snprintf(pos, end - pos, "LOG_LEVEL");
+	if (ret < 0 || ret >= end - pos) {
+		printf("Too long LOG_LEVEL command.\n");
+		return -1;
+	}
+	pos += ret;
+	for (i = 0; i < argc; i++) {
+		ret = os_snprintf(pos, end - pos, " %s", argv[i]);
+		if (ret < 0 || ret >= end - pos) {
+			printf("Too long LOG_LEVEL command.\n");
+			return -1;
+		}
+		pos += ret;
+	}
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
 static int wpa_cli_cmd_list_networks(struct wpa_ctrl *ctrl, int argc,
 				     char *argv[])
 {
@@ -2388,6 +2440,15 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "bssid", wpa_cli_cmd_bssid,
 	  cli_cmd_flag_none,
 	  "<network id> <BSSID> = set preferred BSSID for an SSID" },
+	{ "blacklist", wpa_cli_cmd_blacklist,
+	  cli_cmd_flag_none,
+	  "<BSSID> = add a BSSID to the blacklist\n"
+	  "blacklist clear = clear the blacklist\n"
+	  "blacklist = display the blacklist" },
+	{ "log_level", wpa_cli_cmd_log_level,
+	  cli_cmd_flag_none,
+	  "<level> [<timestamp>] = update the log level/timestamp of wpa_supplicant\n"
+	  "log_level = display the current log level and log options" },
 	{ "list_networks", wpa_cli_cmd_list_networks,
 	  cli_cmd_flag_none,
 	  "= list configured networks" },
