@@ -911,6 +911,48 @@ static int wpa_supplicant_ctrl_iface_bssid(struct wpa_supplicant *wpa_s,
 }
 
 
+extern int wpa_debug_level;
+extern int wpa_debug_timestamp;
+
+static int wpa_supplicant_ctrl_iface_log_level(struct wpa_supplicant *wpa_s,
+					char *cmd, char *buf, size_t buflen)
+{
+	char *pos, *end, *stamp;
+	int ret;
+
+	if (cmd == NULL)
+		return -1;
+	/* cmd: "LOG_LEVEL [<level>]" */
+	if (*cmd == '\0') {
+		pos = buf;
+		end = buf + buflen;
+		ret = os_snprintf(pos, end-pos, "Current level: %d\n"
+			"{0-EXCESSIVE, 1-MSGDUMP, 2-DEBUG, 3-INFO, 4-WARNING, 5-ERROR}\n"
+			"Timestamp: %d\n", wpa_debug_level, wpa_debug_timestamp);
+		if ((ret < 0) || (ret >= end - pos))
+			ret = 0;
+		return ret;
+	}
+
+	cmd++;
+	stamp = os_strchr(cmd, ' ');
+	if (stamp) {
+		*stamp++ = '\0';
+		while (*stamp == ' ')
+			stamp++;
+	}
+
+	if (cmd && os_strlen(cmd))
+		wpa_debug_level = atoi(cmd);
+
+	if (stamp && os_strlen(stamp))
+		wpa_debug_timestamp = atoi(stamp);
+
+	os_memcpy(buf, "OK\n", 3);
+	return 3;
+}
+
+
 static int wpa_supplicant_ctrl_iface_blacklist(struct wpa_supplicant *wpa_s,
 					char *cmd, char *buf, size_t buflen)
 {
@@ -3221,6 +3263,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "BSSID ", 6) == 0) {
 		if (wpa_supplicant_ctrl_iface_bssid(wpa_s, buf + 6))
 			reply_len = -1;
+	} else if (os_strncmp(buf, "LOG_LEVEL", 9) == 0) {
+		reply_len = wpa_supplicant_ctrl_iface_log_level(wpa_s, buf + 9,
+							reply, reply_size);
 	} else if (os_strncmp(buf, "BLACKLIST", 9) == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_blacklist(wpa_s, buf + 9,
 							reply, reply_size);
