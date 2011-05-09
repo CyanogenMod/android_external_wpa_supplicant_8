@@ -2241,6 +2241,17 @@ struct wpa_driver_ops {
 	 * @signal_info: Connection info structure
          */
 	int (*signal_poll)(void *priv, struct wpa_signal_info *signal_info);
+
+	/**
+	 * driver_cmd - execute driver-specific command
+	 * @priv: private driver interface data
+	 * @cmd: command to execute
+	 * @buf: return buffer
+	 * @buf_len: buffer length
+	 *
+	 * Returns: 0 on success, -1 on failure
+	 */
+	 int (*driver_cmd)(void *priv, char *cmd, char *buf, size_t buf_len);
 };
 
 
