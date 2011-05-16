@@ -757,28 +757,25 @@ wpa_supplicant_pick_new_network(struct wpa_supplicant *wpa_s)
 /* TODO: move the rsn_preauth_scan_result*() to be called from notify.c based
  * on BSS added and BSS changed events */
 static void wpa_supplicant_rsn_preauth_scan_results(
-	struct wpa_supplicant *wpa_s, struct wpa_scan_results *scan_res)
+	struct wpa_supplicant *wpa_s)
 {
-	int i;
+	struct wpa_bss *bss;
 
 	if (rsn_preauth_scan_results(wpa_s->wpa) < 0)
 		return;
 
-	for (i = scan_res->num - 1; i >= 0; i--) {
+	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
 		const u8 *ssid, *rsn;
-		struct wpa_scan_res *r;
 
-		r = scan_res->res[i];
-
-		ssid = wpa_scan_get_ie(r, WLAN_EID_SSID);
+		ssid = wpa_bss_get_ie(bss, WLAN_EID_SSID);
 		if (ssid == NULL)
 			continue;
 
-		rsn = wpa_scan_get_ie(r, WLAN_EID_RSN);
+		rsn = wpa_bss_get_ie(bss, WLAN_EID_RSN);
 		if (rsn == NULL)
 			continue;
 
-		rsn_preauth_scan_result(wpa_s->wpa, r->bssid, ssid, rsn);
+		rsn_preauth_scan_result(wpa_s->wpa, bss->bssid, ssid, rsn);
 	}
 
 }
@@ -946,8 +943,6 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
-	wpa_supplicant_rsn_preauth_scan_results(wpa_s, scan_res);
-
 	selected = wpa_supplicant_pick_network(wpa_s, scan_res, &ssid);
 
 	if (selected) {
@@ -958,6 +953,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (skip)
 			return 0;
 		wpa_supplicant_connect(wpa_s, selected, ssid);
+		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 	} else {
 		wpa_scan_results_free(scan_res);
 		wpa_dbg(wpa_s, MSG_DEBUG, "No suitable network found");
@@ -965,6 +961,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (ssid) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "Setup a new network");
 			wpa_supplicant_associate(wpa_s, NULL, ssid);
+			wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 		} else {
 			int timeout_sec = wpa_s->scan_interval;
 			int timeout_usec = 0;
@@ -1185,6 +1182,14 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		wpa_sm_set_ap_rsn_ie(wpa_s->wpa, NULL, 0);
 	if (wpa_found || rsn_found)
 		wpa_s->ap_ies_from_associnfo = 1;
+
+	if (wpa_s->assoc_freq && data->assoc_info.freq &&
+	    wpa_s->assoc_freq != data->assoc_info.freq) {
+		wpa_printf(MSG_DEBUG, "Operating frequency changed from "
+			   "%u to %u MHz",
+			   wpa_s->assoc_freq, data->assoc_info.freq);
+		wpa_supplicant_update_scan_results(wpa_s);
+	}
 
 	wpa_s->assoc_freq = data->assoc_info.freq;
 
