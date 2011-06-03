@@ -47,3 +47,5 @@
 # ************************************************
 # NEWER CLEAN STEPS MUST BE AT THE END OF THE LIST
 # ************************************************
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_supplicant_intermediates/*)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_cli_intermediates/*)
