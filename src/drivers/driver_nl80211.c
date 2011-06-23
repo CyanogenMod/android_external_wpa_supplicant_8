@@ -3958,7 +3958,7 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct nl_msg *msg;
+	struct nl_msg *msg, *wme = NULL;
 	struct nl80211_sta_flag_update upd;
 	int ret = -ENOBUFS;
 
@@ -3987,13 +3987,27 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	upd.set = upd.mask;
 	NLA_PUT(msg, NL80211_ATTR_STA_FLAGS2, sizeof(upd), &upd);
 
+	wme = nlmsg_alloc();
+	if (!wme)
+		goto nla_put_failure;
+
+	NLA_PUT_U8(wme, NL80211_STA_WME_UAPSD_QUEUES, params->uapsd_queues);
+	NLA_PUT_U8(wme, NL80211_STA_WME_MAX_SP, params->max_sp);
+	nla_put_nested(msg, NL80211_ATTR_STA_WME, wme);
+
+	nlmsg_free(wme);
+
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	if (ret)
 		wpa_printf(MSG_DEBUG, "nl80211: NL80211_CMD_NEW_STATION "
 			   "result: %d (%s)", ret, strerror(-ret));
 	if (ret == -EEXIST)
 		ret = 0;
+
+	return ret;
  nla_put_failure:
+	if (wme)
+		nlmsg_free(wme);
 	return ret;
 }
 
