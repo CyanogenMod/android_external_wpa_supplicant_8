@@ -24,6 +24,7 @@
 #include "common/wpa_ctrl.h"
 #include "eap_common/eap_wsc_common.h"
 #include "eap_peer/eap.h"
+#include "eapol_supp/eapol_supp_sm.h"
 #include "rsn_supp/wpa.h"
 #include "config.h"
 #include "wpa_supplicant_i.h"
@@ -470,6 +471,9 @@ static void wpa_supplicant_wps_event_fail(struct wpa_supplicant *wpa_s,
 	}
 	wpas_clear_wps(wpa_s);
 	wpas_notify_wps_event_fail(wpa_s, fail);
+#ifdef CONFIG_P2P
+	wpas_p2p_wps_failed(wpa_s, fail);
+#endif /* CONFIG_P2P */
 }
 
 
@@ -670,7 +674,9 @@ enum wps_request_type wpas_wps_get_req_type(struct wpa_ssid *ssid)
 static void wpas_clear_wps(struct wpa_supplicant *wpa_s)
 {
 	int id;
-	struct wpa_ssid *ssid, *remove_ssid = NULL;
+	struct wpa_ssid *ssid, *remove_ssid = NULL, *prev_current;
+
+	prev_current = wpa_s->current_ssid;
 
 	eloop_cancel_timeout(wpas_wps_timeout, wpa_s, NULL);
 
@@ -689,6 +695,11 @@ static void wpas_clear_wps(struct wpa_supplicant *wpa_s)
 			id = -1;
 		ssid = ssid->next;
 		if (id >= 0) {
+			if (prev_current == remove_ssid) {
+				wpa_sm_set_config(wpa_s->wpa, NULL);
+				eapol_sm_notify_config(wpa_s->eapol, NULL,
+						       NULL);
+			}
 			wpas_notify_network_removed(wpa_s, remove_ssid);
 			wpa_config_remove_network(wpa_s->conf, id);
 		}
@@ -780,9 +791,18 @@ static void wpas_wps_reassoc(struct wpa_supplicant *wpa_s,
 	ssid = wpa_s->conf->ssid;
 	while (ssid) {
 		int was_disabled = ssid->disabled;
-		ssid->disabled = ssid != selected;
-		if (was_disabled != ssid->disabled)
-			wpas_notify_network_enabled_changed(wpa_s, ssid);
+		/*
+		 * In case the network object corresponds to a persistent group
+		 * then do not send out network disabled signal. In addition,
+		 * do not change disabled status of persistent network objects
+		 * from 2 to 1 should we connect to another network.
+		 */
+		if (was_disabled != 2) {
+			ssid->disabled = ssid != selected;
+			if (was_disabled != ssid->disabled)
+				wpas_notify_network_enabled_changed(wpa_s,
+								    ssid);
+		}
 		ssid = ssid->next;
 	}
 	wpa_s->disconnected = 0;

@@ -17,6 +17,7 @@
 
 #include "utils/list.h"
 #include "common/defs.h"
+#include "config_ssid.h"
 
 extern const char *wpa_supplicant_version;
 extern const char *wpa_supplicant_license;
@@ -181,6 +182,14 @@ struct wpa_params {
 	 * created.
 	 */
 	char *override_ctrl_interface;
+
+	/**
+	 * entropy_file - Optional entropy file
+	 *
+	 * This parameter can be used to configure wpa_supplicant to maintain
+	 * its internal entropy store over restarts.
+	 */
+	char *entropy_file;
 };
 
 struct p2p_srv_bonjour {
@@ -334,6 +343,7 @@ struct wpa_supplicant {
 #endif /* CONFIG_CTRL_IFACE_DBUS */
 #ifdef CONFIG_CTRL_IFACE_DBUS_NEW
 	char *dbus_new_path;
+	char *dbus_groupobj_path;
 #endif /* CONFIG_CTRL_IFACE_DBUS_NEW */
 	char bridge_ifname[16];
 
@@ -540,7 +550,7 @@ struct wpa_supplicant {
 	const struct bgscan_ops *bgscan;
 	void *bgscan_priv;
 
-	int connect_without_scan;
+	struct wpa_ssid *connect_without_scan;
 
 	int after_wps;
 	unsigned int wps_freq;
@@ -632,5 +642,15 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 
 /* eap_register.c */
 int eap_register_methods(void);
+
+/**
+ * Utility method to tell if a given network is a persistent group
+ * @ssid: Network object
+ * Returns: 1 if network is a persistent group, 0 otherwise
+ */
+static inline int network_is_persistent_group(struct wpa_ssid *ssid)
+{
+	return ((ssid->disabled == 2) || ssid->p2p_persistent_group);
+}
 
 #endif /* WPA_SUPPLICANT_I_H */

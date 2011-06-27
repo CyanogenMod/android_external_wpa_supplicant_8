@@ -43,70 +43,6 @@ static const char *debug_strings[] = {
 
 
 /**
- * wpas_dbus_new_decompose_object_path - Decompose an interface object path into parts
- * @path: The dbus object path
- * @network: (out) the configured network this object path refers to, if any
- * @bssid: (out) the scanned bssid this object path refers to, if any
- * Returns: The object path of the network interface this path refers to
- *
- * For a given object path, decomposes the object path into object id, network,
- * and BSSID parts, if those parts exist.
- */
-static char * wpas_dbus_new_decompose_object_path(const char *path,
-						  char **network,
-						  char **bssid)
-{
-	const unsigned int dev_path_prefix_len =
-		strlen(WPAS_DBUS_NEW_PATH_INTERFACES "/");
-	char *obj_path_only;
-	char *next_sep;
-
-	/* Be a bit paranoid about path */
-	if (!path || os_strncmp(path, WPAS_DBUS_NEW_PATH_INTERFACES "/",
-				dev_path_prefix_len))
-		return NULL;
-
-	/* Ensure there's something at the end of the path */
-	if ((path + dev_path_prefix_len)[0] == '\0')
-		return NULL;
-
-	obj_path_only = os_strdup(path);
-	if (obj_path_only == NULL)
-		return NULL;
-
-	next_sep = os_strchr(obj_path_only + dev_path_prefix_len, '/');
-	if (next_sep != NULL) {
-		const char *net_part = os_strstr(
-			next_sep, WPAS_DBUS_NEW_NETWORKS_PART "/");
-		const char *bssid_part = os_strstr(
-			next_sep, WPAS_DBUS_NEW_BSSIDS_PART "/");
-
-		if (network && net_part) {
-			/* Deal with a request for a configured network */
-			const char *net_name = net_part +
-				os_strlen(WPAS_DBUS_NEW_NETWORKS_PART "/");
-			*network = NULL;
-			if (os_strlen(net_name))
-				*network = os_strdup(net_name);
-		} else if (bssid && bssid_part) {
-			/* Deal with a request for a scanned BSSID */
-			const char *bssid_name = bssid_part +
-				os_strlen(WPAS_DBUS_NEW_BSSIDS_PART "/");
-			if (strlen(bssid_name))
-				*bssid = os_strdup(bssid_name);
-			else
-				*bssid = NULL;
-		}
-
-		/* Cut off interface object path before "/" */
-		*next_sep = '\0';
-	}
-
-	return obj_path_only;
-}
-
-
-/**
  * wpas_dbus_error_unknown_error - Return a new InvalidArgs error message
  * @message: Pointer to incoming dbus message this error refers to
  * @arg: Optional string appended to error message
@@ -236,10 +172,10 @@ static struct wpa_supplicant * get_iface_by_dbus_path(
  *
  * Sets network configuration with parameters given id DBus dictionary
  */
-static DBusMessage * set_network_properties(DBusMessage *message,
-					    struct wpa_supplicant *wpa_s,
-					    struct wpa_ssid *ssid,
-					    DBusMessageIter *iter)
+DBusMessage * set_network_properties(DBusMessage *message,
+				     struct wpa_supplicant *wpa_s,
+				     struct wpa_ssid *ssid,
+				     DBusMessageIter *iter)
 {
 
 	struct wpa_dbus_dict_entry entry = { .type = DBUS_TYPE_STRING };
@@ -1429,7 +1365,7 @@ DBusMessage * wpas_dbus_handler_remove_network(DBusMessage *message,
 
 	/* Extract the network ID and ensure the network */
 	/* is actually a child of this interface */
-	iface = wpas_dbus_new_decompose_object_path(op, &net_id, NULL);
+	iface = wpas_dbus_new_decompose_object_path(op, 0, &net_id, NULL);
 	if (iface == NULL || os_strcmp(iface, wpa_s->dbus_new_path) != 0) {
 		reply = wpas_dbus_error_invalid_args(message, op);
 		goto out;
@@ -1528,7 +1464,7 @@ DBusMessage * wpas_dbus_handler_select_network(DBusMessage *message,
 
 	/* Extract the network ID and ensure the network */
 	/* is actually a child of this interface */
-	iface = wpas_dbus_new_decompose_object_path(op, &net_id, NULL);
+	iface = wpas_dbus_new_decompose_object_path(op, 0, &net_id, NULL);
 	if (iface == NULL || os_strcmp(iface, wpa_s->dbus_new_path) != 0) {
 		reply = wpas_dbus_error_invalid_args(message, op);
 		goto out;
@@ -1763,8 +1699,6 @@ DBusMessage * wpas_dbus_getter_capabilities(DBusMessage *message,
 	DBusMessageIter iter_dict_entry, iter_dict_val, iter_array,
 		variant_iter;
 	const char *scans[] = { "active", "passive", "ssid" };
-	const char *modes[] = { "infrastructure", "ad-hoc", "ap" };
-	int n = sizeof(modes) / sizeof(char *);
 
 	if (message == NULL)
 		reply = dbus_message_new(DBUS_MESSAGE_TYPE_SIGNAL);
@@ -2035,10 +1969,40 @@ DBusMessage * wpas_dbus_getter_capabilities(DBusMessage *message,
 		goto nomem;
 
 	/***** Modes */
-	if (res < 0 || !(capa.flags & WPA_DRIVER_FLAGS_AP))
-		n--; /* exclude ap mode if it is not supported by the driver */
-	if (!wpa_dbus_dict_append_string_array(&iter_dict, "Modes", modes, n))
+	if (!wpa_dbus_dict_begin_string_array(&iter_dict, "Modes",
+					      &iter_dict_entry,
+					      &iter_dict_val,
+					      &iter_array))
 		goto nomem;
+
+	if (!wpa_dbus_dict_string_array_add_element(
+			    &iter_array, "infrastructure"))
+		goto nomem;
+
+	if (!wpa_dbus_dict_string_array_add_element(
+			    &iter_array, "ad-hoc"))
+		goto nomem;
+
+	if (res >= 0) {
+		if (capa.flags & (WPA_DRIVER_FLAGS_AP)) {
+			if (!wpa_dbus_dict_string_array_add_element(
+				    &iter_array, "ap"))
+				goto nomem;
+		}
+
+		if (capa.flags & (WPA_DRIVER_FLAGS_P2P_CAPABLE)) {
+			if (!wpa_dbus_dict_string_array_add_element(
+				    &iter_array, "p2p"))
+				goto nomem;
+		}
+	}
+
+	if (!wpa_dbus_dict_end_string_array(&iter_dict,
+					    &iter_dict_entry,
+					    &iter_dict_val,
+					    &iter_array))
+		goto nomem;
+	/***** Modes end */
 
 	if (!wpa_dbus_dict_close_write(&variant_iter, &iter_dict))
 		goto nomem;
@@ -2544,7 +2508,8 @@ DBusMessage * wpas_dbus_getter_networks(DBusMessage *message,
 	}
 
 	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next)
-		num++;
+		if (!network_is_persistent_group(ssid))
+			num++;
 
 	paths = os_zalloc(num * sizeof(char *));
 	if (!paths) {
@@ -2554,6 +2519,8 @@ DBusMessage * wpas_dbus_getter_networks(DBusMessage *message,
 
 	/* Loop through configured networks and append object path of each */
 	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+		if (network_is_persistent_group(ssid))
+			continue;
 		paths[i] = os_zalloc(WPAS_DBUS_OBJECT_PATH_MAX);
 		if (paths[i] == NULL) {
 			reply = dbus_message_new_error(message,

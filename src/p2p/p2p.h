@@ -180,6 +180,11 @@ struct p2p_peer_info {
 	char serial_number[33];
 
 	/**
+	 * level - Signal level
+	 */
+	int level;
+
+	/**
 	 * config_methods - WPS Configuration Methods
 	 */
 	u16 config_methods;
@@ -208,6 +213,12 @@ struct p2p_peer_info {
 	size_t wps_sec_dev_type_list_len;
 
 	struct wpabuf *wps_vendor_ext[P2P_MAX_WPS_VENDOR_EXT];
+};
+
+enum p2p_prov_disc_status {
+	P2P_PROV_DISC_SUCCESS,
+	P2P_PROV_DISC_TIMEOUT,
+	P2P_PROV_DISC_REJECTED,
 };
 
 /**
@@ -601,6 +612,21 @@ struct p2p_config {
 	 * provision discovery is not used.
 	 */
 	void (*prov_disc_resp)(void *ctx, const u8 *peer, u16 config_methods);
+
+	/**
+	 * prov_disc_fail - Callback on Provision Discovery failure
+	 * @ctx: Callback context from cb_ctx
+	 * @peer: Source address of the response
+	 * @status: Cause of failure, will not be %P2P_PROV_DISC_SUCCESS
+	 *
+	 * This callback is used to indicate either a failure or no response
+	 * to an earlier provision discovery request.
+	 *
+	 * This callback handler can be set to %NULL if provision discovery
+	 * is not used or failures do not need to be indicated.
+	 */
+	void (*prov_disc_fail)(void *ctx, const u8 *peer,
+			       enum p2p_prov_disc_status status);
 
 	/**
 	 * invitation_process - Optional callback for processing Invitations
@@ -1469,5 +1495,16 @@ void p2p_remove_wps_vendor_extensions(struct p2p_data *p2p);
  */
 int p2p_add_wps_vendor_extension(struct p2p_data *p2p,
 				 const struct wpabuf *vendor_ext);
+
+/**
+ * p2p_set_oper_channel - Set the P2P operating channel
+ * @p2p: P2P module context from p2p_init()
+ * @op_reg_class: Operating regulatory class to set
+ * @op_channel: operating channel to set
+ * @cfg_op_channel : Whether op_channel is hardcoded in configuration
+ * Returns: 0 on success, -1 on failure
+ */
+int p2p_set_oper_channel(struct p2p_data *p2p, u8 op_reg_class, u8 op_channel,
+			 int cfg_op_channel);
 
 #endif /* P2P_H */

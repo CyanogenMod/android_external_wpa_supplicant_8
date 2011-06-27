@@ -5043,70 +5043,17 @@ static int wpa_driver_nl80211_set_supp_port(void *priv, int authorized)
 }
 
 
-#ifdef HOSTAPD
-
-static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
+/* Set kernel driver on given frequency (MHz) */
+static int i802_set_freq(void *priv, struct hostapd_freq_params *freq)
 {
-	int i;
-	int *old;
-
-	wpa_printf(MSG_DEBUG, "nl80211: Add own interface ifindex %d",
-		   ifidx);
-	for (i = 0; i < drv->num_if_indices; i++) {
-		if (drv->if_indices[i] == 0) {
-			drv->if_indices[i] = ifidx;
-			return;
-		}
-	}
-
-	if (drv->if_indices != drv->default_if_indices)
-		old = drv->if_indices;
-	else
-		old = NULL;
-
-	drv->if_indices = os_realloc(old,
-				     sizeof(int) * (drv->num_if_indices + 1));
-	if (!drv->if_indices) {
-		if (!old)
-			drv->if_indices = drv->default_if_indices;
-		else
-			drv->if_indices = old;
-		wpa_printf(MSG_ERROR, "Failed to reallocate memory for "
-			   "interfaces");
-		wpa_printf(MSG_ERROR, "Ignoring EAPOL on interface %d", ifidx);
-		return;
-	} else if (!old)
-		os_memcpy(drv->if_indices, drv->default_if_indices,
-			  sizeof(drv->default_if_indices));
-	drv->if_indices[drv->num_if_indices] = ifidx;
-	drv->num_if_indices++;
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	return wpa_driver_nl80211_set_freq(drv, freq->freq, freq->ht_enabled,
+					   freq->sec_channel_offset);
 }
 
 
-static void del_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
-{
-	int i;
-
-	for (i = 0; i < drv->num_if_indices; i++) {
-		if (drv->if_indices[i] == ifidx) {
-			drv->if_indices[i] = 0;
-			break;
-		}
-	}
-}
-
-
-static int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
-{
-	int i;
-
-	for (i = 0; i < drv->num_if_indices; i++)
-		if (drv->if_indices[i] == ifidx)
-			return 1;
-
-	return 0;
-}
-
+#if defined(HOSTAPD) || defined(CONFIG_AP)
 
 static inline int min_int(int a, int b)
 {
@@ -5193,20 +5140,6 @@ static int i802_set_rate_sets(void *priv, int *supp_rates, int *basic_rates,
 	return -ENOBUFS;
 }
 
-#endif /* HOSTAPD */
-
-
-/* Set kernel driver on given frequency (MHz) */
-static int i802_set_freq(void *priv, struct hostapd_freq_params *freq)
-{
-	struct i802_bss *bss = priv;
-	struct wpa_driver_nl80211_data *drv = bss->drv;
-	return wpa_driver_nl80211_set_freq(drv, freq->freq, freq->ht_enabled,
-					   freq->sec_channel_offset);
-}
-
-
-#ifdef HOSTAPD
 
 static int i802_set_rts(void *priv, int rts)
 {
@@ -5511,37 +5444,6 @@ static int i802_set_sta_vlan(void *priv, const u8 *addr,
 }
 
 
-static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
-                            const char *bridge_ifname)
-{
-	struct i802_bss *bss = priv;
-	struct wpa_driver_nl80211_data *drv = bss->drv;
-	char name[IFNAMSIZ + 1];
-
-	os_snprintf(name, sizeof(name), "%s.sta%d", bss->ifname, aid);
-	wpa_printf(MSG_DEBUG, "nl80211: Set WDS STA addr=" MACSTR
-		   " aid=%d val=%d name=%s", MAC2STR(addr), aid, val, name);
-	if (val) {
-		if (!if_nametoindex(name)) {
-			if (nl80211_create_iface(drv, name,
-						 NL80211_IFTYPE_AP_VLAN,
-						 NULL, 1) < 0)
-				return -1;
-			if (bridge_ifname &&
-			    linux_br_add_if(drv->ioctl_sock, bridge_ifname,
-					    name) < 0)
-				return -1;
-		}
-		linux_set_iface_flags(drv->ioctl_sock, name, 1);
-		return i802_set_sta_vlan(priv, addr, name, 0);
-	} else {
-		i802_set_sta_vlan(priv, addr, bss->ifname, 0);
-		return wpa_driver_nl80211_if_remove(priv, WPA_IF_AP_VLAN,
-						    name);
-	}
-}
-
-
 static int i802_set_ht_params(void *priv, const u8 *ht_capab,
 			      size_t ht_capab_len, const u8 *ht_oper,
 			      size_t ht_oper_len)
@@ -5552,26 +5454,6 @@ static int i802_set_ht_params(void *priv, const u8 *ht_capab,
 		return i802_set_bss(priv, -1, -1, -1, ht_opmode);
 	} else
 		return -1;
-}
-
-
-static void handle_eapol(int sock, void *eloop_ctx, void *sock_ctx)
-{
-	struct wpa_driver_nl80211_data *drv = eloop_ctx;
-	struct sockaddr_ll lladdr;
-	unsigned char buf[3000];
-	int len;
-	socklen_t fromlen = sizeof(lladdr);
-
-	len = recvfrom(sock, buf, sizeof(buf), 0,
-		       (struct sockaddr *)&lladdr, &fromlen);
-	if (len < 0) {
-		perror("recv");
-		return;
-	}
-
-	if (have_ifidx(drv, lladdr.sll_ifindex))
-		drv_event_eapol_rx(drv->ctx, lladdr.sll_addr, buf, len);
 }
 
 
@@ -5596,9 +5478,6 @@ static int i802_sta_clear_stats(void *priv, const u8 *addr)
 	return 0;
 }
 
-#endif /* HOSTAPD */
-
-#if defined(HOSTAPD) || defined(CONFIG_AP)
 
 static int i802_sta_deauth(void *priv, const u8 *own_addr, const u8 *addr,
 			   int reason)
@@ -5640,6 +5519,120 @@ static int i802_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr,
 #endif /* HOSTAPD || CONFIG_AP */
 
 #ifdef HOSTAPD
+
+static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
+{
+	int i;
+	int *old;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Add own interface ifindex %d",
+		   ifidx);
+	for (i = 0; i < drv->num_if_indices; i++) {
+		if (drv->if_indices[i] == 0) {
+			drv->if_indices[i] = ifidx;
+			return;
+		}
+	}
+
+	if (drv->if_indices != drv->default_if_indices)
+		old = drv->if_indices;
+	else
+		old = NULL;
+
+	drv->if_indices = os_realloc(old,
+				     sizeof(int) * (drv->num_if_indices + 1));
+	if (!drv->if_indices) {
+		if (!old)
+			drv->if_indices = drv->default_if_indices;
+		else
+			drv->if_indices = old;
+		wpa_printf(MSG_ERROR, "Failed to reallocate memory for "
+			   "interfaces");
+		wpa_printf(MSG_ERROR, "Ignoring EAPOL on interface %d", ifidx);
+		return;
+	} else if (!old)
+		os_memcpy(drv->if_indices, drv->default_if_indices,
+			  sizeof(drv->default_if_indices));
+	drv->if_indices[drv->num_if_indices] = ifidx;
+	drv->num_if_indices++;
+}
+
+
+static void del_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
+{
+	int i;
+
+	for (i = 0; i < drv->num_if_indices; i++) {
+		if (drv->if_indices[i] == ifidx) {
+			drv->if_indices[i] = 0;
+			break;
+		}
+	}
+}
+
+
+static int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
+{
+	int i;
+
+	for (i = 0; i < drv->num_if_indices; i++)
+		if (drv->if_indices[i] == ifidx)
+			return 1;
+
+	return 0;
+}
+
+
+static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
+                            const char *bridge_ifname)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	char name[IFNAMSIZ + 1];
+
+	os_snprintf(name, sizeof(name), "%s.sta%d", bss->ifname, aid);
+	wpa_printf(MSG_DEBUG, "nl80211: Set WDS STA addr=" MACSTR
+		   " aid=%d val=%d name=%s", MAC2STR(addr), aid, val, name);
+	if (val) {
+		if (!if_nametoindex(name)) {
+			if (nl80211_create_iface(drv, name,
+						 NL80211_IFTYPE_AP_VLAN,
+						 NULL, 1) < 0)
+				return -1;
+			if (bridge_ifname &&
+			    linux_br_add_if(drv->ioctl_sock, bridge_ifname,
+					    name) < 0)
+				return -1;
+		}
+		linux_set_iface_flags(drv->ioctl_sock, name, 1);
+		return i802_set_sta_vlan(priv, addr, name, 0);
+	} else {
+		i802_set_sta_vlan(priv, addr, bss->ifname, 0);
+		return wpa_driver_nl80211_if_remove(priv, WPA_IF_AP_VLAN,
+						    name);
+	}
+}
+
+
+static void handle_eapol(int sock, void *eloop_ctx, void *sock_ctx)
+{
+	struct wpa_driver_nl80211_data *drv = eloop_ctx;
+	struct sockaddr_ll lladdr;
+	unsigned char buf[3000];
+	int len;
+	socklen_t fromlen = sizeof(lladdr);
+
+	len = recvfrom(sock, buf, sizeof(buf), 0,
+		       (struct sockaddr *)&lladdr, &fromlen);
+	if (len < 0) {
+		perror("recv");
+		return;
+	}
+
+	if (have_ifidx(drv, lladdr.sll_ifindex))
+		drv_event_eapol_rx(drv->ctx, lladdr.sll_addr, buf, len);
+}
+
 
 static int i802_check_bridge(struct wpa_driver_nl80211_data *drv,
 			     struct i802_bss *bss,
@@ -6562,6 +6555,55 @@ static const char * nl80211_get_radio_name(void *priv)
 }
 
 
+static int nl80211_pmkid(struct i802_bss *bss, int cmd, const u8 *bssid,
+			 const u8 *pmkid)
+{
+	struct nl_msg *msg;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOMEM;
+
+	genlmsg_put(msg, 0, 0, genl_family_get_id(bss->drv->nl80211), 0, 0,
+		    cmd, 0);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(bss->ifname));
+	if (pmkid)
+		NLA_PUT(msg, NL80211_ATTR_PMKID, 16, pmkid);
+	if (bssid)
+		NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, bssid);
+
+	return send_and_recv_msgs(bss->drv, msg, NULL, NULL);
+ nla_put_failure:
+	return -ENOBUFS;
+}
+
+
+static int nl80211_add_pmkid(void *priv, const u8 *bssid, const u8 *pmkid)
+{
+	struct i802_bss *bss = priv;
+	wpa_printf(MSG_DEBUG, "nl80211: Add PMKID for " MACSTR, MAC2STR(bssid));
+	return nl80211_pmkid(bss, NL80211_CMD_SET_PMKSA, bssid, pmkid);
+}
+
+
+static int nl80211_remove_pmkid(void *priv, const u8 *bssid, const u8 *pmkid)
+{
+	struct i802_bss *bss = priv;
+	wpa_printf(MSG_DEBUG, "nl80211: Delete PMKID for " MACSTR,
+		   MAC2STR(bssid));
+	return nl80211_pmkid(bss, NL80211_CMD_DEL_PMKSA, bssid, pmkid);
+}
+
+
+static int nl80211_flush_pmkid(void *priv)
+{
+	struct i802_bss *bss = priv;
+	wpa_printf(MSG_DEBUG, "nl80211: Flush PMKIDs");
+	return nl80211_pmkid(bss, NL80211_CMD_FLUSH_PMKSA, NULL, NULL);
+}
+
+
 const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.name = "nl80211",
 	.desc = "Linux nl80211/cfg80211",
@@ -6594,6 +6636,9 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 #ifdef HOSTAPD
 	.hapd_init = i802_init,
 	.hapd_deinit = i802_deinit,
+	.set_wds_sta = i802_set_wds_sta,
+#endif /* HOSTAPD */
+#if defined(HOSTAPD) || defined(CONFIG_AP)
 	.get_seqnum = i802_get_seqnum,
 	.flush = i802_flush,
 	.read_sta_data = i802_read_sta_data,
@@ -6601,16 +6646,13 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.sta_clear_stats = i802_sta_clear_stats,
 	.set_rts = i802_set_rts,
 	.set_frag = i802_set_frag,
-	.set_rate_sets = i802_set_rate_sets,
 	.set_cts_protect = i802_set_cts_protect,
 	.set_preamble = i802_set_preamble,
 	.set_short_slot_time = i802_set_short_slot_time,
 	.set_tx_queue_params = i802_set_tx_queue_params,
 	.set_sta_vlan = i802_set_sta_vlan,
-	.set_wds_sta = i802_set_wds_sta,
 	.set_ht_params = i802_set_ht_params,
-#endif /* HOSTAPD */
-#if defined(HOSTAPD) || defined(CONFIG_AP)
+	.set_rate_sets = i802_set_rate_sets,
 	.sta_deauth = i802_sta_deauth,
 	.sta_disassoc = i802_sta_disassoc,
 #endif /* HOSTAPD || CONFIG_AP */
@@ -6631,4 +6673,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_intra_bss = nl80211_set_intra_bss,
 	.set_param = nl80211_set_param,
 	.get_radio_name = nl80211_get_radio_name,
+	.add_pmkid = nl80211_add_pmkid,
+	.remove_pmkid = nl80211_remove_pmkid,
+	.flush_pmkid = nl80211_flush_pmkid,
 };

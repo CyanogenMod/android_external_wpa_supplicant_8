@@ -1634,6 +1634,7 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 		if (was_disabled != other_ssid->disabled)
 			wpas_notify_network_enabled_changed(wpa_s, other_ssid);
 	}
+	wpa_s->connect_without_scan = NULL;
 	wpa_s->disconnected = 0;
 	wpa_s->reassociate = 1;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
@@ -2544,7 +2545,7 @@ struct wpa_global * wpa_supplicant_init(struct wpa_params *params)
 		return NULL;
 	}
 
-	random_init();
+	random_init(params->entropy_file);
 
 	global->ctrl_iface = wpa_supplicant_global_ctrl_iface_init(global);
 	if (global->ctrl_iface == NULL) {

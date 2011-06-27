@@ -2243,6 +2243,18 @@ struct wpa_driver_ops {
 	int (*signal_poll)(void *priv, struct wpa_signal_info *signal_info);
 
 	/**
+	 * set_authmode - Set authentication algorithm(s) for static WEP
+	 * @priv: Private driver interface data
+	 * @authmode: 1=Open System, 2=Shared Key, 3=both
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function can be used to set authentication algorithms for AP
+	 * mode when static WEP is used. If the driver uses user space MLME/SME
+	 * implementation, there is no need to implement this function.
+	 */
+	int (*set_authmode)(void *priv, int authmode);
+
+	/**
 	 * driver_cmd - execute driver-specific command
 	 * @priv: private driver interface data
 	 * @cmd: command to execute

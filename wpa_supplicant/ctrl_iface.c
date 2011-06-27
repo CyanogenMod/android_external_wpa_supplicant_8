@@ -297,7 +297,12 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 					     char *cmd)
 {
 	u8 bssid[ETH_ALEN], *_bssid = bssid;
-	u8 p2p_dev_addr[ETH_ALEN], *_p2p_dev_addr = NULL;
+#ifdef CONFIG_P2P
+	u8 p2p_dev_addr[ETH_ALEN];
+#endif /* CONFIG_P2P */
+#ifdef CONFIG_AP
+	u8 *_p2p_dev_addr = NULL;
+#endif /* CONFIG_AP */
 
 	if (cmd == NULL || os_strcmp(cmd, "any") == 0) {
 		_bssid = NULL;
@@ -1484,6 +1489,8 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 		}
 		if (wpa_s->current_ssid) {
 			eapol_sm_invalidate_cached_session(wpa_s->eapol);
+			wpa_sm_set_config(wpa_s->wpa, NULL);
+			eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 			wpa_supplicant_disassociate(wpa_s,
 				                    WLAN_REASON_DEAUTH_LEAVING);
 		}
@@ -1507,6 +1514,8 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 		 * removed.
 		 */
 		eapol_sm_invalidate_cached_session(wpa_s->eapol);
+		wpa_sm_set_config(wpa_s->wpa, NULL);
+		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 
 		wpa_supplicant_disassociate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 	}
