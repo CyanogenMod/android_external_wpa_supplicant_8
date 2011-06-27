@@ -25,6 +25,8 @@ ifneq ($(TARGET_SIMULATOR),true)
   endif
 endif
 
+ifeq ($(WPA_BUILD_SUPPLICANT),true)
+
 include $(LOCAL_PATH)/.config
 
 # To ignore possible wrong network configurations
@@ -1362,8 +1364,6 @@ endif
 ifndef LDO
 LDO=$(CC)
 endif
-
-ifeq ($(WPA_BUILD_SUPPLICANT),true)
 
 ########################
 

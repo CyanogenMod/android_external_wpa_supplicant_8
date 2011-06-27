@@ -8,6 +8,8 @@ ifneq ($(TARGET_SIMULATOR),true)
   endif
 endif
 
+ifeq ($(WPA_BUILD_HOSTAPD),true)
+
 include $(LOCAL_PATH)/.config
 
 # To ignore possible wrong network configurations
@@ -780,8 +782,6 @@ ifdef CONFIG_WPA_TRACE
 OBJS_c += src/utils/trace.c
 OBJS_c += src/utils/wpa_debug.c
 endif
-
-ifeq ($(WPA_BUILD_HOSTAPD),true)
 
 ########################
 
