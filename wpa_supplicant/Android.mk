@@ -66,7 +66,7 @@ INCLUDES += $(LOCAL_PATH)/src/wps
 INCLUDES += external/openssl/include
 INCLUDES += frameworks/base/cmds/keystore
 ifdef CONFIG_DRIVER_NL80211
-INCLUDES += external/libnl_2/include
+INCLUDES += system/core/libnl_2/include
 endif
 
 OBJS = config.c
@@ -1045,7 +1045,9 @@ ifdef NEED_FIPS186_2_PRF
 SHA1OBJS += src/crypto/fips_prf_internal.c
 endif
 endif
-ifndef CONFIG_NO_WPA_PASSPHRASE
+ifdef CONFIG_NO_WPA_PASSPHRASE
+L_CFLAGS += -DCONFIG_NO_PBKDF2
+else
 SHA1OBJS += src/crypto/sha1-pbkdf2.c
 endif
 ifdef NEED_T_PRF
@@ -1173,6 +1175,9 @@ DBUS_OBJS += dbus/dbus_new.c dbus/dbus_new_handlers.c
 ifdef CONFIG_WPS
 DBUS_OBJS += dbus/dbus_new_handlers_wps.c
 endif
+ifdef CONFIG_P2P
+DBUS_OBJS += dbus/dbus_new_handlers_p2p.c
+endif
 ifndef DBUS_LIBS
 DBUS_LIBS := $(shell pkg-config --libs dbus-1)
 endif
@@ -1262,6 +1267,9 @@ endif
 
 ifdef CONFIG_DEBUG_SYSLOG
 L_CFLAGS += -DCONFIG_DEBUG_SYSLOG
+ifdef CONFIG_DEBUG_SYSLOG_FACILITY
+L_CFLAGS += -DLOG_HOSTAPD="$(CONFIG_DEBUG_SYSLOG_FACILITY)"
+endif
 endif
 
 ifdef CONFIG_DEBUG_FILE
