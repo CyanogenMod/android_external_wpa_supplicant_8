@@ -5587,7 +5587,7 @@ static int i802_set_tx_queue_params(void *priv, int queue, int aifs,
 
 
 static int i802_set_bss(void *priv, int cts, int preamble, int slot,
-			int ht_opmode)
+			int ht_opmode, int ssid_len, const u8 *ssid)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
@@ -5608,6 +5608,8 @@ static int i802_set_bss(void *priv, int cts, int preamble, int slot,
 		NLA_PUT_U8(msg, NL80211_ATTR_BSS_SHORT_SLOT_TIME, slot);
 	if (ht_opmode >= 0)
 		NLA_PUT_U16(msg, NL80211_ATTR_BSS_HT_OPMODE, ht_opmode);
+	if (ssid_len > 0)
+		NLA_PUT(msg, NL80211_ATTR_SSID, ssid_len, ssid);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, if_nametoindex(bss->ifname));
 
 	return send_and_recv_msgs(drv, msg, NULL, NULL);
@@ -5618,19 +5620,19 @@ static int i802_set_bss(void *priv, int cts, int preamble, int slot,
 
 static int i802_set_cts_protect(void *priv, int value)
 {
-	return i802_set_bss(priv, value, -1, -1, -1);
+	return i802_set_bss(priv, value, -1, -1, -1, -1, NULL);
 }
 
 
 static int i802_set_preamble(void *priv, int value)
 {
-	return i802_set_bss(priv, -1, value, -1, -1);
+	return i802_set_bss(priv, -1, value, -1, -1, -1, NULL);
 }
 
 
 static int i802_set_short_slot_time(void *priv, int value)
 {
-	return i802_set_bss(priv, -1, -1, value, -1);
+	return i802_set_bss(priv, -1, -1, value, -1, -1, NULL);
 }
 
 
@@ -5674,9 +5676,15 @@ static int i802_set_ht_params(void *priv, const u8 *ht_capab,
 	if (ht_oper_len >= 6) {
 		/* ht opmode uses 16bit in octet 5 & 6 */
 		u16 ht_opmode = le_to_host16(((u16 *) ht_oper)[2]);
-		return i802_set_bss(priv, -1, -1, -1, ht_opmode);
+		return i802_set_bss(priv, -1, -1, -1, ht_opmode,  -1, NULL);
 	} else
 		return -1;
+}
+
+
+static int i802_set_ssid(void *priv, const u8 *ssid, int ssid_len)
+{
+	return i802_set_bss(priv, -1, -1, -1, -1, ssid_len, ssid);
 }
 
 
@@ -6901,6 +6909,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.hapd_init = i802_init,
 	.hapd_deinit = i802_deinit,
 	.set_wds_sta = i802_set_wds_sta,
+	.hapd_set_ssid = i802_set_ssid,
 #endif /* HOSTAPD */
 #if defined(HOSTAPD) || defined(CONFIG_AP)
 	.get_seqnum = i802_get_seqnum,
