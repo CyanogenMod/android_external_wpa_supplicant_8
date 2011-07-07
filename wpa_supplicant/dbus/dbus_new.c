@@ -653,6 +653,54 @@ nomem:
 
 #endif /* CONFIG_WPS */
 
+void wpas_dbus_signal_certification(struct wpa_supplicant *wpa_s,
+				    int depth, const char *subject,
+				    const char *cert_hash,
+				    const struct wpabuf *cert)
+{
+	struct wpas_dbus_priv *iface;
+	DBusMessage *msg;
+	DBusMessageIter iter, dict_iter;
+
+	iface = wpa_s->global->dbus;
+
+	/* Do nothing if the control interface is not turned on */
+	if (iface == NULL)
+		return;
+
+	msg = dbus_message_new_signal(wpa_s->dbus_new_path,
+				      WPAS_DBUS_NEW_IFACE_INTERFACE,
+				      "Certification");
+	if (msg == NULL)
+		return;
+
+	dbus_message_iter_init_append(msg, &iter);
+	if (!wpa_dbus_dict_open_write(&iter, &dict_iter))
+		goto nomem;
+
+	if (!wpa_dbus_dict_append_uint32(&dict_iter, "depth", depth) ||
+	    !wpa_dbus_dict_append_string(&dict_iter, "subject", subject))
+		goto nomem;
+
+	if (cert_hash &&
+	    !wpa_dbus_dict_append_string(&dict_iter, "cert_hash", cert_hash))
+		goto nomem;
+
+	if (cert &&
+	    !wpa_dbus_dict_append_byte_array(&dict_iter, "cert",
+					     wpabuf_head(cert),
+					     wpabuf_len(cert)))
+		goto nomem;
+
+	if (!wpa_dbus_dict_close_write(&iter, &dict_iter))
+		goto nomem;
+
+	dbus_connection_send(iface->con, msg, NULL);
+
+nomem:
+	dbus_message_unref(msg);
+}
+
 #ifdef CONFIG_P2P
 
 /**
@@ -1794,6 +1842,7 @@ int wpas_dbus_register_network(struct wpa_supplicant *wpa_s,
 	struct network_handler_args *arg;
 	char net_obj_path[WPAS_DBUS_OBJECT_PATH_MAX];
 
+#ifdef CONFIG_P2P
 	/*
 	 * If it is a persistent group register it as such.
 	 * This is to handle cases where an interface is being initialized
@@ -1801,6 +1850,7 @@ int wpas_dbus_register_network(struct wpa_supplicant *wpa_s,
 	 */
 	if (network_is_persistent_group(ssid))
 		return wpas_dbus_register_persistent_group(wpa_s, ssid);
+#endif /* CONFIG_P2P */
 
 	/* Do nothing if the control interface is not turned on */
 	if (wpa_s == NULL || wpa_s->global == NULL)
@@ -1868,9 +1918,11 @@ int wpas_dbus_unregister_network(struct wpa_supplicant *wpa_s, int nid)
 
 	ssid = wpa_config_get_network(wpa_s->conf, nid);
 
+#ifdef CONFIG_P2P
 	/* If it is a persistent group unregister it as such */
 	if (ssid && network_is_persistent_group(ssid))
 		return wpas_dbus_unregister_persistent_group(wpa_s, nid);
+#endif /* CONFIG_P2P */
 
 	/* Do nothing if the control interface is not turned on */
 	if (wpa_s == NULL || wpa_s->global == NULL ||
@@ -2629,6 +2681,12 @@ static const struct wpa_dbus_signal_desc wpas_dbus_interface_signals[] = {
 		  END_ARGS
 	  }
 	},
+	{ "PersistentGroupRemoved", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
+	  {
+		  { "path", "o", ARG_OUT },
+		  END_ARGS
+	  }
+	},
 	{ "WpsFailed", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 	  {
 		  { "name", "s", ARG_OUT },
@@ -2637,6 +2695,12 @@ static const struct wpa_dbus_signal_desc wpas_dbus_interface_signals[] = {
 	  }
 	},
 #endif /* CONFIG_P2P */
+	{ "Certification", WPAS_DBUS_NEW_IFACE_INTERFACE,
+	  {
+		  { "certification", "a{sv}", ARG_OUT },
+		  END_ARGS
+	  }
+	},
 	{ NULL, NULL, { END_ARGS } }
 };
 
