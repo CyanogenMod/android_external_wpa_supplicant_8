@@ -214,6 +214,11 @@ static int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 }
 #endif /* HOSTAPD */
 
+#ifdef ANDROID
+extern int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
+					 size_t buf_len);
+#endif
+
 static int i802_set_freq(void *priv, struct hostapd_freq_params *freq);
 static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 				     int ifindex, int disabled);
@@ -295,7 +300,7 @@ static int send_and_recv(struct wpa_driver_nl80211_data *drv,
 }
 
 
-static int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
+int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
 			      struct nl_msg *msg,
 			      int (*valid_handler)(struct nl_msg *, void *),
 			      void *valid_data)
@@ -6711,4 +6716,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.add_pmkid = nl80211_add_pmkid,
 	.remove_pmkid = nl80211_remove_pmkid,
 	.flush_pmkid = nl80211_flush_pmkid,
+#ifdef ANDROID
+	.driver_cmd = wpa_driver_nl80211_driver_cmd,
+#endif
 };
