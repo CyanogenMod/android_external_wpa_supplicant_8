@@ -1,11 +1,9 @@
 LOCAL_PATH := $(call my-dir)
 
 WPA_BUILD_HOSTAPD := false
-ifneq ($(TARGET_SIMULATOR),true)
-  ifneq ($(BOARD_HOSTAPD_DRIVER),)
-    WPA_BUILD_HOSTAPD := true
-    CONFIG_DRIVER_$(BOARD_HOSTAPD_DRIVER) := y
-  endif
+ifneq ($(BOARD_HOSTAPD_DRIVER),)
+  WPA_BUILD_HOSTAPD := true
+  CONFIG_DRIVER_$(BOARD_HOSTAPD_DRIVER) := y
 endif
 
 ifeq ($(WPA_BUILD_HOSTAPD),true)
