@@ -450,7 +450,7 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
-	if (!wpa_key_mgmt_wpa(ssid->key_mgmt)) {
+	if (!wpa_key_mgmt_wpa(ssid->key_mgmt) && (!wpa_ie && !rsn_ie)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "   allow in non-WPA/WPA2");
 		return 1;
 	}
