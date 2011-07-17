@@ -992,6 +992,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		skip = !wpa_supplicant_need_to_roam(wpa_s, selected, ssid,
 						    scan_res);
 		wpa_scan_results_free(scan_res);
+		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 		if (skip)
 			return 0;
 #ifdef ANDROID_BRCM_P2P_PATCH
@@ -1002,7 +1003,6 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 #else
 		wpa_supplicant_connect(wpa_s, selected, ssid);
 #endif
-		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 	} else {
 		wpa_scan_results_free(scan_res);
 		wpa_dbg(wpa_s, MSG_DEBUG, "No suitable network found");
