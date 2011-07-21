@@ -509,8 +509,15 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 		client = ssid->mode == WPAS_MODE_INFRA;
 		if (ssid->mode == WPAS_MODE_P2P_GO) {
 			persistent = ssid->p2p_persistent_group;
+#ifndef ANDROID_BRCM_P2P_PATCH
 			os_memcpy(go_dev_addr, wpa_s->parent->own_addr,
 				  ETH_ALEN);
+#else
+			/* P2P_ADDR: Use p2p_dev_addr instead of own mac addr */
+			os_memcpy(go_dev_addr, wpa_s->global->p2p_dev_addr,
+				  ETH_ALEN);
+
+#endif
 		} else
 			persistent = wpas_p2p_persistent_group(wpa_s,
 							       go_dev_addr,
@@ -880,13 +887,22 @@ static void p2p_go_configured(void *ctx, void *data)
 			wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
 			ssid->frequency,
 			params->passphrase ? params->passphrase : "",
+#ifndef ANDROID_BRCM_P2P_PATCH
 			MAC2STR(wpa_s->parent->own_addr),
+#else
+			/* P2P_ADDR: use p2p_dev_addr instead of own addr */
+			MAC2STR(wpa_s->global->p2p_dev_addr),
+#endif
 			params->persistent_group ? " [PERSISTENT]" : "");
-
 		if (params->persistent_group)
 			network_id = wpas_p2p_store_persistent_group(
 				wpa_s->parent, ssid,
+#ifndef ANDROID_BRCM_P2P_PATCH
 				wpa_s->parent->own_addr);
+#else
+				/* P2P_ADDR: Use p2p device address */
+				wpa_s->global->p2p_dev_addr);
+#endif
 		if (network_id < 0)
 			network_id = ssid->id;
 		wpas_notify_p2p_group_started(wpa_s, ssid, network_id, 0);
@@ -1204,7 +1220,10 @@ void wpas_dev_found(void *ctx, const u8 *addr,
 static void wpas_dev_lost(void *ctx, const u8 *dev_addr)
 {
 	struct wpa_supplicant *wpa_s = ctx;
-
+#ifdef ANDROID_BRCM_P2P_PATCH
+	wpa_msg(wpa_s, MSG_INFO, P2P_EVENT_DEVICE_LOST
+		"p2p_dev_addr=" MACSTR, MAC2STR(dev_addr));
+#endif
 	wpas_notify_p2p_device_lost(wpa_s, dev_addr);
 }
 
@@ -2353,6 +2372,9 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 	struct p2p_config p2p;
 	unsigned int r;
 	int i;
+#ifdef ANDROID_BRCM_P2P_PATCH
+	char buf[200];
+#endif
 
 	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE))
 		return 0;
@@ -2414,7 +2436,19 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 	p2p.invitation_result = wpas_invitation_result;
 	p2p.get_noa = wpas_get_noa;
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/* P2P_ADDR: Using p2p_dev_addr to hold the actual p2p device address incase if
+	 * we are not using the primary interface for p2p operations.
+	 */
+	wpa_drv_driver_cmd(wpa_s,  "P2P_DEV_ADDR", buf, sizeof(buf));	
+	os_memcpy(p2p.p2p_dev_addr, buf, ETH_ALEN);
+	os_memcpy(wpa_s->global->p2p_dev_addr, buf, ETH_ALEN);
+	os_memcpy(p2p.dev_addr, buf, ETH_ALEN);
+	wpa_printf(MSG_DEBUG, "P2P: Device address ("MACSTR")", MAC2STR(p2p.p2p_dev_addr));
+#else
 	os_memcpy(wpa_s->global->p2p_dev_addr, wpa_s->own_addr, ETH_ALEN);
+#endif
+
 	os_memcpy(p2p.dev_addr, wpa_s->own_addr, ETH_ALEN);
 	p2p.dev_name = wpa_s->conf->device_name;
 	p2p.manufacturer = wpa_s->conf->manufacturer;
@@ -3643,6 +3677,9 @@ int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 		return -1;
 
 	p2p_ie = wpa_bss_get_vendor_ie_multi(bss, P2P_IE_VENDOR_TYPE);
+#ifdef ANDROID_BRCM_P2P_PATCH 
+	if (p2p_ie == NULL) return -1;
+#endif
 	ret = p2p_assoc_req_ie(wpa_s->global->p2p, bss->bssid, buf, len,
 			       p2p_group, p2p_ie);
 	wpabuf_free(p2p_ie);
@@ -3715,6 +3752,9 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 {
 	enum p2p_invite_role role;
 	u8 *bssid = NULL;
+#ifdef ANDROID_BRCM_P2P_PATCH
+	int go;
+#endif
 
 	if (ssid->mode == WPAS_MODE_P2P_GO) {
 		role = P2P_INVITE_ROLE_GO;
@@ -3723,6 +3763,19 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 				   "address in invitation command");
 			return -1;
 		}
+
+#ifdef ANDROID_BRCM_P2P_PATCH
+	wpa_printf(MSG_DEBUG, "P2P: Check to see if already runnig persistent wpa_s %p grp ssid %s ssid_len %d", wpa_s, ssid->ssid, ssid->ssid_len);
+	if(wpas_get_p2p_group(wpa_s, ssid->ssid, ssid->ssid_len, &go)) {
+		wpa_printf(MSG_DEBUG, "P2P: We are already running persistent group");
+		if (go)
+			bssid = wpa_s->own_addr;
+		else
+			wpa_printf(MSG_DEBUG, "P2P: We are running persistent group but go is not set");
+	} else {
+		wpa_printf(MSG_DEBUG, "P2P: We are NOT already running persistent group");
+#endif
+
 		if (wpas_p2p_create_iface(wpa_s)) {
 			if (wpas_p2p_add_group_interface(wpa_s,
 							 WPA_IF_P2P_GO) < 0) {
@@ -3734,6 +3787,9 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 			bssid = wpa_s->pending_interface_addr;
 		} else
 			bssid = wpa_s->own_addr;
+#ifdef ANDROID_BRCM_P2P_PATCH
+	}
+#endif
 	} else {
 		role = P2P_INVITE_ROLE_CLIENT;
 		peer_addr = ssid->bssid;
@@ -3841,14 +3897,22 @@ void wpas_p2p_completed(struct wpa_supplicant *wpa_s)
 		wpa_msg(wpa_s->parent, MSG_INFO, P2P_EVENT_GROUP_STARTED
 			"%s client ssid=\"%s\" freq=%d psk=%s go_dev_addr="
 			MACSTR "%s",
+		#ifdef ANDROID_BRCM_P2P_PATCH
+			wpa_s->ifname, ssid_txt, wpa_s->current_bss->freq, psk,
+		#else
 			wpa_s->ifname, ssid_txt, ssid->frequency, psk,
+		#endif
 			MAC2STR(go_dev_addr),
 			persistent ? " [PERSISTENT]" : "");
 	} else {
 		wpa_msg(wpa_s->parent, MSG_INFO, P2P_EVENT_GROUP_STARTED
 			"%s client ssid=\"%s\" freq=%d passphrase=\"%s\" "
 			"go_dev_addr=" MACSTR "%s",
+		#ifdef ANDROID_BRCM_P2P_PATCH
+			wpa_s->ifname, ssid_txt, wpa_s->current_bss->freq,
+		#else
 			wpa_s->ifname, ssid_txt, ssid->frequency,
+		#endif
 			ssid->passphrase ? ssid->passphrase : "",
 			MAC2STR(go_dev_addr),
 			persistent ? " [PERSISTENT]" : "");
@@ -3939,6 +4003,22 @@ void wpas_p2p_deauth_notif(struct wpa_supplicant *wpa_s, const u8 *bssid,
 	p2p_deauth_notif(wpa_s->global->p2p, bssid, reason_code, ie, ie_len);
 }
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+void wpas_p2p_group_remove_notif(struct wpa_supplicant *wpa_s, u16 reason_code)
+{
+	if(wpa_s->global->p2p_disabled)
+		return;
+
+	/* If we are running a P2P Client and we received a Deauth/Disassoc from the Go, then remove 
+	   the virutal interface on which the client is running. */
+	if((wpa_s != wpa_s->parent) && (wpa_s->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT) && (wpa_s->key_mgmt != WPA_KEY_MGMT_WPS)) {
+
+		wpa_printf(MSG_DEBUG, "P2P: [EVENT_DEAUTH] Removing P2P_CLIENT virtual intf.");
+		wpa_supplicant_cancel_scan(wpa_s);
+		wpas_p2p_interface_unavailable(wpa_s);
+	}
+}
+#endif
 
 void wpas_p2p_disassoc_notif(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			     u16 reason_code, const u8 *ie, size_t ie_len)

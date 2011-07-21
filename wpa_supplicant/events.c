@@ -724,7 +724,12 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 	 * reassociation is requested. If we are in process of associating with
 	 * the selected BSSID, do not trigger new attempt.
 	 */
-	if (wpa_s->reassociate ||
+	if ((wpa_s->reassociate
+#ifdef ANDROID_BRCM_P2P_PATCH
+		&& (os_memcmp(selected->bssid, wpa_s->bssid, ETH_ALEN) != 0)
+		&& (wpa_s->wpa_state != WPA_COMPLETED)
+#endif
+		)||
 	    (os_memcmp(selected->bssid, wpa_s->bssid, ETH_ALEN) != 0 &&
 	     ((wpa_s->wpa_state != WPA_ASSOCIATING &&
 	       wpa_s->wpa_state != WPA_AUTHENTICATING) ||
@@ -1851,6 +1856,11 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		}
 #endif /* CONFIG_AP */
 		wpa_supplicant_event_disassoc(wpa_s, reason_code);
+
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_P2P)
+		wpas_p2p_group_remove_notif(wpa_s, reason_code);
+#endif
+
 		break;
 	case EVENT_MICHAEL_MIC_FAILURE:
 		wpa_supplicant_event_michael_mic_failure(wpa_s, data);
@@ -1988,6 +1998,25 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				size_t ie_len = data->rx_mgmt.frame_len -
 					(mgmt->u.probe_req.variable -
 					 data->rx_mgmt.frame);
+			#ifdef ANDROID_BRCM_P2P_PATCH
+				wpa_printf(MSG_DEBUG, "Non-AP: Probe request frame ");
+			{
+				/* If we are Go or client, we need not reply the probe reqest on eth0 interface */
+				struct wpa_supplicant* ifs;
+				int ignore = 0;
+				for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+					if ( (ifs->p2p_group_interface == P2P_GROUP_INTERFACE_GO ) ||(ifs->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT )) {
+						wpa_printf(MSG_DEBUG, "Non-AP: NEERAJKG Ignoring Probe request");
+						ignore = 1;
+						break;
+					}
+				}
+				if(ignore)
+					break;
+				else
+					wpa_printf(MSG_DEBUG, "Non-AP: Couln't Ignore Probe request %d", wpa_s->p2p_group_interface);
+			}
+			#endif
 				wpas_p2p_probe_req_rx(wpa_s, src, ie, ie_len);
 				break;
 			}

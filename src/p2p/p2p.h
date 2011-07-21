@@ -292,6 +292,17 @@ struct p2p_config {
 	 */
 	u8 dev_addr[ETH_ALEN];
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/**
+	 * p2p_dev_addr - P2P Device Address
+	 *
+	 * Holds the p2p device address. If the driver uses primary mac address
+	 * for p2p operations, then this will hold the same value as that of 
+	 * dev_addr.
+	 */
+	u8 p2p_dev_addr[ETH_ALEN];
+#endif
+
 	/**
 	 * dev_name - Device Name
 	 */

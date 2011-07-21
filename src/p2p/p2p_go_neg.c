@@ -491,7 +491,15 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 		}
 
 		if (dev->go_neg_req_sent &&
+#ifdef ANDROID_BRCM_P2P_PATCH 
+		/* P2P_ADDR: compare against the p2p device address. The own mac 
+		address may not not be the actual p2p device address, if you 
+		are using a virtual interface.
+		*/
+		    os_memcmp(sa, p2p->cfg->p2p_dev_addr, ETH_ALEN) > 0) {
+#else
 		    os_memcmp(sa, p2p->cfg->dev_addr, ETH_ALEN) > 0) {
+#endif
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Do not reply since peer has higher "
 				"address and GO Neg Request already sent");

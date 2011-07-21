@@ -23,7 +23,7 @@
 #include "ap/hostapd.h"
 #include "ap/ap_config.h"
 #include "ap/ap_drv_ops.h"
-#ifdef NEED_AP_MLME
+#if  defined (NEED_AP_MLME) || defined (ANDROID_BRCM_P2P_PATCH)
 #include "ap/ieee802_11.h"
 #endif /* NEED_AP_MLME */
 #include "ap/beacon.h"
@@ -451,6 +451,10 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		}
 
 		hapd_iface->bss[i]->msg_ctx = wpa_s;
+#ifdef ANDROID_BRCM_P2P_PATCH
+		/* Sending the event to parent is required as SSL listens on parent ctrl iface */
+		hapd_iface->bss[i]->msg_ctx_parent = wpa_s->parent;
+#endif
 		hapd_iface->bss[i]->public_action_cb = ap_public_action_rx;
 		hapd_iface->bss[i]->public_action_cb_ctx = wpa_s;
 		hapd_iface->bss[i]->vendor_action_cb = ap_vendor_action_rx;
@@ -486,6 +490,14 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_ap_deinit(wpa_s);
 		return -1;
 	}
+	
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if (wpa_drv_probe_req_report(wpa_s, 1) < 0) {
+		wpa_printf(MSG_DEBUG, "P2P: Failed to request the driver to "
+			   "report received Probe Request frames");
+		return -1;
+	}
+#endif
 
 	return 0;
 }
@@ -541,7 +553,7 @@ void ap_rx_from_unknown_sta(void *ctx, const u8 *frame, size_t len)
 
 void ap_mgmt_rx(void *ctx, struct rx_mgmt *rx_mgmt)
 {
-#ifdef NEED_AP_MLME
+#if  defined (NEED_AP_MLME) || defined (ANDROID_BRCM_P2P_PATCH)
 	struct wpa_supplicant *wpa_s = ctx;
 	struct hostapd_frame_info fi;
 	os_memset(&fi, 0, sizeof(fi));
@@ -549,7 +561,7 @@ void ap_mgmt_rx(void *ctx, struct rx_mgmt *rx_mgmt)
 	fi.ssi_signal = rx_mgmt->ssi_signal;
 	ieee802_11_mgmt(wpa_s->ap_iface->bss[0], rx_mgmt->frame,
 			rx_mgmt->frame_len, &fi);
-#endif /* NEED_AP_MLME */
+#endif /* defined (NEED_AP_MLME) || defined (ANDROID_BRCM_P2P_PATCH) */
 }
 
 

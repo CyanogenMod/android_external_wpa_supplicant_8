@@ -464,6 +464,10 @@ static void p2p_copy_wps_info(struct p2p_device *dev, int probe_req,
 
 	if (msg->capability) {
 		dev->info.dev_capab = msg->capability[0];
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if( dev->info.group_capab != msg->capability[1])
+		dev->flags &= ~P2P_DEV_REPORTED;
+#endif	
 		dev->info.group_capab = msg->capability[1];
 	}
 
@@ -574,6 +578,11 @@ int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
 			freq, msg.ds_params ? *msg.ds_params : -1);
 	}
 	dev->listen_freq = freq;
+#ifdef ANDROID_BRCM_P2P_PATCH	
+	if(msg.group_info)
+		dev->go_state = REMOTE_GO;
+#endif
+
 	if (msg.group_info)
 		dev->oper_freq = freq;
 	dev->info.level = level;
@@ -625,8 +634,12 @@ static void p2p_device_free(struct p2p_data *p2p, struct p2p_device *dev)
 {
 	int i;
 
-	if (p2p->go_neg_peer == dev)
+	if (p2p->go_neg_peer == dev) {
+#ifdef ANDROID_BRCM_P2P_PATCH
+		p2p_go_neg_failed(p2p, dev, -1);
+#endif
 		p2p->go_neg_peer = NULL;
+	}
 	if (p2p->invite_peer == dev)
 		p2p->invite_peer = NULL;
 	if (p2p->sd_peer == dev)
@@ -2665,7 +2678,15 @@ static void p2p_timeout_wait_peer_connect(struct p2p_data *p2p)
 	 * state once per second to give other uses a chance to use the radio.
 	 */
 	p2p_set_state(p2p, P2P_WAIT_PEER_IDLE);
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/*
+	 * We need to be back in Listen state soon enough so that we don't miss
+	 * the GO Nego req from the peer.
+	*/
+	p2p_set_timeout(p2p, 0, 0);
+#else
 	p2p_set_timeout(p2p, 1, 0);
+#endif
 }
 
 

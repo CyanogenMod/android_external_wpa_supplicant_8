@@ -40,7 +40,9 @@
 #include "radiotap_iter.h"
 #include "rfkill.h"
 #include "driver.h"
-
+#if defined(ANDROID_BRCM_P2P_PATCH) && !defined(HOSTAPD)
+#include "wpa_supplicant_i.h"
+#endif
 #ifdef CONFIG_LIBNL20
 /* libnl 2.0 compatibility code */
 #define nl_handle nl_sock
@@ -642,8 +644,25 @@ static void mlme_event_assoc(struct wpa_driver_nl80211_data *drv,
 	const struct ieee80211_mgmt *mgmt;
 	union wpa_event_data event;
 	u16 status;
+#ifdef ANDROID_BRCM_P2P_PATCH	
+	struct wpa_supplicant *wpa_s = drv->ctx;
+#endif
 
 	mgmt = (const struct ieee80211_mgmt *) frame;
+#if (defined (CONFIG_AP) || defined (HOSTAPD) ) && defined (ANDROID_BRCM_P2P_PATCH)	
+	if (drv->nlmode == NL80211_IFTYPE_AP || drv->nlmode == NL80211_IFTYPE_P2P_GO) {
+		if (len < 24 + sizeof(mgmt->u.assoc_req)) {
+			wpa_printf(MSG_DEBUG, "nl80211: Too short association event "
+			   "frame");
+			return;
+		}
+		os_memset(&event, 0, sizeof(event));
+		event.assoc_info.freq = drv->assoc_freq;
+		event.assoc_info.req_ies = (u8 *) mgmt->u.assoc_req.variable;
+		event.assoc_info.req_ies_len = len - 24 - sizeof(mgmt->u.assoc_req);
+		event.assoc_info.addr = mgmt->sa;
+	} else {
+#endif	
 	if (len < 24 + sizeof(mgmt->u.assoc_resp)) {
 		wpa_printf(MSG_DEBUG, "nl80211: Too short association event "
 			   "frame");
@@ -677,7 +696,9 @@ static void mlme_event_assoc(struct wpa_driver_nl80211_data *drv,
 	}
 
 	event.assoc_info.freq = drv->assoc_freq;
-
+#if (defined (CONFIG_AP) || defined(HOSTAPD)) && defined (ANDROID_BRCM_P2P_PATCH)	
+	}
+#endif
 	wpa_supplicant_event(drv->ctx, EVENT_ASSOC, &event);
 }
 
@@ -865,6 +886,12 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 		reason_code = le_to_host16(mgmt->u.deauth.reason_code);
 
 	if (type == EVENT_DISASSOC) {
+#ifdef ANDROID_BRCM_P2P_PATCH 
+		if (drv->nlmode == NL80211_IFTYPE_AP ||
+			drv->nlmode == NL80211_IFTYPE_P2P_GO) {
+			event.disassoc_info.addr = mgmt->sa;
+		} else
+#endif
 		event.disassoc_info.addr = bssid;
 		event.disassoc_info.reason_code = reason_code;
 		if (frame + len > mgmt->u.disassoc.variable) {
@@ -873,6 +900,12 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				mgmt->u.disassoc.variable;
 		}
 	} else {
+#ifdef ANDROID_BRCM_P2P_PATCH 		
+		if (drv->nlmode == NL80211_IFTYPE_AP ||
+			drv->nlmode == NL80211_IFTYPE_P2P_GO) {
+		event.deauth_info.addr = mgmt->sa;
+		} else
+#endif
 		event.deauth_info.addr = bssid;
 		event.deauth_info.reason_code = reason_code;
 		if (frame + len > mgmt->u.deauth.variable) {
@@ -3688,8 +3721,11 @@ static int wpa_driver_nl80211_send_mlme(void *priv, const u8 *data,
 
 	mgmt = (struct ieee80211_mgmt *) data;
 	fc = le_to_host16(mgmt->frame_control);
-
+#ifndef ANDROID_BRCM_P2P_PATCH
 	if (drv->nlmode == NL80211_IFTYPE_STATION &&
+#else
+	if (
+#endif
 	    WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_MGMT &&
 	    WLAN_FC_GET_STYPE(fc) == WLAN_FC_STYPE_PROBE_RESP) {
 		/*
@@ -3731,8 +3767,11 @@ static int wpa_driver_nl80211_set_beacon(void *priv,
 	int ret;
 	int beacon_set;
 	int ifindex = if_nametoindex(bss->ifname);
-
-	beacon_set = bss->beacon_set;
+#ifdef ANDROID_BRCM_P2P_PATCH 		
+		beacon_set = 1;
+#else
+		beacon_set = bss->beacon_set;
+#endif
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -3758,6 +3797,9 @@ static int wpa_driver_nl80211_set_beacon(void *priv,
 	} else {
 		bss->beacon_set = 1;
 	}
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(HOSTAPD)
+	wpa_driver_nl80211_probe_req_report(priv, 1);
+#endif
 	return ret;
  nla_put_failure:
 	return -ENOBUFS;
@@ -3791,8 +3833,14 @@ static int wpa_driver_nl80211_set_freq(struct wpa_driver_nl80211_data *drv,
 				    NL80211_CHAN_HT40PLUS);
 			break;
 		default:
+#ifndef ANDROID_BRCM_P2P_PATCH 
+/* Should be change to HT20 as a default value because P2P firmware does not support 11n for BCM4329 */
 			NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
 				    NL80211_CHAN_HT20);
+#else
+			NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
+				    NL80211_CHAN_NO_HT);
+#endif
 			break;
 		}
 	}
@@ -5961,6 +6009,15 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 			}
 			os_memcpy(if_addr, new_addr, ETH_ALEN);
 		}
+#ifdef ANDROID_BRCM_P2P_PATCH
+		 else {
+			/* P2P_ADDR: Driver uses a different mac address than the primary mac */
+			wpa_printf(MSG_DEBUG, "nl80211: Driver uses a "
+				   "different mac address for the Virtual I/F. Get that and store it locally");
+			os_memcpy(if_addr, new_addr, ETH_ALEN);
+
+		}
+#endif
 	}
 #endif /* CONFIG_P2P */
 
@@ -6081,7 +6138,9 @@ static int nl80211_send_frame_cmd(struct wpa_driver_nl80211_data *drv,
 
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
+#ifndef ANDROID_BRCM_P2P_PATCH	
 	NLA_PUT_U32(msg, NL80211_ATTR_DURATION, wait);
+#endif	
 	NLA_PUT_FLAG(msg, NL80211_ATTR_OFFCHANNEL_TX_OK);
 	NLA_PUT(msg, NL80211_ATTR_FRAME, buf_len, buf);
 
@@ -6249,14 +6308,14 @@ static int wpa_driver_nl80211_probe_req_report(void *priv, int report)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-
+#ifndef ANDROID_BRCM_P2P_PATCH
 	if (drv->nlmode != NL80211_IFTYPE_STATION) {
 		wpa_printf(MSG_DEBUG, "nl80211: probe_req_report control only "
 			   "allowed in station mode (iftype=%d)",
 			   drv->nlmode);
 		return -1;
 	}
-
+#endif
 	if (!report) {
 		if (drv->nl_handle_preq) {
 			eloop_unregister_read_sock(
@@ -6311,6 +6370,45 @@ static int wpa_driver_nl80211_probe_req_report(void *priv, int report)
 		goto out_err3;
 	}
 
+#ifdef ANDROID_BRCM_P2P_PATCH 
+	if (drv->nlmode != NL80211_IFTYPE_AP &&
+		drv->nlmode != NL80211_IFTYPE_P2P_GO) {
+		wpa_printf(MSG_DEBUG, "nl80211: probe_req_report control only "
+			   "allowed in AP or P2P GO mode (iftype=%d)",
+			   drv->nlmode);
+		goto done;
+	}
+	
+	if (nl80211_register_frame(drv, drv->nl_handle_preq,
+			   (WLAN_FC_TYPE_MGMT << 2) |
+			   (WLAN_FC_STYPE_ASSOC_REQ << 4),
+			   NULL, 0) < 0) {
+		goto out_err3;
+	}
+
+	if (nl80211_register_frame(drv, drv->nl_handle_preq,
+			   (WLAN_FC_TYPE_MGMT << 2) |
+			   (WLAN_FC_STYPE_REASSOC_REQ << 4),
+			   NULL, 0) < 0) {
+		goto out_err3;
+	}
+
+	if (nl80211_register_frame(drv, drv->nl_handle_preq,
+			   (WLAN_FC_TYPE_MGMT << 2) |
+			   (WLAN_FC_STYPE_DISASSOC << 4),
+			   NULL, 0) < 0) {
+		goto out_err3;
+	}
+	
+	if (nl80211_register_frame(drv, drv->nl_handle_preq,
+					   (WLAN_FC_TYPE_MGMT << 2) |
+					   (WLAN_FC_STYPE_DEAUTH << 4),
+					   NULL, 0) < 0) {
+		goto out_err3;
+	}
+
+done:
+#endif
 	eloop_register_read_sock(nl_socket_get_fd(drv->nl_handle_preq),
 				 wpa_driver_nl80211_event_receive, drv,
 				 drv->nl_handle_preq);

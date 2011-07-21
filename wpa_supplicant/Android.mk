@@ -31,6 +31,10 @@ include $(LOCAL_PATH)/.config
 # To ignore possible wrong network configurations
 L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
 
+ifdef CONFIG_DRIVER_NL80211
+L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
+endif
+
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
 L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"

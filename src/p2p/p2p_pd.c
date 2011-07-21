@@ -283,8 +283,21 @@ int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
 {
 	struct wpabuf *req;
 	int freq;
-
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if(dev->go_state == REMOTE_GO) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+			"P2P: GO Sending it to oper_freq %d", dev->oper_freq);
+		freq= dev->oper_freq;
+	}
+	else {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+			"P2P: NOT GO oper_freq %d listen_freq %d", dev->oper_freq, dev->listen_freq);
+		freq = dev->listen_freq > 0 ? dev->listen_freq : dev->oper_freq;
+	}
+#else
 	freq = dev->listen_freq > 0 ? dev->listen_freq : dev->oper_freq;
+#endif
+
 	if (freq <= 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: No Listen/Operating frequency known for the "

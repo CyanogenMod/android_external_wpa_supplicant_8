@@ -89,18 +89,32 @@ void ieee802_1x_set_sta_authorized(struct hostapd_data *hapd,
 		return;
 
 	if (authorized) {
-		if (!ap_sta_is_authorized(sta))
+		if (!ap_sta_is_authorized(sta)) {
 			wpa_msg(hapd->msg_ctx, MSG_INFO,
 				AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+#ifdef ANDROID_BRCM_P2P_PATCH
+			/* Sending the event to parent is required as SSL listens on parent ctrl iface */
+			if(hapd->msg_ctx_parent)
+				wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
+					AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+#endif /* ANDROID_BRCM_P2P_PATCH */
+		}
 		ap_sta_set_authorized(hapd, sta, 1);
 		res = hostapd_set_authorized(hapd, sta, 1);
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE8021X,
 			       HOSTAPD_LEVEL_DEBUG, "authorizing port");
 	} else {
-		if (ap_sta_is_authorized(sta) && (sta->flags & WLAN_STA_ASSOC))
+		if (ap_sta_is_authorized(sta) && (sta->flags & WLAN_STA_ASSOC)) {
 			wpa_msg(hapd->msg_ctx, MSG_INFO,
 				AP_STA_DISCONNECTED MACSTR,
 				MAC2STR(sta->addr));
+#ifdef ANDROID_BRCM_P2P_PATCH
+			if(hapd->msg_ctx_parent)
+				wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
+					AP_STA_DISCONNECTED MACSTR,
+					MAC2STR(sta->addr));
+#endif /* ANDROID_BRCM_P2P_PATCH */
+		}
 		ap_sta_set_authorized(hapd, sta, 0);
 		res = hostapd_set_authorized(hapd, sta, 0);
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE8021X,

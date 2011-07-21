@@ -1163,6 +1163,12 @@ static void handle_disassoc(struct hostapd_data *hapd,
 	sta->flags &= ~(WLAN_STA_ASSOC | WLAN_STA_ASSOC_REQ_OK);
 	wpa_msg(hapd->msg_ctx, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
 		MAC2STR(sta->addr));
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if(hapd->msg_ctx_parent)
+		wpa_msg(hapd->msg_ctx_parent, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
+			MAC2STR(sta->addr));
+#endif /* ANDROID_BRCM_P2P_PATCH */
+
 	wpa_auth_sm_event(sta->wpa_sm, WPA_DISASSOC);
 	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 		       HOSTAPD_LEVEL_INFO, "disassociated");
@@ -1214,6 +1220,11 @@ static void handle_deauth(struct hostapd_data *hapd,
 			WLAN_STA_ASSOC_REQ_OK);
 	wpa_msg(hapd->msg_ctx, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
 		MAC2STR(sta->addr));
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if(hapd->msg_ctx_parent)
+		wpa_msg(hapd->msg_ctx_parent, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
+			MAC2STR(sta->addr));
+#endif /* ANDROID_BRCM_P2P_PATCH */
 	wpa_auth_sm_event(sta->wpa_sm, WPA_DEAUTH);
 	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 		       HOSTAPD_LEVEL_DEBUG, "deauthenticated");
@@ -1679,6 +1690,12 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 		ap_sta_set_authorized(hapd, sta, 1);
 		wpa_msg(hapd->msg_ctx, MSG_INFO,
 			AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+#ifdef ANDROID_BRCM_P2P_PATCH
+		/* Sending the event to parent is required as SSL listens on parent ctrl iface */
+		if(hapd->msg_ctx_parent)
+			wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
+				AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+#endif /* ANDROID_BRCM_P2P_PATCH */
 	}
 
 	if (reassoc)

@@ -13,6 +13,10 @@ include $(LOCAL_PATH)/.config
 # To ignore possible wrong network configurations
 L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
 
+ifdef CONFIG_DRIVER_NL80211
+L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
+endif
+
 # To force sizeof(enum) = 4
 ifeq ($(TARGET_ARCH),arm)
 L_CFLAGS += -mabi=aapcs-linux

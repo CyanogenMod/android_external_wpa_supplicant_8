@@ -81,6 +81,10 @@ struct hostapd_data {
 				 struct sta_info *sta, int reassoc);
 
 	void *msg_ctx; /* ctx for wpa_msg() calls */
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/* Sending the event to parent is required as SSL listens on parent ctrl iface */
+	void *msg_ctx_parent; /* ctx for wpa_msg() calls */
+#endif /*ANDROID_BRCM_P2P_PATCH*/
 
 	struct radius_client_data *radius;
 	u32 acct_session_id_hi, acct_session_id_lo;

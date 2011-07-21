@@ -303,7 +303,9 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_AP
 	u8 *_p2p_dev_addr = NULL;
 #endif /* CONFIG_AP */
-
+#ifdef ANDROID_BRCM_P2P_PATCH	
+	struct wpa_supplicant *iface;
+#endif
 	if (cmd == NULL || os_strcmp(cmd, "any") == 0) {
 		_bssid = NULL;
 #ifdef CONFIG_P2P
@@ -322,7 +324,17 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-#ifdef CONFIG_AP
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_AP)
+	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)	{
+		if (iface->ap_iface){
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: iface 0x%08x wpa_s->ap_iface %p", iface, iface->ap_iface);
+			wpa_supplicant_ap_wps_pbc(iface, _bssid, _p2p_dev_addr);
+			return 0;
+		}
+		else
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: ap_iface is not set iface 0x%08x", iface);
+	}
+#elif defined CONFIG_AP
 	if (wpa_s->ap_iface)
 		return wpa_supplicant_ap_wps_pbc(wpa_s, _bssid, _p2p_dev_addr);
 #endif /* CONFIG_AP */
@@ -339,6 +351,10 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 	char *pin;
 	int ret;
 
+#if defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_AP
+	struct wpa_supplicant *iface;
+#endif
+
 	pin = os_strchr(cmd, ' ');
 	if (pin)
 		*pin++ = '\0';
@@ -351,7 +367,19 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-#ifdef CONFIG_AP
+#if defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_AP
+	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)	{
+		if (iface->ap_iface){
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: iface 0x%08x wpa_s->ap_iface %p", iface, iface->ap_iface);
+			/* Call the wps registrar for the main interface */
+			wpa_supplicant_ap_wps_pin(iface, _bssid, pin,
+							 buf, buflen);
+			return 0;
+		}
+		else
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: ap_iface is not set iface 0x%08x", iface);
+	}
+#elif defined CONFIG_AP
 	if (wpa_s->ap_iface)
 		return wpa_supplicant_ap_wps_pin(wpa_s, _bssid, pin,
 						 buf, buflen);
@@ -2335,6 +2363,16 @@ static int p2p_get_passphrase(struct wpa_supplicant *wpa_s, char *buf,
 {
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+	struct wpa_supplicant *ifs = NULL;
+	
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		if((ifs->ap_iface) && 
+			(ifs->p2p_group_interface == P2P_GROUP_INTERFACE_GO)) {
+			ssid = ifs->current_ssid;
+		}
+	}
+#endif
 	if (ssid == NULL || ssid->mode != WPAS_MODE_P2P_GO ||
 	    ssid->passphrase == NULL)
 		return -1;

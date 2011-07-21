@@ -215,11 +215,12 @@ void handle_probe_req(struct hostapd_data *hapd,
 		return;
 	ie_len = len - (IEEE80211_HDRLEN + sizeof(mgmt->u.probe_req));
 
+#ifndef ANDROID_BRCM_P2P_PATCH
 	for (i = 0; hapd->probereq_cb && i < hapd->num_probereq_cb; i++)
 		if (hapd->probereq_cb[i].cb(hapd->probereq_cb[i].ctx,
 					    mgmt->sa, ie, ie_len) > 0)
 			return;
-
+#endif
 	if (!hapd->iconf->send_probe_response)
 		return;
 

@@ -183,7 +183,12 @@ static struct wpabuf * p2p_group_build_beacon_ie(struct p2p_group *group)
 
 	len = p2p_buf_add_ie_hdr(ie);
 	p2p_group_add_common_ies(group, ie);
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/* P2P_ADDR: Use p2p_dev_addr instead of own mac addr*/
+	p2p_buf_add_device_id(ie, group->p2p->cfg->p2p_dev_addr);
+#else
 	p2p_buf_add_device_id(ie, group->p2p->cfg->dev_addr);
+#endif
 	p2p_group_add_noa(ie, group->noa);
 	p2p_buf_update_ie_hdr(ie, len);
 
