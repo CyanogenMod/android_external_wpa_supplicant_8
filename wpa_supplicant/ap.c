@@ -87,9 +87,10 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211N
 	/*
-	 * Enable HT20 if the driver supports it, by setting conf->ieee80211n.
+	 * Enable HT20 if the driver supports it, by setting conf->ieee80211n
+	 * and conf->ht_capab.
 	 * Using default config settings for: conf->ht_op_mode_fixed,
-	 * conf->ht_capab, conf->secondary_channel, conf->require_ht
+	 * conf->secondary_channel, conf->require_ht
 	 */
 	modes = wpa_drv_get_hw_feature_data(wpa_s, &num_modes, &flags);
 	if (modes) {
@@ -101,8 +102,11 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 				break;
 			}
 		}
-		if (mode && mode->ht_capab)
+		if (mode && mode->ht_capab) {
+			bss->wmm_enabled = 1;
 			conf->ieee80211n = 1;
+			conf->ht_capab = mode->ht_capab;
+		}
 		ieee80211_sta_free_hw_features(modes, num_modes);
 		modes = NULL;
 	}
