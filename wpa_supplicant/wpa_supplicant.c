@@ -382,20 +382,11 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 		wpa_s->l2_br = NULL;
 	}
 
-/* This has been moved to wpa_supplicant_deinit_iface to avoid a race with hostapd */
-#ifndef ANDROID
-	if (wpa_s->ctrl_iface) {
-		wpa_supplicant_ctrl_iface_deinit(wpa_s->ctrl_iface);
-		wpa_s->ctrl_iface = NULL;
-	}
 	if (wpa_s->conf != NULL) {
 		struct wpa_ssid *ssid;
 		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next)
 			wpas_notify_network_removed(wpa_s, ssid);
-		wpa_config_free(wpa_s->conf);
-		wpa_s->conf = NULL;
 	}
-#endif
 
 	os_free(wpa_s->confname);
 	wpa_s->confname = NULL;
@@ -2299,7 +2290,7 @@ next_driver:
 
 
 static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
-					int notify)
+					int notify, int terminate)
 {
 	if (wpa_s->drv_priv) {
 		wpa_supplicant_deauthenticate(wpa_s,
@@ -2311,11 +2302,11 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 
 	wpa_supplicant_cleanup(wpa_s);
 
-	if (notify)
-		wpas_notify_iface_removed(wpa_s);
-
 	if (wpa_s->drv_priv)
 		wpa_drv_deinit(wpa_s);
+
+	if (notify)
+		wpas_notify_iface_removed(wpa_s);
 
 /**
  * The wpa_drv_deinit call after sending TERMINATING to the framework causes
@@ -2323,8 +2314,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
  * This has been moved out of wpa_supplicant_cleanup(). Send the control
  * message and free config after the deinit.
  */
-#ifdef ANDROID
-	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_TERMINATING);
+	if (terminate)
+		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_TERMINATING);
 
 	if (wpa_s->ctrl_iface) {
 		wpa_supplicant_ctrl_iface_deinit(wpa_s->ctrl_iface);
@@ -2332,13 +2323,9 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 	}
 
 	if (wpa_s->conf != NULL) {
-		struct wpa_ssid *ssid;
-		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next)
-			wpas_notify_network_removed(wpa_s, ssid);
 		wpa_config_free(wpa_s->conf);
 		wpa_s->conf = NULL;
 	}
-#endif
 }
 
 
@@ -2388,14 +2375,14 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 	if (wpa_supplicant_init_iface(wpa_s, &t_iface)) {
 		wpa_printf(MSG_DEBUG, "Failed to add interface %s",
 			   iface->ifname);
-		wpa_supplicant_deinit_iface(wpa_s, 0);
+		wpa_supplicant_deinit_iface(wpa_s, 0, 0);
 		os_free(wpa_s);
 		return NULL;
 	}
 
 	/* Notify the control interfaces about new iface */
 	if (wpas_notify_iface_added(wpa_s)) {
-		wpa_supplicant_deinit_iface(wpa_s, 1);
+		wpa_supplicant_deinit_iface(wpa_s, 1, 0);
 		os_free(wpa_s);
 		return NULL;
 	}
@@ -2424,7 +2411,8 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
  * %wpa_supplicant is terminated.
  */
 int wpa_supplicant_remove_iface(struct wpa_global *global,
-				struct wpa_supplicant *wpa_s)
+				struct wpa_supplicant *wpa_s,
+				int terminate)
 {
 	struct wpa_supplicant *prev;
 
@@ -2444,7 +2432,7 @@ int wpa_supplicant_remove_iface(struct wpa_global *global,
 
 	if (global->p2p_group_formation == wpa_s)
 		global->p2p_group_formation = NULL;
-	wpa_supplicant_deinit_iface(wpa_s, 1);
+	wpa_supplicant_deinit_iface(wpa_s, 1, terminate);
 	os_free(wpa_s);
 
 	return 0;
@@ -2663,7 +2651,7 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 #endif /* CONFIG_P2P */
 
 	while (global->ifaces)
-		wpa_supplicant_remove_iface(global, global->ifaces);
+		wpa_supplicant_remove_iface(global, global->ifaces, 1);
 
 	if (global->ctrl_iface)
 		wpa_supplicant_global_ctrl_iface_deinit(global->ctrl_iface);
