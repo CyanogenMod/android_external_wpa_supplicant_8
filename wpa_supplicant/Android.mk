@@ -69,7 +69,7 @@ INCLUDES += $(LOCAL_PATH)/src/wps
 INCLUDES += external/openssl/include
 INCLUDES += frameworks/base/cmds/keystore
 ifdef CONFIG_DRIVER_NL80211
-INCLUDES += system/core/libnl_2/include
+INCLUDES += external/libnl-headers
 endif
 
 OBJS = config.c
