@@ -929,7 +929,14 @@ static void send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 		p = hostapd_eid_wmm(hapd, p);
 
 #ifdef CONFIG_WPS
+#ifdef CONFIG_WPS2
+	/* WPS2 must have a WPS IE in the Assoc Resp
+	 * even if there's only a small chance that the STA
+	 * tries to connect using WPS */
+	if (sta->flags & (WLAN_STA_WPS | WLAN_STA_MAYBE_WPS)) {
+#else /* CONFIG_WPS2 */
 	if (sta->flags & WLAN_STA_WPS) {
+#endif /* CONFIG_WPS2 */
 		struct wpabuf *wps = wps_build_assoc_resp_ie();
 		if (wps) {
 			os_memcpy(p, wpabuf_head(wps), wpabuf_len(wps));
