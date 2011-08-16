@@ -837,6 +837,7 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 	if (!current_bss)
 		return 1; /* current BSS not seen in scan results */
 
+#ifdef CONFIG_ROAMING
 	wpa_dbg(wpa_s, MSG_DEBUG, "Considering within-ESS reassociation");
 	wpa_dbg(wpa_s, MSG_DEBUG, "Current BSS: " MACSTR " level=%d",
 		MAC2STR(current_bss->bssid), current_bss->level);
@@ -871,6 +872,9 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 	}
 
 	return 1;
+#else
+	return 0;
+#endif
 }
 
 /* Return < 0 if no scan results could be fetched. */
