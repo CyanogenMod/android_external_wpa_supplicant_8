@@ -1653,6 +1653,15 @@ int wpa_supplicant_set_ap_scan(struct wpa_supplicant *wpa_s, int ap_scan)
 	if (ap_scan < 0 || ap_scan > 2)
 		return -1;
 
+#ifdef ANDROID
+	if ((ap_scan == 2) && ((wpa_s->wpa_state >= WPA_ASSOCIATING) &&
+		(wpa_s->wpa_state < WPA_COMPLETED))) {
+		wpa_printf(MSG_ERROR, "ap_scan = %d (%d)",wpa_s->conf->ap_scan,
+				ap_scan);
+		return 0;
+	}
+#endif
+
 	old_ap_scan = wpa_s->conf->ap_scan;
 	wpa_s->conf->ap_scan = ap_scan;
 
