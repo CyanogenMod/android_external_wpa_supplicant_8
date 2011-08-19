@@ -17,7 +17,9 @@ L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
 L_CFLAGS += -DANDROID_LOG_NAME=\"hostapd\"
 
 ifdef CONFIG_DRIVER_NL80211
-L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
+ifneq ($(BOARD_WLAN_DEVICE), wl12xx_mac80211)
+  L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
+endif
 endif
 
 # Use Android specific directory for control interface sockets
