@@ -948,7 +948,7 @@ void p2p_stop_find(struct p2p_data *p2p)
 }
 
 
-static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
+int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
 {
 	if (force_freq) {
 		u8 op_reg_class, op_channel;

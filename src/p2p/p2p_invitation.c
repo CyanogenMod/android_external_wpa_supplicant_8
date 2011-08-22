@@ -473,8 +473,6 @@ int p2p_invite(struct p2p_data *p2p, const u8 *peer, enum p2p_invite_role role,
 		p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
 		p2p->channels.reg_class[0].channel[0] = p2p->op_channel;
 	} else {
-		p2p->op_reg_class = p2p->cfg->op_reg_class;
-		p2p->op_channel = p2p->cfg->op_channel;
 		os_memcpy(&p2p->channels, &p2p->cfg->channels,
 			  sizeof(struct p2p_channels));
 	}

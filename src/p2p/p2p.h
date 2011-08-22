@@ -1528,4 +1528,6 @@ int p2p_add_wps_vendor_extension(struct p2p_data *p2p,
 int p2p_set_oper_channel(struct p2p_data *p2p, u8 op_reg_class, u8 op_channel,
 			 int cfg_op_channel);
 
+int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq);
+
 #endif /* P2P_H */
