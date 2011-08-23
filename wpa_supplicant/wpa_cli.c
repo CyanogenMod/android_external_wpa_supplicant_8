@@ -2969,6 +2969,11 @@ static void wpa_cli_action_process(const char *msg)
 		printf("wpa_supplicant is terminating - stop monitoring\n");
 		wpa_cli_quit = 1;
 	}
+#ifdef ANDROID_BRCM_P2P_PATCH
+	else if (str_match(pos, P2P_EVENT_GO_NEG_FAILURE)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	}
+#endif
 }
 
 

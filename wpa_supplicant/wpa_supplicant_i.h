@@ -637,7 +637,11 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid);
 
 /* events.c */
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);
+#ifdef ANDROID_BRCM_P2P_PATCH
+int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
+#else
 void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
+#endif /* ANDROID_BRCM_P2P_PATCH */
 			    struct wpa_bss *selected,
 			    struct wpa_ssid *ssid);
 

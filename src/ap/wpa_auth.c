@@ -349,6 +349,10 @@ static struct wpa_group * wpa_group_init(struct wpa_authenticator *wpa_auth,
 		wpa_printf(MSG_INFO, "WPA: Not enough entropy in random pool "
 			   "for secure operations - update keys later when "
 			   "the first station connects");
+#ifdef ANDROID_BRCM_P2P_PATCH
+		os_free(group);
+		return NULL;
+#endif
 	}
 
 	/*

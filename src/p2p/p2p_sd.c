@@ -451,7 +451,11 @@ void p2p_sd_response(struct p2p_data *p2p, int freq, const u8 *dst,
 
 	p2p->pending_action_state = P2P_NO_PENDING_ACTION;
 	if (p2p_send_action(p2p, freq, dst, p2p->cfg->dev_addr,
+		#ifdef ANDROID_BRCM_P2P_PATCH
+			   p2p->cfg->p2p_dev_addr,
+		#else
 			    p2p->cfg->dev_addr,
+		#endif
 			    wpabuf_head(resp), wpabuf_len(resp), 200) < 0)
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Failed to send Action frame");

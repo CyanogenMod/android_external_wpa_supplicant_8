@@ -464,10 +464,6 @@ static void p2p_copy_wps_info(struct p2p_device *dev, int probe_req,
 
 	if (msg->capability) {
 		dev->info.dev_capab = msg->capability[0];
-#ifdef ANDROID_BRCM_P2P_PATCH
-	if( dev->info.group_capab != msg->capability[1])
-		dev->flags &= ~P2P_DEV_REPORTED;
-#endif	
 		dev->info.group_capab = msg->capability[1];
 	}
 

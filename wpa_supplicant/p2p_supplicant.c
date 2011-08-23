@@ -1017,7 +1017,16 @@ static int wpas_p2p_add_group_interface(struct wpa_supplicant *wpa_s,
 
 	os_snprintf(ifname, sizeof(ifname), "p2p-%s-%d", wpa_s->ifname,
 		    wpa_s->p2p_group_idx);
-	if (os_strlen(ifname) >= IFNAMSIZ &&
+
+#ifdef ANDROID_BRCM_P2P_PATCH
+	/**
+	 * Monitor interface name is derived from p2p interface name
+	 * We need to reset p2p interface name early to take care of extra character in monitor interface name
+	 */
+	if (os_strlen(ifname) + os_strlen(WPA_MONITOR_IFNAME_PREFIX)  >= IFNAMSIZ &&
+#else
+	if (os_strlen(ifname) >= IFNAMSIZ  &&
+#endif
 	    os_strlen(wpa_s->ifname) < IFNAMSIZ) {
 		/* Try to avoid going over the IFNAMSIZ length limit */
 		os_snprintf(ifname, sizeof(ifname), "p2p-%d",
@@ -3677,7 +3686,7 @@ int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 		return -1;
 
 	p2p_ie = wpa_bss_get_vendor_ie_multi(bss, P2P_IE_VENDOR_TYPE);
-#ifdef ANDROID_BRCM_P2P_PATCH 
+#ifdef ANDROID_BRCM_P2P_PATCH
 	if (p2p_ie == NULL) return -1;
 #endif
 	ret = p2p_assoc_req_ie(wpa_s->global->p2p, bss->bssid, buf, len,
@@ -4015,7 +4024,8 @@ void wpas_p2p_group_remove_notif(struct wpa_supplicant *wpa_s, u16 reason_code)
 
 		wpa_printf(MSG_DEBUG, "P2P: [EVENT_DEAUTH] Removing P2P_CLIENT virtual intf.");
 		wpa_supplicant_cancel_scan(wpa_s);
-		wpas_p2p_interface_unavailable(wpa_s);
+		wpa_s->removal_reason = P2P_GROUP_REMOVAL_UNAVAILABLE;
+		wpas_p2p_group_delete(wpa_s);
 	}
 }
 #endif

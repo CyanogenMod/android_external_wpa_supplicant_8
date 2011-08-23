@@ -351,7 +351,7 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 	char *pin;
 	int ret;
 
-#if defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_AP
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_AP)
 	struct wpa_supplicant *iface;
 #endif
 
@@ -367,7 +367,7 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-#if defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_AP
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_AP)
 	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)	{
 		if (iface->ap_iface){
 			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: iface 0x%08x wpa_s->ap_iface %p", iface, iface->ap_iface);
@@ -789,6 +789,19 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 {
 	char *pos, *end, tmp[30];
 	int res, verbose, ret;
+
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_P2P)
+	/* We have to send status command to p2p interface if p2p_interface is started 
+	 * otherwise we can send it to primary interface
+	*/
+	struct wpa_supplicant* ifs;
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		if ( (ifs->p2p_group_interface == P2P_GROUP_INTERFACE_GO ) ||(ifs->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT )) {
+			wpa_s = ifs;
+			break;
+		}
+	}
+#endif /* defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_P2P */
 
 	verbose = os_strcmp(params, "-VERBOSE") == 0;
 	pos = buf;

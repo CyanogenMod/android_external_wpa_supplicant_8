@@ -700,8 +700,11 @@ static void wpa_supplicant_req_new_scan(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_req_scan(wpa_s, timeout_sec, timeout_usec);
 }
 
-
+#ifdef ANDROID_BRCM_P2P_PATCH
+int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
+#else
 void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
+#endif /* ANDROID_BRCM_P2P_PATCH */
 			    struct wpa_bss *selected,
 			    struct wpa_ssid *ssid)
 {
@@ -709,14 +712,23 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 		wpa_msg(wpa_s, MSG_INFO, WPS_EVENT_OVERLAP
 			"PBC session overlap");
 #ifdef CONFIG_P2P
-		if (wpas_p2p_notif_pbc_overlap(wpa_s) == 1)
+		if (wpas_p2p_notif_pbc_overlap(wpa_s) == 1) {
+#ifdef ANDROID_BRCM_P2P_PATCH
+			return -1;
+#else
 			return;
+#endif
+		}
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS
 		wpas_wps_cancel(wpa_s);
 #endif /* CONFIG_WPS */
+#ifdef ANDROID_BRCM_P2P_PATCH
+		return -1;
+#else
 		return;
+#endif /* ANDROID_BRCM_P2P_PATCH */
 	}
 
 	/*
@@ -737,7 +749,11 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 	      0))) {
 		if (wpa_supplicant_scard_init(wpa_s, ssid)) {
 			wpa_supplicant_req_new_scan(wpa_s, 10, 0);
+#ifdef ANDROID_BRCM_P2P_PATCH
+			return 0;
+#else
 			return;
+#endif
 		}
 		wpa_msg(wpa_s, MSG_DEBUG, "Request association: "
 			"reassociate: %d  selected: "MACSTR "  bssid: " MACSTR
@@ -750,6 +766,9 @@ void wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 		wpa_dbg(wpa_s, MSG_DEBUG, "Already associated with the "
 			"selected AP");
 	}
+#ifdef ANDROID_BRCM_P2P_PATCH
+	return 0;
+#endif
 }
 
 
@@ -975,7 +994,14 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		wpa_scan_results_free(scan_res);
 		if (skip)
 			return 0;
+#ifdef ANDROID_BRCM_P2P_PATCH
+		if (wpa_supplicant_connect(wpa_s, selected, ssid) < 0) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Connect Failed");
+			return -1;
+		}
+#else
 		wpa_supplicant_connect(wpa_s, selected, ssid);
+#endif
 		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 	} else {
 		wpa_scan_results_free(scan_res);

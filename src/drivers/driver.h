@@ -35,6 +35,14 @@
 #define HOSTAPD_CHAN_HT40MINUS 0x00000020
 #define HOSTAPD_CHAN_HT40 0x00000040
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+/**
+ * Monitor interface name is derived from p2p interface name
+ * We need to reset p2p interface name early to take care of extra character in
+ */
+#define WPA_MONITOR_IFNAME_PREFIX	"m."
+#endif
+
 /**
  * struct hostapd_channel_data - Channel information
  */
