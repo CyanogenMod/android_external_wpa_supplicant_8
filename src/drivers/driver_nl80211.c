@@ -163,7 +163,6 @@ struct wpa_driver_nl80211_data {
 	int monitor_sock;
 	int monitor_ifidx;
 	int no_monitor_iface_capab;
-	int disable_11b_rates;
 
 	unsigned int pending_remain_on_chan:1;
 
@@ -2263,8 +2262,7 @@ static void wpa_driver_nl80211_deinit(void *priv)
 		os_free(drv->if_indices);
 #endif /* HOSTAPD */
 
-	if (drv->disable_11b_rates)
-		nl80211_disable_11b_rates(drv, drv->ifindex, 0);
+	nl80211_disable_11b_rates(drv, drv->ifindex, 0);
 
 	netlink_send_oper_ifla(drv->netlink, drv->ifindex, 0, IF_OPER_UP);
 	netlink_deinit(drv->netlink);
@@ -4085,7 +4083,9 @@ static int nl80211_create_iface(struct wpa_driver_nl80211_data *drv,
 						wds);
 	}
 
-	if (ret >= 0 && drv->disable_11b_rates)
+	if (ret >= 0 &&
+	    (iftype == NL80211_IFTYPE_P2P_CLIENT ||
+	     iftype == NL80211_IFTYPE_P2P_GO))
 		nl80211_disable_11b_rates(drv, ret, 1);
 
 	return ret;
@@ -5036,8 +5036,12 @@ static int nl80211_set_mode(struct wpa_driver_nl80211_data *drv,
 	NLA_PUT_U32(msg, NL80211_ATTR_IFTYPE, mode);
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
-	if (!ret)
+	if (!ret) {
+		if (mode == NL80211_IFTYPE_P2P_CLIENT ||
+		     mode == NL80211_IFTYPE_P2P_GO)
+			nl80211_disable_11b_rates(drv, ifindex, 1);
 		return 0;
+	}
 nla_put_failure:
 	wpa_printf(MSG_DEBUG, "nl80211: Failed to set interface %d to mode %d:"
 		   " %d (%s)", ifindex, mode, ret, strerror(-ret));
@@ -6482,6 +6486,9 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 		    NL80211_CMD_SET_TX_BITRATE_MASK, 0);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, ifindex);
 
+	if (!disabled)
+		goto nla_send;
+
 	bands = nla_nest_start(msg, NL80211_ATTR_TX_RATES);
 	if (!bands)
 		goto nla_put_failure;
@@ -6499,7 +6506,7 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 	nla_nest_end(msg, band);
 
 	nla_nest_end(msg, bands);
-
+nla_send:
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	msg = NULL;
 	if (ret) {
@@ -6512,15 +6519,6 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 nla_put_failure:
 	nlmsg_free(msg);
 	return -1;
-}
-
-
-static int wpa_driver_nl80211_disable_11b_rates(void *priv, int disabled)
-{
-	struct i802_bss *bss = priv;
-	struct wpa_driver_nl80211_data *drv = bss->drv;
-	drv->disable_11b_rates = disabled;
-	return nl80211_disable_11b_rates(drv, drv->ifindex, disabled);
 }
 
 
@@ -6843,7 +6841,6 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.cancel_remain_on_channel =
 	wpa_driver_nl80211_cancel_remain_on_channel,
 	.probe_req_report = wpa_driver_nl80211_probe_req_report,
-	.disable_11b_rates = wpa_driver_nl80211_disable_11b_rates,
 	.deinit_ap = wpa_driver_nl80211_deinit_ap,
 	.resume = wpa_driver_nl80211_resume,
 	.send_ft_action = nl80211_send_ft_action,
