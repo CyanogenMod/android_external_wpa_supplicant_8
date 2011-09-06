@@ -547,6 +547,19 @@ static struct p2p_group_member * p2p_group_get_client_iface(
 	return NULL;
 }
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+u8 * p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr)
+{
+	struct p2p_group_member *m;
+
+	m = p2p_group_get_client_iface(group, addr);
+
+	if (m)
+		return m->dev_addr;
+	else
+		return NULL;
+}
+#endif /* ANDROID_BRCM_P2P_PATCH */
 
 static struct wpabuf * p2p_build_go_disc_req(void)
 {

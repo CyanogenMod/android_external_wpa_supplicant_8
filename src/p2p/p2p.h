@@ -1244,6 +1244,16 @@ void p2p_group_deinit(struct p2p_group *group);
  */
 int p2p_group_notif_assoc(struct p2p_group *group, const u8 *addr,
 			  const u8 *ie, size_t len);
+#ifdef ANDROID_BRCM_P2P_PATCH
+/**
+ * p2p_group_get_dev_addr - Retreive the device address of an assocated P2P
+ * client. 
+ * @group: P2P group context from p2p_group_init()
+ * @addr: Interface address of the P2P client
+ * Returns: P2P dev_addr on success, NULL on failure
+ */
+u8 *p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr);
+#endif /*ANDROID_BRCM_P2P_PATCH */
 
 /**
  * p2p_group_assoc_resp_ie - Build P2P IE for (re)association response

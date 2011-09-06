@@ -36,6 +36,9 @@
 #include "ap_config.h"
 #include "ap_drv_ops.h"
 #include "ieee802_1x.h"
+#ifdef ANDROID_BRCM_P2P_PATCH
+#include "p2p/p2p_i.h"
+#endif
 
 
 static void ieee802_1x_finished(struct hostapd_data *hapd,
@@ -84,21 +87,37 @@ void ieee802_1x_set_sta_authorized(struct hostapd_data *hapd,
 				   struct sta_info *sta, int authorized)
 {
 	int res;
+#ifdef ANDROID_BRCM_P2P_PATCH
+	u8 *dev_addr = NULL;
+#endif
 
 	if (sta->flags & WLAN_STA_PREAUTH)
 		return;
 
 	if (authorized) {
 		if (!ap_sta_is_authorized(sta)) {
-			wpa_msg(hapd->msg_ctx, MSG_INFO,
-				AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_P2P)
+			if((dev_addr = p2p_group_get_dev_addr(hapd->p2p_group, sta->addr)))
+				wpa_msg(hapd->msg_ctx, MSG_INFO,
+					AP_STA_CONNECTED MACSTR " dev_addr="MACSTR, MAC2STR(sta->addr), MAC2STR(dev_addr));
+			else
+#endif /*ANDROID_BRCM_P2P_PATCH*/
+				wpa_msg(hapd->msg_ctx, MSG_INFO,
+					AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+
 #ifdef ANDROID_BRCM_P2P_PATCH
 			/* Sending the event to parent is required as SSL listens on parent ctrl iface */
-			if(hapd->msg_ctx_parent)
-				wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
-					AP_STA_CONNECTED MACSTR, MAC2STR(sta->addr));
+			if(hapd->msg_ctx_parent) {
+				if(dev_addr)
+					wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
+						AP_STA_CONNECTED MACSTR " dev_addr="MACSTR, MAC2STR(sta->addr), MAC2STR(dev_addr));
+				else
+					wpa_msg(hapd->msg_ctx_parent, MSG_INFO,
+						AP_STA_CONNECTED MACSTR , MAC2STR(sta->addr));
+			}
 #endif /* ANDROID_BRCM_P2P_PATCH */
 		}
+
 		ap_sta_set_authorized(hapd, sta, 1);
 		res = hostapd_set_authorized(hapd, sta, 1);
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE8021X,
