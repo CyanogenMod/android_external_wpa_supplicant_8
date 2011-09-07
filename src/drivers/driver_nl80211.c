@@ -43,6 +43,9 @@
 #if defined(ANDROID_BRCM_P2P_PATCH) && !defined(HOSTAPD)
 #include "wpa_supplicant_i.h"
 #endif
+#ifdef ANDROID
+#define WPA_EVENT_DRIVER_STATE		"CTRL-EVENT-DRIVER-STATE "
+#endif
 #ifdef CONFIG_LIBNL20
 /* libnl 2.0 compatibility code */
 #define nl_handle nl_sock
@@ -1496,9 +1499,15 @@ static int process_event(struct nl_msg *msg, void *arg)
 		}
 		drv->associated = 0;
 		os_memset(&data, 0, sizeof(data));
-		if (tb[NL80211_ATTR_REASON_CODE])
+		if (tb[NL80211_ATTR_REASON_CODE]) {
 			data.disassoc_info.reason_code =
 				nla_get_u16(tb[NL80211_ATTR_REASON_CODE]);
+#ifdef ANDROID
+			if (data.disassoc_info.reason_code == WLAN_REASON_UNSPECIFIED)
+				wpa_msg(drv->ctx, MSG_INFO,
+					WPA_EVENT_DRIVER_STATE "HANGED");
+#endif
+		}
 		wpa_supplicant_event(drv->ctx, EVENT_DISASSOC, &data);
 		break;
 	case NL80211_CMD_MICHAEL_MIC_FAILURE:
