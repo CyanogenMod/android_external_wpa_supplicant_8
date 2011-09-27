@@ -48,6 +48,7 @@ extern int wpa_driver_wext_driver_cmd(void *priv, char *cmd, char *buf,
 					size_t buf_len);
 extern int wpa_driver_wext_combo_scan(void *priv,
 					struct wpa_driver_scan_params *params);
+extern int wpa_driver_signal_poll(void *priv, struct wpa_signal_info *si);
 #endif
 
 int wpa_driver_wext_set_auth_param(struct wpa_driver_wext_data *drv,
@@ -2370,6 +2371,7 @@ const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.set_operstate = wpa_driver_wext_set_operstate,
 	.get_radio_name = wext_get_radio_name,
 #ifdef ANDROID
+	.signal_poll = wpa_driver_signal_poll,
 	.driver_cmd = wpa_driver_wext_driver_cmd,
 #endif
 };
