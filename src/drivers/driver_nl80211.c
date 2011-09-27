@@ -171,6 +171,7 @@ struct wpa_driver_nl80211_data {
 	u64 send_action_cookie;
 
 	unsigned int last_mgmt_freq;
+	unsigned int ap_oper_freq;
 
 	struct wpa_driver_scan_filter *filter_ssids;
 	size_t num_filter_ssids;
@@ -204,6 +205,16 @@ static int nl80211_send_frame_cmd(struct wpa_driver_nl80211_data *drv,
 				  unsigned int freq, unsigned int wait,
 				  const u8 *buf, size_t buf_len, u64 *cookie);
 static int wpa_driver_nl80211_probe_req_report(void *priv, int report);
+#ifdef ANDROID_BRCM_P2P_PATCH
+static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
+				  enum wpa_event_type type,
+				  const u8 *frame, size_t len);
+int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
+int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
+int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
+				  const struct wpabuf *proberesp,
+				  const struct wpabuf *assocresp);
+#endif
 
 #ifdef HOSTAPD
 static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx);
@@ -810,6 +821,14 @@ static void mlme_event_mgmt(struct wpa_driver_nl80211_data *drv,
 		event.rx_action.data = &mgmt->u.action.category + 1;
 		event.rx_action.len = frame + len - event.rx_action.data;
 		wpa_supplicant_event(drv->ctx, EVENT_RX_ACTION, &event);
+#ifdef ANDROID_BRCM_P2P_PATCH
+	} else if (stype == WLAN_FC_STYPE_ASSOC_REQ) {
+		mlme_event_assoc(drv, frame, len);
+	} else if (stype == WLAN_FC_STYPE_DISASSOC) {
+		mlme_event_deauth_disassoc(drv, EVENT_DISASSOC, frame, len);
+	} else if (stype == WLAN_FC_STYPE_DEAUTH) {
+		mlme_event_deauth_disassoc(drv, EVENT_DEAUTH, frame, len);
+#endif
 	} else {
 		event.rx_mgmt.frame = frame;
 		event.rx_mgmt.frame_len = len;
@@ -3730,11 +3749,7 @@ static int wpa_driver_nl80211_send_mlme(void *priv, const u8 *data,
 
 	mgmt = (struct ieee80211_mgmt *) data;
 	fc = le_to_host16(mgmt->frame_control);
-#ifndef ANDROID_BRCM_P2P_PATCH
 	if (drv->nlmode == NL80211_IFTYPE_STATION &&
-#else
-	if (
-#endif
 	    WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_MGMT &&
 	    WLAN_FC_GET_STYPE(fc) == WLAN_FC_STYPE_PROBE_RESP) {
 		/*
@@ -3745,7 +3760,18 @@ static int wpa_driver_nl80211_send_mlme(void *priv, const u8 *data,
 		return nl80211_send_frame_cmd(drv, drv->last_mgmt_freq, 0,
 					      data, data_len, NULL);
 	}
-
+#ifdef ANDROID_BRCM_P2P_PATCH
+	if (drv->nlmode == NL80211_IFTYPE_AP) {
+		wpa_printf(MSG_DEBUG, "%s: Sending frame on ap_oper_freq %d using nl80211_send_frame_cmd", __func__, drv->ap_oper_freq);
+		return nl80211_send_frame_cmd(drv, drv->ap_oper_freq, 0,
+					  data, data_len, &drv->send_action_cookie);
+	}
+#else
+	if (drv->no_monitor_iface_capab && drv->nlmode == NL80211_IFTYPE_AP ) {
+		return nl80211_send_frame_cmd(drv, drv->ap_oper_freq, 0,
+					      data, data_len, NULL);
+	}
+#endif
 	if (WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_MGMT &&
 	    WLAN_FC_GET_STYPE(fc) == WLAN_FC_STYPE_AUTH) {
 		/*
@@ -3759,7 +3785,7 @@ static int wpa_driver_nl80211_send_mlme(void *priv, const u8 *data,
 		if (auth_alg != WLAN_AUTH_SHARED_KEY || auth_trans != 3)
 			encrypt = 0;
 	}
-
+	wpa_printf(MSG_DEBUG, "%s: Sending frame using monitor interface/l2 socket", __func__);
 	return wpa_driver_nl80211_send_frame(drv, data, data_len, encrypt);
 }
 
@@ -3776,11 +3802,7 @@ static int wpa_driver_nl80211_set_beacon(void *priv,
 	int ret;
 	int beacon_set;
 	int ifindex = if_nametoindex(bss->ifname);
-#ifdef ANDROID_BRCM_P2P_PATCH
-		beacon_set = 1;
-#else
-		beacon_set = bss->beacon_set;
-#endif
+	beacon_set = bss->beacon_set;
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -4572,6 +4594,8 @@ static int wpa_driver_nl80211_ap(struct wpa_driver_nl80211_data *drv,
 
 	/* TODO: setup monitor interface (and add code somewhere to remove this
 	 * when AP mode is stopped; associate with mode != 2 or drv_deinit) */
+	wpa_printf(MSG_DEBUG, "nl80211: Update ap_oper_freq with params->freq %d", params->freq);
+	drv->ap_oper_freq = params->freq;
 
 	return 0;
 }
@@ -6019,17 +6043,8 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 				nl80211_remove_iface(drv, ifidx);
 				return -1;
 			}
-			os_memcpy(if_addr, new_addr, ETH_ALEN);
 		}
-#ifdef ANDROID_BRCM_P2P_PATCH
-		 else {
-			/* P2P_ADDR: Driver uses a different mac address than the primary mac */
-			wpa_printf(MSG_DEBUG, "nl80211: Driver uses a "
-				   "different mac address for the Virtual I/F. Get that and store it locally");
-			os_memcpy(if_addr, new_addr, ETH_ALEN);
-
-		}
-#endif
+		os_memcpy(if_addr, new_addr, ETH_ALEN);
 	}
 #endif /* CONFIG_P2P */
 
@@ -6151,8 +6166,9 @@ static int nl80211_send_frame_cmd(struct wpa_driver_nl80211_data *drv,
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
 #ifndef ANDROID_BRCM_P2P_PATCH
-	NLA_PUT_U32(msg, NL80211_ATTR_DURATION, wait);
-#endif	
+	if (wait)
+		NLA_PUT_U32(msg, NL80211_ATTR_DURATION, wait);
+#endif
 	NLA_PUT_FLAG(msg, NL80211_ATTR_OFFCHANNEL_TX_OK);
 	NLA_PUT(msg, NL80211_ATTR_FRAME, buf_len, buf);
 
@@ -6161,7 +6177,8 @@ static int nl80211_send_frame_cmd(struct wpa_driver_nl80211_data *drv,
 	msg = NULL;
 	if (ret) {
 		wpa_printf(MSG_DEBUG, "nl80211: Frame command failed: ret=%d "
-			   "(%s)", ret, strerror(-ret));
+			   "(%s) (freq=%u wait=%u)", ret, strerror(-ret),
+			   freq, wait);
 		goto nla_put_failure;
 	}
 	wpa_printf(MSG_DEBUG, "nl80211: Frame TX command accepted; "
@@ -6320,14 +6337,7 @@ static int wpa_driver_nl80211_probe_req_report(void *priv, int report)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-#ifndef ANDROID_BRCM_P2P_PATCH
-	if (drv->nlmode != NL80211_IFTYPE_STATION) {
-		wpa_printf(MSG_DEBUG, "nl80211: probe_req_report control only "
-			   "allowed in station mode (iftype=%d)",
-			   drv->nlmode);
-		return -1;
-	}
-#endif
+
 	if (!report) {
 		if (drv->nl_handle_preq) {
 			eloop_unregister_read_sock(
@@ -6826,6 +6836,11 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.add_pmkid = nl80211_add_pmkid,
 	.remove_pmkid = nl80211_remove_pmkid,
 	.flush_pmkid = nl80211_flush_pmkid,
+#ifdef ANDROID_BRCM_P2P_PATCH
+	.set_noa = wpa_driver_set_p2p_noa,
+	.set_p2p_powersave = wpa_driver_set_p2p_ps,
+	.set_ap_wps_ie = wpa_driver_set_ap_wps_p2p_ie,
+#endif
 #ifdef ANDROID
 	.driver_cmd = wpa_driver_nl80211_driver_cmd,
 #endif
