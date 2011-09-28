@@ -4168,10 +4168,49 @@ int wpas_p2p_set_noa(struct wpa_supplicant *wpa_s, u8 count, int start,
 {
 	if (!wpa_s->ap_iface)
 		return -1;
+
+#ifdef ANDROID_BRCM_P2P_PATCH
+#define NOA_BUF_LEN 50
+	/* Now get the NOA descriptor from the driver */
+	hostapd_p2p_set_noa(wpa_s->ap_iface->bss[0], count, start,
+						   duration);
+	if(count > 0) {
+		u8 noa[NOA_BUF_LEN];
+		int noa_len = 0;
+		wpa_printf(MSG_DEBUG, "P2P: Get NOA attribute from driver");
+		noa_len = wpa_drv_get_noa(wpa_s, noa, NOA_BUF_LEN);
+		if (noa_len) {
+			wpa_printf(MSG_DEBUG, "P2P: Now Update NOA attributes in Beacons/ProbeRsps noa_len %d", noa_len);
+			return p2p_group_notif_noa(wpa_s->p2p_group, noa, noa_len);
+		}
+		else
+			return 0;
+	}
+	else
+		return 0;
+#else
 	return hostapd_p2p_set_noa(wpa_s->ap_iface->bss[0], count, start,
 				   duration);
+#endif
 }
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+int wpas_drv_set_p2p_powersave(struct wpa_supplicant *wpa_s, int legacy_ps, int opp_ps, int ctwindow)
+{
+#define NOA_BUF_LEN 50
+	u8 noa[NOA_BUF_LEN];
+	int noa_len = 0;
+	wpa_drv_set_p2p_powersave(wpa_s, legacy_ps, opp_ps, ctwindow);
+	wpa_printf(MSG_DEBUG, "P2P: Get NOA attribute from driver");
+	noa_len = wpa_drv_get_noa(wpa_s, noa, NOA_BUF_LEN);
+	if (noa_len) {
+		wpa_printf(MSG_DEBUG, "P2P: Now Update NOA attributes in Beacons/ProbeRsps noa_len %d", noa_len);
+		return p2p_group_notif_noa(wpa_s->p2p_group, noa, noa_len);
+	}
+	else
+		return 0;
+}
+#endif
 
 int wpas_p2p_set_cross_connect(struct wpa_supplicant *wpa_s, int enabled)
 {

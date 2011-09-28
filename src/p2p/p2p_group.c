@@ -499,7 +499,11 @@ int p2p_group_notif_noa(struct p2p_group *group, const u8 *noa,
 	} else {
 		if (group->noa) {
 			if (wpabuf_size(group->noa) >= noa_len) {
+			#ifdef ANDROID_BRCM_P2P_PATCH
+				group->noa->used = 0;
+			#else
 				group->noa->size = 0;
+			#endif
 				wpabuf_put_data(group->noa, noa, noa_len);
 			} else {
 				wpabuf_free(group->noa);
@@ -658,11 +662,11 @@ u8 p2p_group_presence_req(struct p2p_group *group,
 	else
 		wpa_hexdump(MSG_DEBUG, "P2P: Current NoA", curr_noa,
 			    curr_noa_len);
-
+#ifndef ANDROID_BRCM_P2P_PATCH
 	/* TODO: properly process request and store copy */
 	if (curr_noa_len > 0)
 		return P2P_SC_FAIL_UNABLE_TO_ACCOMMODATE;
-
+#endif
 	return P2P_SC_SUCCESS;
 }
 

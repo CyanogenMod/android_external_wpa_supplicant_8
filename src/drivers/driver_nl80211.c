@@ -209,6 +209,7 @@ static int wpa_driver_nl80211_probe_req_report(void *priv, int report);
 static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				  enum wpa_event_type type,
 				  const u8 *frame, size_t len);
+int wpa_driver_get_p2p_noa(void *priv, u8 *buf, size_t len);
 int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
 int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
 int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
@@ -6837,6 +6838,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.remove_pmkid = nl80211_remove_pmkid,
 	.flush_pmkid = nl80211_flush_pmkid,
 #ifdef ANDROID_BRCM_P2P_PATCH
+	.get_noa = wpa_driver_get_p2p_noa,
 	.set_noa = wpa_driver_set_p2p_noa,
 	.set_p2p_powersave = wpa_driver_set_p2p_ps,
 	.set_ap_wps_ie = wpa_driver_set_ap_wps_p2p_ie,
