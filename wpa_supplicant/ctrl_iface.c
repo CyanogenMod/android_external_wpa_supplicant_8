@@ -327,12 +327,12 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 #if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_AP)
 	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)	{
 		if (iface->ap_iface){
-			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: iface 0x%08x wpa_s->ap_iface %p", iface, iface->ap_iface);
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: iface 0x%08x wpa_s->ap_iface %p", (u32)iface, iface->ap_iface);
 			wpa_supplicant_ap_wps_pbc(iface, _bssid, _p2p_dev_addr);
 			return 0;
 		}
 		else
-			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: ap_iface is not set iface 0x%08x", iface);
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PBC: ap_iface is not set iface 0x%08x", (u32)iface);
 	}
 #elif defined CONFIG_AP
 	if (wpa_s->ap_iface)
@@ -370,14 +370,14 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 #if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_AP)
 	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)	{
 		if (iface->ap_iface){
-			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: iface 0x%08x wpa_s->ap_iface %p", iface, iface->ap_iface);
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: iface 0x%08x wpa_s->ap_iface %p", (u32)iface, iface->ap_iface);
 			/* Call the wps registrar for the main interface */
 			wpa_supplicant_ap_wps_pin(iface, _bssid, pin,
 							 buf, buflen);
 			return 0;
 		}
 		else
-			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: ap_iface is not set iface 0x%08x", iface);
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: ap_iface is not set iface 0x%08x", (u32)iface);
 	}
 #elif defined CONFIG_AP
 	if (wpa_s->ap_iface)
@@ -2814,6 +2814,24 @@ static int p2p_ctrl_peer(struct wpa_supplicant *wpa_s, char *cmd,
 				 buf, buflen);
 }
 
+#ifdef ANDROID_BRCM_P2P_PATCH
+struct wpa_supplicant* p2p_get_apif(struct wpa_supplicant* wpa_s)
+{
+	struct wpa_supplicant* iface;
+	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)
+		if (iface->ap_iface)
+			return iface;
+	return wpa_s;
+}
+struct wpa_supplicant* p2p_get_clientif(struct wpa_supplicant* wpa_s)
+{
+	struct wpa_supplicant* iface;
+	for (iface = wpa_s->global->ifaces; iface; iface = iface->next)
+		if (iface->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT)
+			return iface;
+	return wpa_s;
+}
+#endif
 
 static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 {
@@ -2869,17 +2887,46 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 			return -1;
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: P2P_SET GO NoA: count=%d "
 			   "start=%d duration=%d", count, start, duration);
+#ifdef ANDROID_BRCM_P2P_PATCH
+		return wpas_p2p_set_noa(p2p_get_apif(wpa_s), count, start, duration);
+#else
 		return wpas_p2p_set_noa(wpa_s, count, start, duration);
+#endif
 	}
 
 	if (os_strcmp(cmd, "ps") == 0)
+#ifdef ANDROID_BRCM_P2P_PATCH
+		return wpas_drv_set_p2p_powersave(p2p_get_clientif(wpa_s), atoi(param), -1, -1);
+#else
 		return wpa_drv_set_p2p_powersave(wpa_s, atoi(param), -1, -1);
+#endif
 
 	if (os_strcmp(cmd, "oppps") == 0)
+#ifdef ANDROID_BRCM_P2P_PATCH
+		return wpas_drv_set_p2p_powersave(p2p_get_apif(wpa_s), -1, atoi(param), -1);
+#else
 		return wpa_drv_set_p2p_powersave(wpa_s, -1, atoi(param), -1);
+#endif
 
 	if (os_strcmp(cmd, "ctwindow") == 0)
+#ifdef ANDROID_BRCM_P2P_PATCH
+		return wpa_drv_set_p2p_powersave(p2p_get_apif(wpa_s), -1, -1, atoi(param));
+#else
 		return wpa_drv_set_p2p_powersave(wpa_s, -1, -1, atoi(param));
+#endif
+
+	if (os_strcmp(cmd, "disabled") == 0) {
+		wpa_s->global->p2p_disabled = atoi(param);
+		wpa_printf(MSG_DEBUG, "P2P functionality %s",
+			   wpa_s->global->p2p_disabled ?
+			   "disabled" : "enabled");
+		if (wpa_s->global->p2p_disabled) {
+			wpas_p2p_stop_find(wpa_s);
+			os_memset(wpa_s->p2p_auth_invite, 0, ETH_ALEN);
+			p2p_flush(wpa_s->global->p2p);
+		}
+		return 0;
+	}
 
 	if (os_strcmp(cmd, "disabled") == 0) {
 		wpa_s->global->p2p_disabled = atoi(param);
@@ -3312,6 +3359,18 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpas_p2p_cancel(wpa_s))
 			reply_len = -1;
 	} else if (os_strncmp(buf, "P2P_PRESENCE_REQ ", 17) == 0) {
+	#if defined(ANDROID_BRCM_P2P_PATCH) && defined(CONFIG_P2P)
+		/* We have to send presence command to p2p interface if p2p_interface is started 
+		 * otherwise we can send it to primary interface
+		*/
+		struct wpa_supplicant* ifs;
+		for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+			if ( (ifs->p2p_group_interface == P2P_GROUP_INTERFACE_GO ) ||(ifs->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT )) {
+				wpa_s = ifs;
+				break;
+			}
+		}
+	#endif /* defined ANDROID_BRCM_P2P_PATCH && defined CONFIG_P2P */
 		if (p2p_ctrl_presence_req(wpa_s, buf + 17) < 0)
 			reply_len = -1;
 	} else if (os_strcmp(buf, "P2P_PRESENCE_REQ") == 0) {
