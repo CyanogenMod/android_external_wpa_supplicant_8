@@ -6486,9 +6486,6 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 		    NL80211_CMD_SET_TX_BITRATE_MASK, 0);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, ifindex);
 
-	if (!disabled)
-		goto nla_send;
-
 	bands = nla_nest_start(msg, NL80211_ATTR_TX_RATES);
 	if (!bands)
 		goto nla_put_failure;
@@ -6501,12 +6498,13 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 	band = nla_nest_start(msg, NL80211_BAND_2GHZ);
 	if (!band)
 		goto nla_put_failure;
-	NLA_PUT(msg, NL80211_TXRATE_LEGACY, 8,
-		"\x0c\x12\x18\x24\x30\x48\x60\x6c");
+	if (disabled)
+		NLA_PUT(msg, NL80211_TXRATE_LEGACY, 8,
+			    "\x0c\x12\x18\x24\x30\x48\x60\x6c");
 	nla_nest_end(msg, band);
 
 	nla_nest_end(msg, bands);
-nla_send:
+
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	msg = NULL;
 	if (ret) {
