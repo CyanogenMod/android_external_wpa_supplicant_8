@@ -143,17 +143,31 @@ static void usage(void)
 
 static struct wpa_ctrl * hostapd_cli_open_connection(const char *ifname)
 {
-	char *cfile;
+	char *cfile = NULL;
 	int flen;
 
 	if (ifname == NULL)
 		return NULL;
 
+#ifdef ANDROID
+	if (access(ctrl_iface_dir, F_OK) < 0) {
+		cfile = os_strdup(ifname);
+		if (cfile == NULL)
+			return NULL;
+	} else {
+		flen = strlen(ctrl_iface_dir) + strlen(ifname) + 2;
+		cfile = malloc(flen);
+		if (cfile == NULL)
+			return NULL;
+		snprintf(cfile, flen, "%s/%s", ctrl_iface_dir, ifname);
+	}
+#else
 	flen = strlen(ctrl_iface_dir) + strlen(ifname) + 2;
 	cfile = malloc(flen);
 	if (cfile == NULL)
 		return NULL;
 	snprintf(cfile, flen, "%s/%s", ctrl_iface_dir, ifname);
+#endif /* ANDROID */
 
 	ctrl_conn = wpa_ctrl_open(cfile);
 	free(cfile);
