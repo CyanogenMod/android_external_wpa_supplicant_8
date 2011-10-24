@@ -6409,6 +6409,13 @@ static int wpa_driver_nl80211_probe_req_report(void *priv, int report)
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 
+	if (drv->nlmode != NL80211_IFTYPE_STATION) {
+		wpa_printf(MSG_DEBUG, "nl80211: probe_req_report control only "
+			   "allowed in station mode (iftype=%d)",
+			   drv->nlmode);
+		return -1;
+	}
+
 	if (!report) {
 		if (drv->nl_handle_preq) {
 			eloop_unregister_read_sock(
