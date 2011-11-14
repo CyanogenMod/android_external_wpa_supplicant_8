@@ -504,6 +504,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
  */
 void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 {
+#ifndef ANDROID
 	/* If there's at least one network that should be specifically scanned
 	 * then don't cancel the scan and reschedule.  Some drivers do
 	 * background scanning which generates frequent scan results, and that
@@ -525,7 +526,7 @@ void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 			return;
 		}
 	}
-
+#endif
 	wpa_dbg(wpa_s, MSG_DEBUG, "Setting scan request: %d sec %d usec",
 		sec, usec);
 	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
