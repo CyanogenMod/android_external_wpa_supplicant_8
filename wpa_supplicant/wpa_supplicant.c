@@ -50,6 +50,10 @@
 #include "bss.h"
 #include "scan.h"
 
+#ifdef ANDROID
+#include <cutils/properties.h>
+#endif
+
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
 "Copyright (c) 2003-2011, Jouni Malinen <j@w1.fi> and contributors";
@@ -2404,6 +2408,8 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Added interface %s", wpa_s->ifname);
 
+	property_set("wifi.wpa_supp_ready", "1");
+
 	return wpa_s;
 }
 
@@ -2438,6 +2444,8 @@ int wpa_supplicant_remove_iface(struct wpa_global *global,
 	}
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Removing interface %s", wpa_s->ifname);
+
+	property_set("wifi.wpa_supp_ready", "0");
 
 	if (global->p2p_group_formation == wpa_s)
 		global->p2p_group_formation = NULL;
