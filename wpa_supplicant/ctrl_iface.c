@@ -923,6 +923,13 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 	if (res >= 0)
 		pos += res;
 
+#ifdef ANDROID
+	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_STATE_CHANGE
+		     "id=%d state=%d BSSID=" MACSTR,
+		     wpa_s->current_ssid ? wpa_s->current_ssid->id : -1,
+		     wpa_s->wpa_state, MAC2STR(wpa_s->pending_bssid));
+#endif /* ANDROID */
+
 	return pos - buf;
 }
 
