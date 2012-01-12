@@ -928,6 +928,15 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		     "id=%d state=%d BSSID=" MACSTR,
 		     wpa_s->current_ssid ? wpa_s->current_ssid->id : -1,
 		     wpa_s->wpa_state, MAC2STR(wpa_s->pending_bssid));
+	if (wpa_s->wpa_state == WPA_COMPLETED) {
+		struct wpa_ssid *ssid = wpa_s->current_ssid;
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- connection to "
+			MACSTR " completed %s [id=%d id_str=%s]",
+			MAC2STR(wpa_s->bssid), wpa_s->reassociated_connection ?
+			"(reauth)" : "(auth)",
+			ssid ? ssid->id : -1,
+			ssid && ssid->id_str ? ssid->id_str : "");
+	}
 #endif /* ANDROID */
 
 	return pos - buf;
