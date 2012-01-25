@@ -41,117 +41,159 @@ u32 hostapd_sta_flags_to_drv(u32 flags)
 }
 
 
-int hostapd_set_ap_wps_ie(struct hostapd_data *hapd)
+int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
+			       struct wpabuf **beacon_ret,
+			       struct wpabuf **proberesp_ret,
+			       struct wpabuf **assocresp_ret)
 {
-	struct wpabuf *beacon, *proberesp, *assocresp = NULL;
-	int ret;
+	struct wpabuf *beacon = NULL, *proberesp = NULL, *assocresp = NULL;
+	u8 buf[200], *pos;
 
-	if (hapd->driver == NULL || hapd->driver->set_ap_wps_ie == NULL)
-		return 0;
+	*beacon_ret = *proberesp_ret = *assocresp_ret = NULL;
 
-	beacon = hapd->wps_beacon_ie;
-	proberesp = hapd->wps_probe_resp_ie;
-
-#ifdef CONFIG_P2P
-	if (hapd->wps_beacon_ie == NULL && hapd->p2p_beacon_ie == NULL)
-		beacon = NULL;
-	else {
-		beacon = wpabuf_alloc((hapd->wps_beacon_ie ?
-				       wpabuf_len(hapd->wps_beacon_ie) : 0) +
-				      (hapd->p2p_beacon_ie ?
-				       wpabuf_len(hapd->p2p_beacon_ie) : 0));
-		if (beacon == NULL)
-			return -1;
-		if (hapd->wps_beacon_ie)
-			wpabuf_put_buf(beacon, hapd->wps_beacon_ie);
-		if (hapd->p2p_beacon_ie)
-			wpabuf_put_buf(beacon, hapd->p2p_beacon_ie);
+	pos = buf;
+	pos = hostapd_eid_time_adv(hapd, pos);
+	if (pos != buf) {
+		if (wpabuf_resize(&beacon, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(beacon, buf, pos - buf);
+	}
+	pos = hostapd_eid_time_zone(hapd, pos);
+	if (pos != buf) {
+		if (wpabuf_resize(&proberesp, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(proberesp, buf, pos - buf);
 	}
 
-	if (hapd->wps_probe_resp_ie == NULL && hapd->p2p_probe_resp_ie == NULL)
-		proberesp = NULL;
-	else {
-		proberesp = wpabuf_alloc(
-			(hapd->wps_probe_resp_ie ?
-			 wpabuf_len(hapd->wps_probe_resp_ie) : 0) +
-			(hapd->p2p_probe_resp_ie ?
-			 wpabuf_len(hapd->p2p_probe_resp_ie) : 0));
-		if (proberesp == NULL) {
-			wpabuf_free(beacon);
-			return -1;
-		}
-		if (hapd->wps_probe_resp_ie)
-			wpabuf_put_buf(proberesp, hapd->wps_probe_resp_ie);
-		if (hapd->p2p_probe_resp_ie)
-			wpabuf_put_buf(proberesp, hapd->p2p_probe_resp_ie);
+	pos = buf;
+	pos = hostapd_eid_ext_capab(hapd, pos);
+	if (pos != buf) {
+		if (wpabuf_resize(&assocresp, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(assocresp, buf, pos - buf);
+	}
+	pos = hostapd_eid_interworking(hapd, pos);
+	pos = hostapd_eid_adv_proto(hapd, pos);
+	pos = hostapd_eid_roaming_consortium(hapd, pos);
+	if (pos != buf) {
+		if (wpabuf_resize(&beacon, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(beacon, buf, pos - buf);
+
+		if (wpabuf_resize(&proberesp, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(proberesp, buf, pos - buf);
+	}
+
+	if (hapd->wps_beacon_ie) {
+		if (wpabuf_resize(&beacon, wpabuf_len(hapd->wps_beacon_ie)) <
+		    0)
+			goto fail;
+		wpabuf_put_buf(beacon, hapd->wps_beacon_ie);
+	}
+
+	if (hapd->wps_probe_resp_ie) {
+		if (wpabuf_resize(&proberesp,
+				  wpabuf_len(hapd->wps_probe_resp_ie)) < 0)
+			goto fail;
+		wpabuf_put_buf(proberesp, hapd->wps_probe_resp_ie);
+	}
+
+#ifdef CONFIG_P2P
+	if (hapd->p2p_beacon_ie) {
+		if (wpabuf_resize(&beacon, wpabuf_len(hapd->p2p_beacon_ie)) <
+		    0)
+			goto fail;
+		wpabuf_put_buf(beacon, hapd->p2p_beacon_ie);
+	}
+
+	if (hapd->p2p_probe_resp_ie) {
+		if (wpabuf_resize(&proberesp,
+				  wpabuf_len(hapd->p2p_probe_resp_ie)) < 0)
+			goto fail;
+		wpabuf_put_buf(proberesp, hapd->p2p_probe_resp_ie);
 	}
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_P2P_MANAGER
 	if (hapd->conf->p2p & P2P_MANAGE) {
-		struct wpabuf *a;
-
-		a = wpabuf_alloc(100 + (beacon ? wpabuf_len(beacon) : 0));
-		if (a) {
+		if (wpabuf_resize(&beacon, 100) == 0) {
 			u8 *start, *p;
-			if (beacon)
-				wpabuf_put_buf(a, beacon);
-			if (beacon != hapd->wps_beacon_ie)
-				wpabuf_free(beacon);
-			start = wpabuf_put(a, 0);
+			start = wpabuf_put(beacon, 0);
 			p = hostapd_eid_p2p_manage(hapd, start);
-			wpabuf_put(a, p - start);
-			beacon = a;
+			wpabuf_put(beacon, p - start);
 		}
 
-		a = wpabuf_alloc(100 + (proberesp ? wpabuf_len(proberesp) :
-					0));
-		if (a) {
+		if (wpabuf_resize(&proberesp, 100) == 0) {
 			u8 *start, *p;
-			if (proberesp)
-				wpabuf_put_buf(a, proberesp);
-			if (proberesp != hapd->wps_probe_resp_ie)
-				wpabuf_free(proberesp);
-			start = wpabuf_put(a, 0);
+			start = wpabuf_put(proberesp, 0);
 			p = hostapd_eid_p2p_manage(hapd, start);
-			wpabuf_put(a, p - start);
-			proberesp = a;
+			wpabuf_put(proberesp, p - start);
 		}
 	}
 #endif /* CONFIG_P2P_MANAGER */
 
 #ifdef CONFIG_WPS2
-	if (hapd->conf->wps_state)
-		assocresp = wps_build_assoc_resp_ie();
+	if (hapd->conf->wps_state) {
+		struct wpabuf *a = wps_build_assoc_resp_ie();
+		if (a && wpabuf_resize(&assocresp, wpabuf_len(a)) == 0)
+			wpabuf_put_buf(assocresp, a);
+		wpabuf_free(a);
+	}
 #endif /* CONFIG_WPS2 */
 
 #ifdef CONFIG_P2P_MANAGER
 	if (hapd->conf->p2p & P2P_MANAGE) {
-		struct wpabuf *a;
-		a = wpabuf_alloc(100 + (assocresp ? wpabuf_len(assocresp) :
-					0));
-		if (a) {
+		if (wpabuf_resize(&assocresp, 100) == 0) {
 			u8 *start, *p;
-			start = wpabuf_put(a, 0);
+			start = wpabuf_put(assocresp, 0);
 			p = hostapd_eid_p2p_manage(hapd, start);
-			wpabuf_put(a, p - start);
-			if (assocresp) {
-				wpabuf_put_buf(a, assocresp);
-				wpabuf_free(assocresp);
-			}
-			assocresp = a;
+			wpabuf_put(assocresp, p - start);
 		}
 	}
 #endif /* CONFIG_P2P_MANAGER */
 
+	*beacon_ret = beacon;
+	*proberesp_ret = proberesp;
+	*assocresp_ret = assocresp;
+
+	return 0;
+
+fail:
+	wpabuf_free(beacon);
+	wpabuf_free(proberesp);
+	wpabuf_free(assocresp);
+	return -1;
+}
+
+
+void hostapd_free_ap_extra_ies(struct hostapd_data *hapd,
+			       struct wpabuf *beacon,
+			       struct wpabuf *proberesp,
+			       struct wpabuf *assocresp)
+{
+	wpabuf_free(beacon);
+	wpabuf_free(proberesp);
+	wpabuf_free(assocresp);
+}
+
+
+int hostapd_set_ap_wps_ie(struct hostapd_data *hapd)
+{
+	struct wpabuf *beacon, *proberesp, *assocresp;
+	int ret;
+
+	if (hapd->driver == NULL || hapd->driver->set_ap_wps_ie == NULL)
+		return 0;
+
+	if (hostapd_build_ap_extra_ies(hapd, &beacon, &proberesp, &assocresp) <
+	    0)
+		return -1;
+
 	ret = hapd->driver->set_ap_wps_ie(hapd->drv_priv, beacon, proberesp,
 					  assocresp);
 
-	if (beacon != hapd->wps_beacon_ie)
-		wpabuf_free(beacon);
-	if (proberesp != hapd->wps_probe_resp_ie)
-		wpabuf_free(proberesp);
-	wpabuf_free(assocresp);
+	hostapd_free_ap_extra_ies(hapd, beacon, proberesp, assocresp);
 
 	return ret;
 }
@@ -211,74 +253,6 @@ int hostapd_set_drv_ieee8021x(struct hostapd_data *hapd, const char *ifname,
 }
 
 
-static int hostapd_set_ap_isolate(struct hostapd_data *hapd, int value)
-{
-	if (hapd->driver == NULL || hapd->driver->set_intra_bss == NULL)
-		return 0;
-	return hapd->driver->set_intra_bss(hapd->drv_priv, !value);
-}
-
-
-int hostapd_set_bss_params(struct hostapd_data *hapd, int use_protection)
-{
-	int ret = 0;
-	int preamble;
-#ifdef CONFIG_IEEE80211N
-	u8 buf[60], *ht_capab, *ht_oper, *pos;
-
-	pos = buf;
-	ht_capab = pos;
-	pos = hostapd_eid_ht_capabilities(hapd, pos);
-	ht_oper = pos;
-	pos = hostapd_eid_ht_operation(hapd, pos);
-	if (pos > ht_oper && ht_oper > ht_capab &&
-	    hostapd_set_ht_params(hapd, ht_capab + 2, ht_capab[1],
-				  ht_oper + 2, ht_oper[1])) {
-		wpa_printf(MSG_ERROR, "Could not set HT capabilities "
-			   "for kernel driver");
-		ret = -1;
-	}
-
-#endif /* CONFIG_IEEE80211N */
-
-	if (hostapd_set_cts_protect(hapd, use_protection)) {
-		wpa_printf(MSG_ERROR, "Failed to set CTS protect in kernel "
-			   "driver");
-		ret = -1;
-	}
-
-	if (hapd->iface->current_mode &&
-	    hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G &&
-	    hostapd_set_short_slot_time(hapd,
-					hapd->iface->num_sta_no_short_slot_time
-					> 0 ? 0 : 1)) {
-		wpa_printf(MSG_ERROR, "Failed to set Short Slot Time option "
-			   "in kernel driver");
-		ret = -1;
-	}
-
-	if (hapd->iface->num_sta_no_short_preamble == 0 &&
-	    hapd->iconf->preamble == SHORT_PREAMBLE)
-		preamble = SHORT_PREAMBLE;
-	else
-		preamble = LONG_PREAMBLE;
-	if (hostapd_set_preamble(hapd, preamble)) {
-		wpa_printf(MSG_ERROR, "Could not set preamble for kernel "
-			   "driver");
-		ret = -1;
-	}
-
-	if (hostapd_set_ap_isolate(hapd, hapd->conf->isolate) &&
-	    hapd->conf->isolate) {
-		wpa_printf(MSG_ERROR, "Could not enable AP isolation in "
-			   "kernel driver");
-		ret = -1;
-	}
-
-	return ret;
-}
-
-
 int hostapd_vlan_if_add(struct hostapd_data *hapd, const char *ifname)
 {
 	char force_ifname[IFNAMSIZ];
@@ -310,11 +284,41 @@ int hostapd_set_wds_sta(struct hostapd_data *hapd, const u8 *addr, int aid,
 }
 
 
+int hostapd_add_sta_node(struct hostapd_data *hapd, const u8 *addr,
+			 u16 auth_alg)
+{
+	if (hapd->driver == NULL || hapd->driver->add_sta_node == NULL)
+		return 0;
+	return hapd->driver->add_sta_node(hapd->drv_priv, addr, auth_alg);
+}
+
+
+int hostapd_sta_auth(struct hostapd_data *hapd, const u8 *addr,
+		     u16 seq, u16 status, const u8 *ie, size_t len)
+{
+	if (hapd->driver == NULL || hapd->driver->sta_auth == NULL)
+		return 0;
+	return hapd->driver->sta_auth(hapd->drv_priv, hapd->own_addr, addr,
+				      seq, status, ie, len);
+}
+
+
+int hostapd_sta_assoc(struct hostapd_data *hapd, const u8 *addr,
+		      int reassoc, u16 status, const u8 *ie, size_t len)
+{
+	if (hapd->driver == NULL || hapd->driver->sta_assoc == NULL)
+		return 0;
+	return hapd->driver->sta_assoc(hapd->drv_priv, hapd->own_addr, addr,
+				       reassoc, status, ie, len);
+}
+
+
 int hostapd_sta_add(struct hostapd_data *hapd,
 		    const u8 *addr, u16 aid, u16 capability,
 		    const u8 *supp_rates, size_t supp_rates_len,
 		    u16 listen_interval,
-		    const struct ieee80211_ht_capabilities *ht_capab)
+		    const struct ieee80211_ht_capabilities *ht_capab,
+		    u32 flags, u8 qosinfo)
 {
 	struct hostapd_sta_add_params params;
 
@@ -331,7 +335,19 @@ int hostapd_sta_add(struct hostapd_data *hapd,
 	params.supp_rates_len = supp_rates_len;
 	params.listen_interval = listen_interval;
 	params.ht_capabilities = ht_capab;
+	params.flags = hostapd_sta_flags_to_drv(flags);
+	params.qosinfo = qosinfo;
 	return hapd->driver->sta_add(hapd->drv_priv, &params);
+}
+
+
+int hostapd_add_tspec(struct hostapd_data *hapd, const u8 *addr,
+		      u8 *tspec_ie, size_t tspec_ielen)
+{
+	if (hapd->driver == NULL || hapd->driver->add_tspec == NULL)
+		return 0;
+	return hapd->driver->add_tspec(hapd->drv_priv, addr, tspec_ie,
+				       tspec_ielen);
 }
 
 
@@ -460,46 +476,12 @@ int hostapd_sta_set_flags(struct hostapd_data *hapd, u8 *addr,
 }
 
 
-int hostapd_set_rate_sets(struct hostapd_data *hapd, int *supp_rates,
-			  int *basic_rates, int mode)
-{
-	if (hapd->driver == NULL || hapd->driver->set_rate_sets == NULL)
-		return 0;
-	return hapd->driver->set_rate_sets(hapd->drv_priv, supp_rates,
-					   basic_rates, mode);
-}
-
-
 int hostapd_set_country(struct hostapd_data *hapd, const char *country)
 {
 	if (hapd->driver == NULL ||
 	    hapd->driver->set_country == NULL)
 		return 0;
 	return hapd->driver->set_country(hapd->drv_priv, country);
-}
-
-
-int hostapd_set_cts_protect(struct hostapd_data *hapd, int value)
-{
-	if (hapd->driver == NULL || hapd->driver->set_cts_protect == NULL)
-		return 0;
-	return hapd->driver->set_cts_protect(hapd->drv_priv, value);
-}
-
-
-int hostapd_set_preamble(struct hostapd_data *hapd, int value)
-{
-	if (hapd->driver == NULL || hapd->driver->set_preamble == NULL)
-		return 0;
-	return hapd->driver->set_preamble(hapd->drv_priv, value);
-}
-
-
-int hostapd_set_short_slot_time(struct hostapd_data *hapd, int value)
-{
-	if (hapd->driver == NULL || hapd->driver->set_short_slot_time == NULL)
-		return 0;
-	return hapd->driver->set_short_slot_time(hapd->drv_priv, value);
 }
 
 
@@ -510,15 +492,6 @@ int hostapd_set_tx_queue_params(struct hostapd_data *hapd, int queue, int aifs,
 		return 0;
 	return hapd->driver->set_tx_queue_params(hapd->drv_priv, queue, aifs,
 						 cw_min, cw_max, burst_time);
-}
-
-
-int hostapd_valid_bss_mask(struct hostapd_data *hapd, const u8 *addr,
-			   const u8 *mask)
-{
-	if (hapd->driver == NULL || hapd->driver->valid_bss_mask == NULL)
-		return 1;
-	return hapd->driver->valid_bss_mask(hapd->drv_priv, addr, mask);
 }
 
 
@@ -539,19 +512,6 @@ int hostapd_driver_commit(struct hostapd_data *hapd)
 	if (hapd->driver == NULL || hapd->driver->commit == NULL)
 		return 0;
 	return hapd->driver->commit(hapd->drv_priv);
-}
-
-
-int hostapd_set_ht_params(struct hostapd_data *hapd,
-			  const u8 *ht_capab, size_t ht_capab_len,
-			  const u8 *ht_oper, size_t ht_oper_len)
-{
-	if (hapd->driver == NULL || hapd->driver->set_ht_params == NULL ||
-	    ht_capab == NULL || ht_oper == NULL)
-		return 0;
-	return hapd->driver->set_ht_params(hapd->drv_priv,
-					   ht_capab, ht_capab_len,
-					   ht_oper, ht_oper_len);
 }
 
 
@@ -604,11 +564,11 @@ int hostapd_drv_set_key(const char *ifname, struct hostapd_data *hapd,
 
 
 int hostapd_drv_send_mlme(struct hostapd_data *hapd,
-			  const void *msg, size_t len)
+			  const void *msg, size_t len, int noack)
 {
 	if (hapd->driver == NULL || hapd->driver->send_mlme == NULL)
 		return 0;
-	return hapd->driver->send_mlme(hapd->drv_priv, msg, len);
+	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack);
 }
 
 

@@ -104,9 +104,7 @@ static int wpa_config_validate_network(struct wpa_ssid *ssid, int line)
 		wpa_config_update_psk(ssid);
 	}
 
-	if ((ssid->key_mgmt & (WPA_KEY_MGMT_PSK | WPA_KEY_MGMT_FT_PSK |
-			       WPA_KEY_MGMT_PSK_SHA256)) &&
-	    !ssid->psk_set) {
+	if (wpa_key_mgmt_wpa_psk(ssid->key_mgmt) && !ssid->psk_set) {
 		wpa_printf(MSG_ERROR, "Line %d: WPA-PSK accepted for key "
 			   "management, but no PSK configured.", line);
 		errors++;
@@ -495,6 +493,18 @@ static void write_wep_key(FILE *f, int idx, struct wpa_ssid *ssid)
 }
 
 
+#ifdef CONFIG_P2P
+static void write_p2p_client_list(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "p2p_client_list");
+	if (value == NULL)
+		return;
+	fprintf(f, "\tp2p_client_list=%s\n", value);
+	os_free(value);
+}
+#endif /* CONFIG_P2P */
+
+
 static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 {
 	int i;
@@ -569,6 +579,9 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(ieee80211w);
 #endif /* CONFIG_IEEE80211W */
 	STR(id_str);
+#ifdef CONFIG_P2P
+	write_p2p_client_list(f, ssid);
+#endif /* CONFIG_P2P */
 
 #undef STR
 #undef INT
@@ -649,7 +662,8 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 		char _buf[WPS_DEV_TYPE_BUFSIZE], *buf;
 		buf = wps_dev_type_bin2str(config->device_type,
 					   _buf, sizeof(_buf));
-		fprintf(f, "device_type=%s\n", buf);
+		if (os_strcmp(buf, "0-00000000-0") != 0)
+			fprintf(f, "device_type=%s\n", buf);
 	}
 	if (WPA_GET_BE32(config->os_version))
 		fprintf(f, "os_version=%08x\n",
@@ -703,6 +717,27 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 		fprintf(f, "max_num_sta=%u\n", config->max_num_sta);
 	if (config->disassoc_low_ack)
 		fprintf(f, "disassoc_low_ack=%u\n", config->disassoc_low_ack);
+#ifdef CONFIG_INTERWORKING
+	if (config->home_realm)
+		fprintf(f, "home_realm=%s\n", config->home_realm);
+	if (config->home_username)
+		fprintf(f, "home_username=%s\n", config->home_username);
+	if (config->home_password)
+		fprintf(f, "home_password=%s\n", config->home_password);
+	if (config->home_ca_cert)
+		fprintf(f, "home_ca_cert=%s\n", config->home_ca_cert);
+	if (config->home_imsi)
+		fprintf(f, "home_imsi=%s\n", config->home_imsi);
+	if (config->home_milenage)
+		fprintf(f, "home_milenage=%s\n", config->home_milenage);
+	if (config->interworking)
+		fprintf(f, "interworking=%u\n", config->interworking);
+	if (!is_zero_ether_addr(config->hessid))
+		fprintf(f, "hessid=" MACSTR "\n", MAC2STR(config->hessid));
+	if (config->access_network_type != DEFAULT_ACCESS_NETWORK_TYPE)
+		fprintf(f, "access_network_type=%d\n",
+			config->access_network_type);
+#endif /* CONFIG_INTERWORKING */
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */
@@ -731,6 +766,9 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 	for (ssid = config->ssid; ssid; ssid = ssid->next) {
 		if (ssid->key_mgmt == WPA_KEY_MGMT_WPS || ssid->temporary)
 			continue; /* do not save temporary networks */
+		if (wpa_key_mgmt_wpa_psk(ssid->key_mgmt) && !ssid->psk_set &&
+		    !ssid->passphrase)
+			continue; /* do not save invalid network */
 		fprintf(f, "\nnetwork={\n");
 		wpa_config_write_network(f, ssid);
 		fprintf(f, "}\n");

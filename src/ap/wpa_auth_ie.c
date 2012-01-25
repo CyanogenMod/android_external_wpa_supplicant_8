@@ -253,19 +253,10 @@ int wpa_write_rsn_ie(struct wpa_auth_config *conf, u8 *buf, size_t len,
 		capab |= WPA_CAPABILITY_PREAUTH;
 	if (conf->peerkey)
 		capab |= WPA_CAPABILITY_PEERKEY_ENABLED;
-#ifdef ANDROID_BRCM_P2P_PATCH 
-    /* WAR: we should make an get_wpa_rsnie_cap() to get the cap of peer supp 
-	 * Temporally we force tp set replay counter tp 0x3 
-	 * as if wmm is enable in all of supp device
-     */
-    capab |= (RSN_NUM_REPLAY_COUNTERS_16 << 2); 
-#else
 	if (conf->wmm_enabled) {
 		/* 4 PTKSA replay counters when using WMM */
 		capab |= (RSN_NUM_REPLAY_COUNTERS_16 << 2);
 	}
-#endif /* ANDROID_BRCM_P2P_PATCH */
-
 #ifdef CONFIG_IEEE80211W
 	if (conf->ieee80211w != NO_MGMT_FRAME_PROTECTION) {
 		capab |= WPA_CAPABILITY_MFPC;
@@ -350,8 +341,7 @@ int wpa_auth_gen_wpa_ie(struct wpa_authenticator *wpa_auth)
 		pos += res;
 	}
 #ifdef CONFIG_IEEE80211R
-	if (wpa_auth->conf.wpa_key_mgmt &
-	    (WPA_KEY_MGMT_FT_IEEE8021X | WPA_KEY_MGMT_FT_PSK)) {
+	if (wpa_key_mgmt_ft(wpa_auth->conf.wpa_key_mgmt)) {
 		res = wpa_write_mdie(&wpa_auth->conf, pos,
 				     buf + sizeof(buf) - pos);
 		if (res < 0)

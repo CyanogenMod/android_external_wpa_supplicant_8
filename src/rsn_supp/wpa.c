@@ -396,7 +396,8 @@ static void wpa_supplicant_process_1_of_4(struct wpa_sm *sm,
 		const u8 *_buf = (const u8 *) (key + 1);
 		size_t len = WPA_GET_BE16(key->key_data_length);
 		wpa_hexdump(MSG_DEBUG, "RSN: msg 1/4 key data", _buf, len);
-		wpa_supplicant_parse_ies(_buf, len, &ie);
+		if (wpa_supplicant_parse_ies(_buf, len, &ie) < 0)
+			goto failed;
 		if (ie.pmkid) {
 			wpa_hexdump(MSG_DEBUG, "RSN: PMKID from "
 				    "Authenticator", ie.pmkid, PMKID_LEN);
@@ -476,7 +477,7 @@ static void wpa_supplicant_key_neg_complete(struct wpa_sm *sm,
 		 * Start preauthentication after a short wait to avoid a
 		 * possible race condition between the data receive and key
 		 * configuration after the 4-Way Handshake. This increases the
-		 * likelyhood of the first preauth EAPOL-Start frame getting to
+		 * likelihood of the first preauth EAPOL-Start frame getting to
 		 * the target AP.
 		 */
 		eloop_register_timeout(1, 0, wpa_sm_start_preauth, sm, NULL);
@@ -1085,7 +1086,8 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 	pos = (const u8 *) (key + 1);
 	len = WPA_GET_BE16(key->key_data_length);
 	wpa_hexdump(MSG_DEBUG, "WPA: IE KeyData", pos, len);
-	wpa_supplicant_parse_ies(pos, len, &ie);
+	if (wpa_supplicant_parse_ies(pos, len, &ie) < 0)
+		goto failed;
 	if (ie.gtk && !(key_info & WPA_KEY_INFO_ENCR_KEY_DATA)) {
 		wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
 			"WPA: GTK IE in unencrypted key data");
@@ -1174,6 +1176,8 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 		goto failed;
 	}
 
+	wpa_sm_set_rekey_offload(sm);
+
 	return;
 
 failed:
@@ -1191,7 +1195,8 @@ static int wpa_supplicant_process_1_of_2_rsn(struct wpa_sm *sm,
 	struct wpa_eapol_ie_parse ie;
 
 	wpa_hexdump(MSG_DEBUG, "RSN: msg 1/2 key data", keydata, keydatalen);
-	wpa_supplicant_parse_ies(keydata, keydatalen, &ie);
+	if (wpa_supplicant_parse_ies(keydata, keydatalen, &ie) < 0)
+		return -1;
 	if (ie.gtk && !(key_info & WPA_KEY_INFO_ENCR_KEY_DATA)) {
 		wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
 			"WPA: GTK IE in unencrypted key data");
@@ -1392,6 +1397,8 @@ static void wpa_supplicant_process_1_of_2(struct wpa_sm *sm,
 			MAC2STR(sm->bssid), wpa_cipher_txt(sm->group_cipher));
 		wpa_sm_cancel_auth_timeout(sm);
 		wpa_sm_set_state(sm, WPA_COMPLETED);
+
+		wpa_sm_set_rekey_offload(sm);
 	} else {
 		wpa_supplicant_key_neg_complete(sm, sm->bssid,
 						key_info &
@@ -2265,8 +2272,6 @@ void wpa_sm_set_config(struct wpa_sm *sm, struct rsn_supp_config *config)
 		sm->ssid_len = 0;
 		sm->wpa_ptk_rekey = 0;
 	}
-	if (config == NULL || config->network_ctx != sm->network_ctx)
-		pmksa_cache_notify_reconfig(sm->pmksa);
 }
 
 
@@ -2643,4 +2648,18 @@ int wpa_sm_has_ptk(struct wpa_sm *sm)
 	if (sm == NULL)
 		return 0;
 	return sm->ptk_set;
+}
+
+
+void wpa_sm_update_replay_ctr(struct wpa_sm *sm, const u8 *replay_ctr)
+{
+	os_memcpy(sm->rx_replay_counter, replay_ctr, WPA_REPLAY_COUNTER_LEN);
+}
+
+
+void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx)
+{
+#ifndef CONFIG_NO_WPA2
+	pmksa_cache_flush(sm->pmksa, network_ctx);
+#endif /* CONFIG_NO_WPA2 */
 }

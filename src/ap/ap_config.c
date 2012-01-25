@@ -426,6 +426,8 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 		ssid->dyn_vlan_keys = NULL;
 	}
 
+	os_free(conf->time_zone);
+
 #ifdef CONFIG_IEEE80211R
 	{
 		struct ft_remote_r0kh *r0kh, *r0kh_prev;
@@ -467,6 +469,12 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->model_url);
 	os_free(conf->upc);
 #endif /* CONFIG_WPS */
+
+	os_free(conf->roaming_consortium);
+
+#ifdef CONFIG_RADIUS_TEST
+	os_free(conf->dump_msk_file);
+#endif /* CONFIG_RADIUS_TEST */
 }
 
 

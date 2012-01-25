@@ -24,6 +24,7 @@
 #include "utils/common.h"
 #include "utils/eloop.h"
 #include "utils/edit.h"
+#include "utils/list.h"
 #include "common/version.h"
 #ifdef ANDROID
 #include <cutils/properties.h>
@@ -103,6 +104,15 @@ static const char *action_file = NULL;
 static int ping_interval = 5;
 static int interactive = 0;
 
+struct cli_txt_entry {
+	struct dl_list list;
+	char *txt;
+};
+
+static DEFINE_DL_LIST(bsses); /* struct cli_txt_entry */
+static DEFINE_DL_LIST(p2p_peers); /* struct cli_txt_entry */
+static DEFINE_DL_LIST(p2p_groups); /* struct cli_txt_entry */
+
 
 static void print_help(void);
 static void wpa_cli_mon_receive(int sock, void *eloop_ctx, void *sock_ctx);
@@ -123,6 +133,164 @@ static void usage(void)
 	       "  default path: " CONFIG_CTRL_IFACE_DIR "\n"
 	       "  default interface: first interface found in socket path\n");
 	print_help();
+}
+
+
+static void cli_txt_list_free(struct cli_txt_entry *e)
+{
+	dl_list_del(&e->list);
+	os_free(e->txt);
+	os_free(e);
+}
+
+
+static void cli_txt_list_flush(struct dl_list *list)
+{
+	struct cli_txt_entry *e;
+	while ((e = dl_list_first(list, struct cli_txt_entry, list)))
+		cli_txt_list_free(e);
+}
+
+
+static struct cli_txt_entry * cli_txt_list_get(struct dl_list *txt_list,
+					       const char *txt)
+{
+	struct cli_txt_entry *e;
+	dl_list_for_each(e, txt_list, struct cli_txt_entry, list) {
+		if (os_strcmp(e->txt, txt) == 0)
+			return e;
+	}
+	return NULL;
+}
+
+
+static void cli_txt_list_del(struct dl_list *txt_list, const char *txt)
+{
+	struct cli_txt_entry *e;
+	e = cli_txt_list_get(txt_list, txt);
+	if (e)
+		cli_txt_list_free(e);
+}
+
+
+static void cli_txt_list_del_addr(struct dl_list *txt_list, const char *txt)
+{
+	u8 addr[ETH_ALEN];
+	char buf[18];
+	if (hwaddr_aton(txt, addr) < 0)
+		return;
+	os_snprintf(buf, sizeof(buf), MACSTR, MAC2STR(addr));
+	cli_txt_list_del(txt_list, buf);
+}
+
+
+#ifdef CONFIG_P2P
+static void cli_txt_list_del_word(struct dl_list *txt_list, const char *txt)
+{
+	const char *end;
+	char *buf;
+	end = os_strchr(txt, ' ');
+	if (end == NULL)
+		end = txt + os_strlen(txt);
+	buf = os_malloc(end - txt + 1);
+	if (buf == NULL)
+		return;
+	os_memcpy(buf, txt, end - txt);
+	buf[end - txt] = '\0';
+	cli_txt_list_del(txt_list, buf);
+	os_free(buf);
+}
+#endif /* CONFIG_P2P */
+
+
+static int cli_txt_list_add(struct dl_list *txt_list, const char *txt)
+{
+	struct cli_txt_entry *e;
+	e = cli_txt_list_get(txt_list, txt);
+	if (e)
+		return 0;
+	e = os_zalloc(sizeof(*e));
+	if (e == NULL)
+		return -1;
+	e->txt = os_strdup(txt);
+	if (e->txt == NULL) {
+		os_free(e);
+		return -1;
+	}
+	dl_list_add(txt_list, &e->list);
+	return 0;
+}
+
+
+#ifdef CONFIG_P2P
+static int cli_txt_list_add_addr(struct dl_list *txt_list, const char *txt)
+{
+	u8 addr[ETH_ALEN];
+	char buf[18];
+	if (hwaddr_aton(txt, addr) < 0)
+		return -1;
+	os_snprintf(buf, sizeof(buf), MACSTR, MAC2STR(addr));
+	return cli_txt_list_add(txt_list, buf);
+}
+
+
+static int cli_txt_list_add_word(struct dl_list *txt_list, const char *txt)
+{
+	const char *end;
+	char *buf;
+	int ret;
+	end = os_strchr(txt, ' ');
+	if (end == NULL)
+		end = txt + os_strlen(txt);
+	buf = os_malloc(end - txt + 1);
+	if (buf == NULL)
+		return -1;
+	os_memcpy(buf, txt, end - txt);
+	buf[end - txt] = '\0';
+	ret = cli_txt_list_add(txt_list, buf);
+	os_free(buf);
+	return ret;
+}
+#endif /* CONFIG_P2P */
+
+
+static char ** cli_txt_list_array(struct dl_list *txt_list)
+{
+	unsigned int i, count = dl_list_len(txt_list);
+	char **res;
+	struct cli_txt_entry *e;
+
+	res = os_zalloc((count + 1) * sizeof(char *));
+	if (res == NULL)
+		return NULL;
+
+	i = 0;
+	dl_list_for_each(e, txt_list, struct cli_txt_entry, list) {
+		res[i] = os_strdup(e->txt);
+		if (res[i] == NULL)
+			break;
+		i++;
+	}
+
+	return res;
+}
+
+
+static int get_cmd_arg_num(const char *str, int pos)
+{
+	int arg = 0, i;
+
+	for (i = 0; i <= pos; i++) {
+		if (str[i] != ' ') {
+			arg++;
+			while (i <= pos && str[i] != ' ')
+				i++;
+		}
+	}
+
+	if (arg > 0)
+		arg--;
+	return arg;
 }
 
 
@@ -286,8 +454,11 @@ static int wpa_ctrl_command(struct wpa_ctrl *ctrl, char *cmd)
 
 static int wpa_cli_cmd_status(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
-	int verbose = argc > 0 && os_strcmp(argv[0], "verbose") == 0;
-	return wpa_ctrl_command(ctrl, verbose ? "STATUS-VERBOSE" : "STATUS");
+	if (argc > 0 && os_strcmp(argv[0], "verbose") == 0)
+		return wpa_ctrl_command(ctrl, "STATUS-VERBOSE");
+	if (argc > 0 && os_strcmp(argv[0], "wps") == 0)
+		return wpa_ctrl_command(ctrl, "STATUS-WPS");
+	return wpa_ctrl_command(ctrl, "STATUS");
 }
 
 
@@ -381,13 +552,17 @@ static int wpa_cli_cmd_set(struct wpa_ctrl *ctrl, int argc, char *argv[])
 		return 0;
 	}
 
-	if (argc != 2) {
+	if (argc != 1 && argc != 2) {
 		printf("Invalid SET command: needs two arguments (variable "
 		       "name and value)\n");
 		return -1;
 	}
 
-	res = os_snprintf(cmd, sizeof(cmd), "SET %s %s", argv[0], argv[1]);
+	if (argc == 1)
+		res = os_snprintf(cmd, sizeof(cmd), "SET %s ", argv[0]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd), "SET %s %s",
+				  argv[0], argv[1]);
 	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
 		printf("Too long SET command.\n");
 		return -1;
@@ -1499,6 +1674,21 @@ static int wpa_cli_cmd_bss(struct wpa_ctrl *ctrl, int argc, char *argv[])
 }
 
 
+static char ** wpa_cli_complete_bss(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+		res = cli_txt_list_array(&bsses);
+		break;
+	}
+
+	return res;
+}
+
+
 static int wpa_cli_cmd_get_capability(struct wpa_ctrl *ctrl, int argc,
 				      char *argv[])
 {
@@ -1792,6 +1982,21 @@ static int wpa_cli_cmd_p2p_connect(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static char ** wpa_cli_complete_p2p_connect(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+		res = cli_txt_list_array(&p2p_peers);
+		break;
+	}
+
+	return res;
+}
+
+
 static int wpa_cli_cmd_p2p_listen(struct wpa_ctrl *ctrl, int argc,
 				  char *argv[])
 {
@@ -1829,6 +2034,21 @@ static int wpa_cli_cmd_p2p_group_remove(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static char ** wpa_cli_complete_p2p_group_remove(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+		res = cli_txt_list_array(&p2p_groups);
+		break;
+	}
+
+	return res;
+}
+
+
 static int wpa_cli_cmd_p2p_group_add(struct wpa_ctrl *ctrl, int argc,
 					char *argv[])
 {
@@ -1857,15 +2077,19 @@ static int wpa_cli_cmd_p2p_prov_disc(struct wpa_ctrl *ctrl, int argc,
 	char cmd[128];
 	int res;
 
-	if (argc != 2) {
-		printf("Invalid P2P_PROV_DISC command: needs two arguments "
-		       "(address and config method\n"
-		       "(display, keypad, or pbc)\n");
+	if (argc != 2 && argc != 3) {
+		printf("Invalid P2P_PROV_DISC command: needs at least "
+		       "two arguments, address and config method\n"
+		       "(display, keypad, or pbc) and an optional join\n");
 		return -1;
 	}
 
-	res = os_snprintf(cmd, sizeof(cmd), "P2P_PROV_DISC %s %s",
-			  argv[0], argv[1]);
+	if (argc == 3)
+		res = os_snprintf(cmd, sizeof(cmd), "P2P_PROV_DISC %s %s %s",
+				  argv[0], argv[1], argv[2]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd), "P2P_PROV_DISC %s %s",
+				  argv[0], argv[1]);
 	if (res < 0 || (size_t) res >= sizeof(cmd))
 		return -1;
 	cmd[sizeof(cmd) - 1] = '\0';
@@ -2099,6 +2323,21 @@ static int wpa_cli_cmd_p2p_peer(struct wpa_ctrl *ctrl, int argc, char *argv[])
 }
 
 
+static char ** wpa_cli_complete_p2p_peer(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+		res = cli_txt_list_array(&p2p_peers);
+		break;
+	}
+
+	return res;
+}
+
+
 static int wpa_ctrl_command_p2p_peer(struct wpa_ctrl *ctrl, char *cmd,
 				     char *addr, size_t addr_len,
 				     int discovered)
@@ -2144,13 +2383,13 @@ static int wpa_cli_cmd_p2p_peers(struct wpa_ctrl *ctrl, int argc, char *argv[])
 
 	if (wpa_ctrl_command_p2p_peer(ctrl, "P2P_PEER FIRST",
 				      addr, sizeof(addr), discovered))
-		return 0;
+		return -1;
 	do {
 		os_snprintf(cmd, sizeof(cmd), "P2P_PEER NEXT-%s", addr);
 	} while (wpa_ctrl_command_p2p_peer(ctrl, cmd, addr, sizeof(addr),
 			 discovered) == 0);
 
-	return -1;
+	return 0;
 }
 
 
@@ -2267,6 +2506,80 @@ static int wpa_cli_cmd_p2p_ext_listen(struct wpa_ctrl *ctrl, int argc,
 #endif /* CONFIG_P2P */
 
 
+#ifdef CONFIG_INTERWORKING
+static int wpa_cli_cmd_fetch_anqp(struct wpa_ctrl *ctrl, int argc,
+				  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "FETCH_ANQP");
+}
+
+
+static int wpa_cli_cmd_stop_fetch_anqp(struct wpa_ctrl *ctrl, int argc,
+				       char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "STOP_FETCH_ANQP");
+}
+
+
+static int wpa_cli_cmd_interworking_select(struct wpa_ctrl *ctrl, int argc,
+					   char *argv[])
+{
+	char cmd[100];
+	int res;
+
+	if (argc == 0)
+		return wpa_ctrl_command(ctrl, "INTERWORKING_SELECT");
+
+	res = os_snprintf(cmd, sizeof(cmd), "INTERWORKING_SELECT %s", argv[0]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_interworking_connect(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	char cmd[100];
+	int res;
+
+	if (argc != 1) {
+		printf("Invalid INTERWORKING_CONNECT commands: needs one "
+		       "argument (BSSID)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "INTERWORKING_CONNECT %s",
+			  argv[0]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_anqp_get(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[100];
+	int res;
+
+	if (argc != 2) {
+		printf("Invalid ANQP_GET command: needs two arguments "
+		       "(addr and info id list)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "ANQP_GET %s %s",
+			  argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	return wpa_ctrl_command(ctrl, cmd);
+}
+#endif /* CONFIG_INTERWORKING */
+
+
 static int wpa_cli_cmd_sta_autoconnect(struct wpa_ctrl *ctrl, int argc,
 				       char *argv[])
 {
@@ -2354,6 +2667,13 @@ static int wpa_cli_cmd_signal_poll(struct wpa_ctrl *ctrl, int argc,
 				   char *argv[])
 {
 	return wpa_ctrl_command(ctrl, "SIGNAL_POLL");
+}
+
+
+static int wpa_cli_cmd_reauthenticate(struct wpa_ctrl *ctrl, int argc,
+				      char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "REAUTHENTICATE");
 }
 
 
@@ -2472,7 +2792,7 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "blacklist = display the blacklist" },
 	{ "log_level", wpa_cli_cmd_log_level,
 	  cli_cmd_flag_none,
-	  "<level> [<timestamp>] = update the log level/timestamp of wpa_supplicant\n"
+	  "<level> [<timestamp>] = update the log level/timestamp\n"
 	  "log_level = display the current log level and log options" },
 	{ "list_networks", wpa_cli_cmd_list_networks,
 	  cli_cmd_flag_none,
@@ -2690,6 +3010,21 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "p2p_ext_listen", wpa_cli_cmd_p2p_ext_listen, cli_cmd_flag_none,
 	  "[<period> <interval>] = set extended listen timing" },
 #endif /* CONFIG_P2P */
+
+#ifdef CONFIG_INTERWORKING
+	{ "fetch_anqp", wpa_cli_cmd_fetch_anqp, cli_cmd_flag_none,
+	  "= fetch ANQP information for all APs" },
+	{ "stop_fetch_anqp", wpa_cli_cmd_stop_fetch_anqp, cli_cmd_flag_none,
+	  "= stop fetch_anqp operation" },
+	{ "interworking_select", wpa_cli_cmd_interworking_select,
+	  cli_cmd_flag_none,
+	  "[auto] = perform Interworking network selection" },
+	{ "interworking_connect", wpa_cli_cmd_interworking_connect,
+	  cli_cmd_flag_none,
+	  "<BSSID> = connect using Interworking credentials" },
+	{ "anqp_get", wpa_cli_cmd_anqp_get, cli_cmd_flag_none,
+	  "<addr> <info id>[,<info id>]... = request ANQP information" },
+#endif /* CONFIG_INTERWORKING */
 	{ "sta_autoconnect", wpa_cli_cmd_sta_autoconnect, cli_cmd_flag_none,
 	  "<0/1> = disable/enable automatic reconnection" },
 	{ "tdls_discover", wpa_cli_cmd_tdls_discover,
@@ -2704,6 +3039,8 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "signal_poll", wpa_cli_cmd_signal_poll,
 	  cli_cmd_flag_none,
 	  "= get signal parameters" },
+	{ "reauthenticate", wpa_cli_cmd_reauthenticate, cli_cmd_flag_none,
+	  "= trigger IEEE 802.1X/EAPOL reauthentication" },
 	{ "driver", wpa_cli_cmd_driver,
 	  cli_cmd_flag_none,
 	  "<command> = driver private commands" },
@@ -2783,6 +3120,17 @@ static char ** wpa_cli_cmd_completion(const char *cmd, const char *str,
 				      int pos)
 {
 	int i;
+
+	if (os_strcasecmp(cmd, "bss") == 0)
+		return wpa_cli_complete_bss(str, pos);
+#ifdef CONFIG_P2P
+	if (os_strcasecmp(cmd, "p2p_connect") == 0)
+		return wpa_cli_complete_p2p_connect(str, pos);
+	if (os_strcasecmp(cmd, "p2p_peer") == 0)
+		return wpa_cli_complete_p2p_peer(str, pos);
+	if (os_strcasecmp(cmd, "p2p_group_remove") == 0)
+		return wpa_cli_complete_p2p_group_remove(str, pos);
+#endif /* CONFIG_P2P */
 
 	for (i = 0; wpa_cli_commands[i].cmd; i++) {
 		if (os_strcasecmp(wpa_cli_commands[i].cmd, cmd) == 0) {
@@ -2961,19 +3309,20 @@ static void wpa_cli_action_process(const char *msg)
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, P2P_EVENT_CROSS_CONNECT_DISABLE)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, P2P_EVENT_GO_NEG_FAILURE)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, WPS_EVENT_SUCCESS)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, WPS_EVENT_FAIL)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, AP_STA_CONNECTED)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, AP_STA_DISCONNECTED)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, WPA_EVENT_TERMINATING)) {
 		printf("wpa_supplicant is terminating - stop monitoring\n");
 		wpa_cli_quit = 1;
 	}
-#ifdef ANDROID_BRCM_P2P_PATCH
-	else if (str_match(pos, P2P_EVENT_GO_NEG_FAILURE)) {
-		wpa_cli_exec(action_file, ctrl_ifname, pos);
-	}
-#endif
 }
 
 
@@ -2992,6 +3341,74 @@ static void wpa_cli_reconnect(void)
 }
 
 
+static void cli_event(const char *str)
+{
+	const char *start, *s;
+
+	start = os_strchr(str, '>');
+	if (start == NULL)
+		return;
+
+	start++;
+
+	if (str_starts(start, WPA_EVENT_BSS_ADDED)) {
+		s = os_strchr(start, ' ');
+		if (s == NULL)
+			return;
+		s = os_strchr(s + 1, ' ');
+		if (s == NULL)
+			return;
+		cli_txt_list_add(&bsses, s + 1);
+		return;
+	}
+
+	if (str_starts(start, WPA_EVENT_BSS_REMOVED)) {
+		s = os_strchr(start, ' ');
+		if (s == NULL)
+			return;
+		s = os_strchr(s + 1, ' ');
+		if (s == NULL)
+			return;
+		cli_txt_list_del_addr(&bsses, s + 1);
+		return;
+	}
+
+#ifdef CONFIG_P2P
+	if (str_starts(start, P2P_EVENT_DEVICE_FOUND)) {
+		s = os_strstr(start, " p2p_dev_addr=");
+		if (s == NULL)
+			return;
+		cli_txt_list_add_addr(&p2p_peers, s + 14);
+		return;
+	}
+
+	if (str_starts(start, P2P_EVENT_DEVICE_LOST)) {
+		s = os_strstr(start, " p2p_dev_addr=");
+		if (s == NULL)
+			return;
+		cli_txt_list_del_addr(&p2p_peers, s + 14);
+		return;
+	}
+
+	if (str_starts(start, P2P_EVENT_GROUP_STARTED)) {
+		s = os_strchr(start, ' ');
+		if (s == NULL)
+			return;
+		cli_txt_list_add_word(&p2p_groups, s + 1);
+		return;
+	}
+
+	if (str_starts(start, P2P_EVENT_GROUP_REMOVED)) {
+		s = os_strchr(start, ' ');
+		if (s == NULL)
+			return;
+		cli_txt_list_del_word(&p2p_groups, s + 1);
+		return;
+	}
+#endif /* CONFIG_P2P */
+}
+
+
 static void wpa_cli_recv_pending(struct wpa_ctrl *ctrl, int action_monitor)
 {
 	if (ctrl_conn == NULL) {
@@ -3006,6 +3423,7 @@ static void wpa_cli_recv_pending(struct wpa_ctrl *ctrl, int action_monitor)
 			if (action_monitor)
 				wpa_cli_action_process(buf);
 			else {
+				cli_event(buf);
 				if (wpa_cli_show_event(buf)) {
 					edit_clear_line();
 					printf("\r%s\n", buf);
@@ -3120,6 +3538,9 @@ static void wpa_cli_interactive(void)
 
 	eloop_run();
 
+	cli_txt_list_flush(&p2p_peers);
+	cli_txt_list_flush(&p2p_groups);
+	cli_txt_list_flush(&bsses);
 	edit_deinit(hfile, wpa_cli_edit_filter_history_cb);
 	os_free(hfile);
 	eloop_cancel_timeout(wpa_cli_ping, NULL, NULL);

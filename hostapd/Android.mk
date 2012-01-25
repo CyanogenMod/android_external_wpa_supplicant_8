@@ -19,7 +19,7 @@ L_CFLAGS += -DVERSION_STR_POSTFIX=\"-$(PLATFORM_VERSION)\"
 L_CFLAGS += -DANDROID_LOG_NAME=\"hostapd\"
 
 ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
-L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
+L_CFLAGS += -DANDROID_P2P
 endif
 
 # To force sizeof(enum) = 4
@@ -79,6 +79,8 @@ OBJS += src/ap/ap_mlme.c
 OBJS += src/ap/wpa_auth_ie.c
 OBJS += src/ap/preauth_auth.c
 OBJS += src/ap/pmksa_cache_auth.c
+OBJS += src/ap/ieee802_11_shared.c
+OBJS += src/ap/beacon.c
 OBJS_d =
 OBJS_p =
 LIBS =
@@ -756,7 +758,6 @@ OBJS += src/utils/base64.c
 endif
 
 ifdef NEED_AP_MLME
-OBJS += src/ap/beacon.c
 OBJS += src/ap/wmm.c
 OBJS += src/ap/ap_list.c
 OBJS += src/ap/ieee802_11.c
@@ -772,6 +773,8 @@ L_CFLAGS += -DCONFIG_P2P_MANAGER
 OBJS += src/ap/p2p_hostapd.c
 endif
 
+OBJS += src/drivers/driver_common.c
+
 ifdef CONFIG_NO_STDOUT_DEBUG
 L_CFLAGS += -DCONFIG_NO_STDOUT_DEBUG
 endif
@@ -785,9 +788,15 @@ L_CFLAGS += -DCONFIG_ANDROID_LOG
 endif
 
 OBJS_c = hostapd_cli.c src/common/wpa_ctrl.c src/utils/os_$(CONFIG_OS).c
+OBJS_c += src/utils/eloop.c
 ifdef CONFIG_WPA_TRACE
 OBJS_c += src/utils/trace.c
+endif
 OBJS_c += src/utils/wpa_debug.c
+ifdef CONFIG_WPA_CLI_EDIT
+OBJS_c += src/utils/edit.c
+else
+OBJS_c += src/utils/edit_simple.c
 endif
 
 ########################

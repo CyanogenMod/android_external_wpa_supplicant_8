@@ -98,6 +98,15 @@ struct wpa_sm {
 	struct wpa_tdls_peer *tdls;
 	int tdls_prohibited;
 	int tdls_disabled;
+
+	/* The driver supports TDLS */
+	int tdls_supported;
+
+	/*
+	 * The driver requires explicit discovery/setup/teardown frames sent
+	 * to it via tdls_mgmt.
+	 */
+	int tdls_external_setup;
 #endif /* CONFIG_TDLS */
 
 #ifdef CONFIG_IEEE80211R
@@ -244,7 +253,25 @@ static inline int wpa_sm_mark_authenticated(struct wpa_sm *sm,
 	return -1;
 }
 
+static inline void wpa_sm_set_rekey_offload(struct wpa_sm *sm)
+{
+	if (!sm->ctx->set_rekey_offload)
+		return;
+	sm->ctx->set_rekey_offload(sm->ctx->ctx, sm->ptk.kek,
+				   sm->ptk.kck, sm->rx_replay_counter);
+}
+
 #ifdef CONFIG_TDLS
+static inline int wpa_sm_tdls_get_capa(struct wpa_sm *sm,
+				       int *tdls_supported,
+				       int *tdls_ext_setup)
+{
+	if (sm->ctx->tdls_get_capa)
+		return sm->ctx->tdls_get_capa(sm->ctx->ctx, tdls_supported,
+					      tdls_ext_setup);
+	return -1;
+}
+
 static inline int wpa_sm_send_tdls_mgmt(struct wpa_sm *sm, const u8 *dst,
 					u8 action_code, u8 dialog_token,
 					u16 status_code, const u8 *buf,
@@ -262,6 +289,18 @@ static inline int wpa_sm_tdls_oper(struct wpa_sm *sm, int oper,
 {
 	if (sm->ctx->tdls_oper)
 		return sm->ctx->tdls_oper(sm->ctx->ctx, oper, peer);
+	return -1;
+}
+
+static inline int
+wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
+			u16 capability, const u8 *supp_rates,
+			size_t supp_rates_len)
+{
+	if (sm->ctx->tdls_peer_addset)
+		return sm->ctx->tdls_peer_addset(sm->ctx->ctx, addr, add,
+						 capability, supp_rates,
+						 supp_rates_len);
 	return -1;
 }
 #endif /* CONFIG_TDLS */

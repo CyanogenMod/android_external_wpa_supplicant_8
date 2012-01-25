@@ -101,7 +101,7 @@ Flush P2P peer table and state.
 
 Group Formation
 
-p2p_prov_disc <peer device address> <display|keypad|pbc>
+p2p_prov_disc <peer device address> <display|keypad|pbc> [join]
 
 Send P2P provision discovery request to the specified peer. The
 parameters for this command are the P2P device address of the peer and
@@ -110,7 +110,11 @@ the desired configuration method. For example, "p2p_prov_disc
 us and "p2p_prov_disc 02:01:02:03:04:05 keypad" would request the peer
 to enter a PIN that we display.
 
-p2p_connect <peer device address> <pbc|pin|PIN#> [label|display|keypad]
+The optional "join" parameter can be used to indicate that this command
+is requesting an already running GO to prepare for a new client. This is
+mainly used with "display" to request it to display a PIN.
+
+p2p_connect <peer device address> <pbc|pin|PIN#> [display|keypad]
 	[persistent] [join|auth] [go_intent=<0..15>] [freq=<in MHz>]
 
 Start P2P group formation with a discovered P2P peer. This includes
@@ -121,10 +125,9 @@ The <pbc|pin|PIN#> parameter specifies the WPS provisioning
 method. "pbc" string starts pushbutton method, "pin" string start PIN
 method using an automatically generated PIN (which will be returned as
 the command return code), PIN# means that a pre-selected PIN can be
-used (e.g., 12345670). [label|display|keypad] is used with PIN method
-to specify which PIN is used (label=PIN from local label,
-display=dynamically generated random PIN from local display,
-keypad=PIN entered from peer device label or display). "persistent"
+used (e.g., 12345670). [display|keypad] is used with PIN method
+to specify which PIN is used (display=dynamically generated random PIN
+from local display, keypad=PIN entered from peer display). "persistent"
 parameter can be used to request a persistent group to be formed.
 
 "join" indicates that this is a command to join an existing group as a

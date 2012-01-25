@@ -17,6 +17,9 @@
 #include "common.h"
 #include "eloop.h"
 #include "common/ieee802_11_defs.h"
+#ifdef ANDROID_P2P
+#include "common/wpa_ctrl.h"
+#endif
 #include "common/ieee802_11_common.h"
 #include "wps/wps_i.h"
 #include "p2p_i.h"
@@ -106,9 +109,39 @@ static const char * p2p_state_txt(int state)
 		return "INVITE";
 	case P2P_INVITE_LISTEN:
 		return "INVITE_LISTEN";
+	case P2P_SEARCH_WHEN_READY:
+		return "SEARCH_WHEN_READY";
 	default:
 		return "?";
 	}
+}
+
+
+u16 p2p_get_provisioning_info(struct p2p_data *p2p, const u8 *addr)
+{
+	struct p2p_device *dev = NULL;
+
+	if (!addr || !p2p)
+		return 0;
+
+	dev = p2p_get_device(p2p, addr);
+	if (dev)
+		return dev->wps_prov_info;
+	else
+		return 0;
+}
+
+
+void p2p_clear_provisioning_info(struct p2p_data *p2p, const u8 *iface_addr)
+{
+	struct p2p_device *dev = NULL;
+
+	if (!iface_addr || !p2p)
+		return;
+
+	dev = p2p_get_device_interface(p2p, iface_addr);
+	if (dev)
+		dev->wps_prov_info = 0;
 }
 
 
@@ -144,6 +177,8 @@ void p2p_go_neg_failed(struct p2p_data *p2p, struct p2p_device *peer,
 	struct p2p_go_neg_results res;
 	p2p_clear_timeout(p2p);
 	p2p_set_state(p2p, P2P_IDLE);
+	if (p2p->go_neg_peer)
+		p2p->go_neg_peer->wps_method = WPS_NOT_READY;
 	p2p->go_neg_peer = NULL;
 
 	os_memset(&res, 0, sizeof(res));
@@ -219,6 +254,12 @@ int p2p_listen(struct p2p_data *p2p, unsigned int timeout)
 	p2p->pending_listen_usec = (timeout % 1000) * 1000;
 
 	if (p2p->p2p_scan_running) {
+		if (p2p->start_after_scan == P2P_AFTER_SCAN_NOTHING) {
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+				"P2P: p2p_scan running - connect is already "
+				"pending - skip listen");
+			return 0;
+		}
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: p2p_scan running - delay start of listen state");
 		p2p->start_after_scan = P2P_AFTER_SCAN_LISTEN;
@@ -363,7 +404,7 @@ static int p2p_add_group_clients(struct p2p_data *p2p, const u8 *go_dev_addr,
 	 * group, the information will be restored in the loop following this.
 	 */
 	dl_list_for_each(dev, &p2p->devices, struct p2p_device, list) {
-		if (os_memcpy(dev->member_in_go_iface, go_interface_addr,
+		if (os_memcmp(dev->member_in_go_iface, go_interface_addr,
 			      ETH_ALEN) == 0) {
 			os_memset(dev->member_in_go_iface, 0, ETH_ALEN);
 			os_memset(dev->member_in_go_dev, 0, ETH_ALEN);
@@ -372,6 +413,9 @@ static int p2p_add_group_clients(struct p2p_data *p2p, const u8 *go_dev_addr,
 
 	for (c = 0; c < info.num_clients; c++) {
 		struct p2p_client_info *cli = &info.client[c];
+		if (os_memcmp(cli->p2p_device_addr, p2p->cfg->dev_addr,
+			      ETH_ALEN) == 0)
+			continue; /* ignore our own entry */
 		dev = p2p_get_device(p2p, cli->p2p_device_addr);
 		if (dev) {
 			/*
@@ -574,11 +618,6 @@ int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
 			freq, msg.ds_params ? *msg.ds_params : -1);
 	}
 	dev->listen_freq = freq;
-#ifdef ANDROID_BRCM_P2P_PATCH	
-	if(msg.group_info)
-		dev->go_state = REMOTE_GO;
-#endif
-
 	if (msg.group_info)
 		dev->oper_freq = freq;
 	dev->info.level = level;
@@ -631,9 +670,10 @@ static void p2p_device_free(struct p2p_data *p2p, struct p2p_device *dev)
 	int i;
 
 	if (p2p->go_neg_peer == dev) {
-#ifdef ANDROID_BRCM_P2P_PATCH
+		/*
+		 * If GO Negotiation is in progress, report that it has failed.
+		 */
 		p2p_go_neg_failed(p2p, dev, -1);
-#endif
 		p2p->go_neg_peer = NULL;
 	}
 	if (p2p->invite_peer == dev)
@@ -787,19 +827,18 @@ static int p2p_run_after_scan(struct p2p_data *p2p)
 	enum p2p_after_scan op;
 
 	if (p2p->after_scan_tx) {
-		int ret;
 		/* TODO: schedule p2p_run_after_scan to be called from TX
 		 * status callback(?) */
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Send pending "
 			"Action frame at p2p_scan completion");
-		ret = p2p->cfg->send_action(p2p->cfg->cb_ctx,
-					    p2p->after_scan_tx->freq,
-					    p2p->after_scan_tx->dst,
-					    p2p->after_scan_tx->src,
-					    p2p->after_scan_tx->bssid,
-					    (u8 *) (p2p->after_scan_tx + 1),
-					    p2p->after_scan_tx->len,
-					    p2p->after_scan_tx->wait_time);
+		p2p->cfg->send_action(p2p->cfg->cb_ctx,
+				      p2p->after_scan_tx->freq,
+				      p2p->after_scan_tx->dst,
+				      p2p->after_scan_tx->src,
+				      p2p->after_scan_tx->bssid,
+				      (u8 *) (p2p->after_scan_tx + 1),
+				      p2p->after_scan_tx->len,
+				      p2p->after_scan_tx->wait_time);
 		os_free(p2p->after_scan_tx);
 		p2p->after_scan_tx = NULL;
 		return 1;
@@ -888,6 +927,7 @@ int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 	p2p_device_clear_reported(p2p);
 	p2p_set_state(p2p, P2P_SEARCH);
 	eloop_cancel_timeout(p2p_find_timeout, p2p, NULL);
+	p2p->last_p2p_find_timeout = timeout;
 	if (timeout)
 		eloop_register_timeout(timeout, 0, p2p_find_timeout,
 				       p2p, NULL);
@@ -913,12 +953,34 @@ int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 		eloop_cancel_timeout(p2p_scan_timeout, p2p, NULL);
 		eloop_register_timeout(P2P_SCAN_TIMEOUT, 0, p2p_scan_timeout,
 				       p2p, NULL);
+	} else if (res == 1) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Could not start "
+			"p2p_scan at this point - will try again after "
+			"previous scan completes");
+		res = 0;
+		p2p_set_state(p2p, P2P_SEARCH_WHEN_READY);
+		eloop_cancel_timeout(p2p_find_timeout, p2p, NULL);
 	} else {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Failed to start "
 			"p2p_scan");
+		p2p_set_state(p2p, P2P_IDLE);
+		eloop_cancel_timeout(p2p_find_timeout, p2p, NULL);
 	}
 
 	return res;
+}
+
+
+int p2p_other_scan_completed(struct p2p_data *p2p)
+{
+	if (p2p->state != P2P_SEARCH_WHEN_READY)
+		return 0;
+	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Starting pending P2P find "
+		"now that previous scan was completed");
+	if (p2p_find(p2p, p2p->last_p2p_find_timeout, p2p->find_type,
+		     p2p->num_req_dev_types, p2p->req_dev_types) < 0)
+		return 0;
+	return 1;
 }
 
 
@@ -928,6 +990,10 @@ void p2p_stop_find_for_freq(struct p2p_data *p2p, int freq)
 	eloop_cancel_timeout(p2p_find_timeout, p2p, NULL);
 	p2p_clear_timeout(p2p);
 	p2p_set_state(p2p, P2P_IDLE);
+#ifdef ANDROID_P2P
+	wpa_msg(p2p->cfg->msg_ctx, MSG_INFO, P2P_EVENT_FIND_STOPPED);
+#endif
+
 	p2p_free_req_dev_types(p2p);
 	p2p->start_after_scan = P2P_AFTER_SCAN_NOTHING;
 	p2p->go_neg_peer = NULL;
@@ -937,6 +1003,16 @@ void p2p_stop_find_for_freq(struct p2p_data *p2p, int freq)
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Skip stop_listen "
 			"since we are on correct channel for response");
 		return;
+	}
+	if (p2p->drv_in_listen) {
+		/*
+		 * The driver may not deliver callback to p2p_listen_end()
+		 * when the operation gets canceled, so clear the internal
+		 * variable that is tracking driver state.
+		 */
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Clear "
+			"drv_in_listen (%d)", p2p->drv_in_listen);
+		p2p->drv_in_listen = 0;
 	}
 	p2p->cfg->stop_listen(p2p->cfg->cb_ctx);
 }
@@ -1027,6 +1103,26 @@ static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
 }
 
 
+static void p2p_set_dev_persistent(struct p2p_device *dev,
+				   int persistent_group)
+{
+	switch (persistent_group) {
+	case 0:
+		dev->flags &= ~(P2P_DEV_PREFER_PERSISTENT_GROUP |
+				P2P_DEV_PREFER_PERSISTENT_RECONN);
+		break;
+	case 1:
+		dev->flags |= P2P_DEV_PREFER_PERSISTENT_GROUP;
+		dev->flags &= ~P2P_DEV_PREFER_PERSISTENT_RECONN;
+		break;
+	case 2:
+		dev->flags |= P2P_DEV_PREFER_PERSISTENT_GROUP |
+			P2P_DEV_PREFER_PERSISTENT_RECONN;
+		break;
+	}
+}
+
+
 int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 		enum p2p_wps_method wps_method,
 		int go_intent, const u8 *own_interface_addr,
@@ -1044,6 +1140,7 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 	if (p2p_prepare_channel(p2p, force_freq) < 0)
 		return -1;
 
+	p2p->ssid_set = 0;
 	dev = p2p_get_device(p2p, peer_addr);
 	if (dev == NULL || (dev->flags & P2P_DEV_PROBE_REQ_ONLY)) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -1083,10 +1180,7 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 	dev->connect_reqs = 0;
 	dev->go_neg_req_sent = 0;
 	dev->go_state = UNKNOWN_GO;
-	if (persistent_group)
-		dev->flags |= P2P_DEV_PREFER_PERSISTENT_GROUP;
-	else
-		dev->flags &= ~P2P_DEV_PREFER_PERSISTENT_GROUP;
+	p2p_set_dev_persistent(dev, persistent_group);
 	p2p->go_intent = go_intent;
 	os_memcpy(p2p->intended_addr, own_interface_addr, ETH_ALEN);
 
@@ -1156,10 +1250,7 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 	dev->flags &= ~P2P_DEV_USER_REJECTED;
 	dev->go_neg_req_sent = 0;
 	dev->go_state = UNKNOWN_GO;
-	if (persistent_group)
-		dev->flags |= P2P_DEV_PREFER_PERSISTENT_GROUP;
-	else
-		dev->flags &= ~P2P_DEV_PREFER_PERSISTENT_GROUP;
+	p2p_set_dev_persistent(dev, persistent_group);
 	p2p->go_intent = go_intent;
 	os_memcpy(p2p->intended_addr, own_interface_addr, ETH_ALEN);
 
@@ -1270,8 +1361,12 @@ void p2p_go_complete(struct p2p_data *p2p, struct p2p_device *peer)
 	os_memcpy(res.peer_device_addr, peer->info.p2p_device_addr, ETH_ALEN);
 	os_memcpy(res.peer_interface_addr, peer->intended_addr, ETH_ALEN);
 	res.wps_method = peer->wps_method;
-	if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP)
-		res.persistent_group = 1;
+	if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP) {
+		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_RECONN)
+			res.persistent_group = 2;
+		else
+			res.persistent_group = 1;
+	}
 
 	if (go) {
 		/* Setup AP mode for WPS provisioning */
@@ -1311,6 +1406,7 @@ void p2p_go_complete(struct p2p_data *p2p, struct p2p_device *peer)
 	res.peer_config_timeout = go ? peer->client_timeout : peer->go_timeout;
 
 	p2p_clear_timeout(p2p);
+	p2p->ssid_set = 0;
 	peer->go_neg_req_sent = 0;
 	peer->wps_method = WPS_NOT_READY;
 
@@ -1367,9 +1463,9 @@ static void p2p_rx_p2p_action(struct p2p_data *p2p, const u8 *sa,
 }
 
 
-void p2p_rx_action_public(struct p2p_data *p2p, const u8 *da, const u8 *sa,
-			  const u8 *bssid, const u8 *data, size_t len,
-			  int freq)
+static void p2p_rx_action_public(struct p2p_data *p2p, const u8 *da,
+				 const u8 *sa, const u8 *bssid, const u8 *data,
+				 size_t len, int freq)
 {
 	if (len < 1)
 		return;
@@ -1514,6 +1610,7 @@ static void p2p_add_dev_from_probe_req(struct p2p_data *p2p, const u8 *addr,
 	if (dev) {
 		if (dev->country[0] == 0 && msg.listen_channel)
 			os_memcpy(dev->country, msg.listen_channel, 3);
+		os_get_time(&dev->last_seen);
 		p2p_parse_free(&msg);
 		return; /* already known */
 	}
@@ -1653,13 +1750,47 @@ struct wpabuf * p2p_build_probe_resp_ies(struct p2p_data *p2p)
 }
 
 
-static void p2p_reply_probe(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
+static int is_11b(u8 rate)
+{
+	return rate == 0x02 || rate == 0x04 || rate == 0x0b || rate == 0x16;
+}
+
+
+static int supp_rates_11b_only(struct ieee802_11_elems *elems)
+{
+	int num_11b = 0, num_others = 0;
+	int i;
+
+	if (elems->supp_rates == NULL && elems->ext_supp_rates == NULL)
+		return 0;
+
+	for (i = 0; elems->supp_rates && i < elems->supp_rates_len; i++) {
+		if (is_11b(elems->supp_rates[i]))
+			num_11b++;
+		else
+			num_others++;
+	}
+
+	for (i = 0; elems->ext_supp_rates && i < elems->ext_supp_rates_len;
+	     i++) {
+		if (is_11b(elems->ext_supp_rates[i]))
+			num_11b++;
+		else
+			num_others++;
+	}
+
+	return num_11b > 0 && num_others == 0;
+}
+
+
+static void p2p_reply_probe(struct p2p_data *p2p, const u8 *addr,
+			    const u8 *dst, const u8 *bssid, const u8 *ie,
 			    size_t ie_len)
 {
 	struct ieee802_11_elems elems;
 	struct wpabuf *buf;
 	struct ieee80211_mgmt *resp;
-	struct wpabuf *wps;
+	struct p2p_message msg;
 	struct wpabuf *ies;
 
 	if (!p2p->in_listen || !p2p->drv_in_listen) {
@@ -1678,6 +1809,18 @@ static void p2p_reply_probe(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
 		return;
 	}
 
+	if (dst && !is_broadcast_ether_addr(dst) &&
+	    os_memcmp(dst, p2p->cfg->dev_addr, ETH_ALEN) != 0) {
+		/* Not sent to the broadcast address or our P2P Device Address
+		 */
+		return;
+	}
+
+	if (bssid && !is_broadcast_ether_addr(bssid)) {
+		/* Not sent to the Wildcard BSSID */
+		return;
+	}
+
 	if (elems.ssid == NULL || elems.ssid_len != P2P_WILDCARD_SSID_LEN ||
 	    os_memcmp(elems.ssid, P2P_WILDCARD_SSID, P2P_WILDCARD_SSID_LEN) !=
 	    0) {
@@ -1685,14 +1828,32 @@ static void p2p_reply_probe(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
 		return;
 	}
 
-	/* Check Requested Device Type match */
-	wps = ieee802_11_vendor_ie_concat(ie, ie_len, WPS_DEV_OUI_WFA);
-	if (wps && !p2p_match_dev_type(p2p, wps)) {
-		wpabuf_free(wps);
-		/* No match with Requested Device Type */
+	if (supp_rates_11b_only(&elems)) {
+		/* Indicates support for 11b rates only */
 		return;
 	}
-	wpabuf_free(wps);
+
+	os_memset(&msg, 0, sizeof(msg));
+	if (p2p_parse_ies(ie, ie_len, &msg) < 0) {
+		/* Could not parse P2P attributes */
+		return;
+	}
+
+	if (msg.device_id &&
+	    os_memcmp(msg.device_id, p2p->cfg->dev_addr, ETH_ALEN != 0)) {
+		/* Device ID did not match */
+		p2p_parse_free(&msg);
+		return;
+	}
+
+	/* Check Requested Device Type match */
+	if (msg.wps_attributes &&
+	    !p2p_match_dev_type(p2p, msg.wps_attributes)) {
+		/* No match with Requested Device Type */
+		p2p_parse_free(&msg);
+		return;
+	}
+	p2p_parse_free(&msg);
 
 	if (!p2p->cfg->send_probe_resp)
 		return; /* Response generated elsewhere */
@@ -1759,12 +1920,12 @@ static void p2p_reply_probe(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
 }
 
 
-int p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
-		     size_t ie_len)
+int p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *dst,
+		     const u8 *bssid, const u8 *ie, size_t ie_len)
 {
 	p2p_add_dev_from_probe_req(p2p, addr, ie, ie_len);
 
-	p2p_reply_probe(p2p, addr, ie, ie_len);
+	p2p_reply_probe(p2p, addr, dst, bssid, ie, ie_len);
 
 	if ((p2p->state == P2P_CONNECT || p2p->state == P2P_CONNECT_LISTEN) &&
 	    p2p->go_neg_peer &&
@@ -2221,11 +2382,11 @@ void p2p_continue_find(struct p2p_data *p2p)
 		} else if (dev->req_config_methods &&
 			   !(dev->flags & P2P_DEV_PD_FOR_JOIN)) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Send "
-				"pending Provisioning Discovery Request to "
+				"pending Provision Discovery Request to "
 				MACSTR " (config methods 0x%x)",
 				MAC2STR(dev->info.p2p_device_addr),
 				dev->req_config_methods);
-			if (p2p_send_prov_disc_req(p2p, dev, 0) == 0)
+			if (p2p_send_prov_disc_req(p2p, dev, 0, 0) == 0)
 				return;
 		}
 	}
@@ -2267,7 +2428,7 @@ static void p2p_sd_cb(struct p2p_data *p2p, int success)
  * p2p_retry_pd - Retry any pending provision disc requests in IDLE state
  * @p2p: P2P module context from p2p_init()
  */
-void p2p_retry_pd(struct p2p_data *p2p)
+static void p2p_retry_pd(struct p2p_data *p2p)
 {
 	struct p2p_device *dev;
 
@@ -2290,11 +2451,11 @@ void p2p_retry_pd(struct p2p_data *p2p)
 			continue;
 
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Send "
-			"pending Provisioning Discovery Request to "
+			"pending Provision Discovery Request to "
 			MACSTR " (config methods 0x%x)",
 			MAC2STR(dev->info.p2p_device_addr),
 			dev->req_config_methods);
-		p2p_send_prov_disc_req(p2p, dev, 0);
+		p2p_send_prov_disc_req(p2p, dev, 0, 0);
 		return;
 	}
 }
@@ -2392,6 +2553,12 @@ void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies)
 					      p2p->ext_listen_interval);
 	/* TODO: p2p_buf_add_operating_channel() if GO */
 	p2p_buf_update_ie_hdr(ies, len);
+}
+
+
+size_t p2p_scan_ie_buf_len(struct p2p_data *p2p)
+{
+	return 100;
 }
 
 
@@ -2674,15 +2841,7 @@ static void p2p_timeout_wait_peer_connect(struct p2p_data *p2p)
 	 * state once per second to give other uses a chance to use the radio.
 	 */
 	p2p_set_state(p2p, P2P_WAIT_PEER_IDLE);
-#ifdef ANDROID_BRCM_P2P_PATCH
-	/*
-	 * We need to be back in Listen state soon enough so that we don't miss
-	 * the GO Nego req from the peer.
-	*/
-	p2p_set_timeout(p2p, 0, 0);
-#else
-	p2p_set_timeout(p2p, 1, 0);
-#endif
+	p2p_set_timeout(p2p, 0, 500000);
 }
 
 
@@ -2862,6 +3021,8 @@ static void p2p_state_timeout(void *eloop_ctx, void *timeout_ctx)
 	case P2P_INVITE_LISTEN:
 		p2p_timeout_invite_listen(p2p);
 		break;
+	case P2P_SEARCH_WHEN_READY:
+		break;
 	}
 }
 
@@ -2884,13 +3045,11 @@ int p2p_reject(struct p2p_data *p2p, const u8 *peer_addr)
 }
 
 
-static const char * p2p_wps_method_text(enum p2p_wps_method method)
+const char * p2p_wps_method_text(enum p2p_wps_method method)
 {
 	switch (method) {
 	case WPS_NOT_READY:
 		return "not-ready";
-	case WPS_PIN_LABEL:
-		return "Label";
 	case WPS_PIN_DISPLAY:
 		return "Display";
 	case WPS_PIN_KEYPAD:
@@ -2918,14 +3077,10 @@ static const char * p2p_go_state_text(enum p2p_go_state go_state)
 }
 
 
-int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
-		      char *buf, size_t buflen)
+const struct p2p_peer_info * p2p_get_peer_info(struct p2p_data *p2p,
+					       const u8 *addr, int next)
 {
 	struct p2p_device *dev;
-	int res;
-	char *pos, *end;
-	struct os_time now;
-	char devtype[WPS_DEV_TYPE_BUFSIZE];
 
 	if (addr)
 		dev = p2p_get_device(p2p, addr);
@@ -2939,35 +3094,37 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 	}
 
 	if (dev == NULL)
+		return NULL;
+
+	return &dev->info;
+}
+
+
+int p2p_get_peer_info_txt(const struct p2p_peer_info *info,
+			  char *buf, size_t buflen)
+{
+	struct p2p_device *dev;
+	int res;
+	char *pos, *end;
+	struct os_time now;
+
+	if (info == NULL)
 		return -1;
+
+	dev = (struct p2p_device *) (((u8 *) info) -
+				     offsetof(struct p2p_device, info));
 
 	pos = buf;
 	end = buf + buflen;
-
-	res = os_snprintf(pos, end - pos, MACSTR "\n",
-			  MAC2STR(dev->info.p2p_device_addr));
-	if (res < 0 || res >= end - pos)
-		return pos - buf;
-	pos += res;
 
 	os_get_time(&now);
 	res = os_snprintf(pos, end - pos,
 			  "age=%d\n"
 			  "listen_freq=%d\n"
-			  "level=%d\n"
 			  "wps_method=%s\n"
 			  "interface_addr=" MACSTR "\n"
 			  "member_in_go_dev=" MACSTR "\n"
 			  "member_in_go_iface=" MACSTR "\n"
-			  "pri_dev_type=%s\n"
-			  "device_name=%s\n"
-			  "manufacturer=%s\n"
-			  "model_name=%s\n"
-			  "model_number=%s\n"
-			  "serial_number=%s\n"
-			  "config_methods=0x%x\n"
-			  "dev_capab=0x%x\n"
-			  "group_capab=0x%x\n"
 			  "go_neg_req_sent=%d\n"
 			  "go_state=%s\n"
 			  "dialog_token=%u\n"
@@ -2981,21 +3138,10 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 			  "invitation_reqs=%u\n",
 			  (int) (now.sec - dev->last_seen.sec),
 			  dev->listen_freq,
-			  dev->info.level,
 			  p2p_wps_method_text(dev->wps_method),
 			  MAC2STR(dev->interface_addr),
 			  MAC2STR(dev->member_in_go_dev),
 			  MAC2STR(dev->member_in_go_iface),
-			  wps_dev_type_bin2str(dev->info.pri_dev_type,
-					       devtype, sizeof(devtype)),
-			  dev->info.device_name,
-			  dev->info.manufacturer,
-			  dev->info.model_name,
-			  dev->info.model_number,
-			  dev->info.serial_number,
-			  dev->info.config_methods,
-			  dev->info.dev_capab,
-			  dev->info.group_capab,
 			  dev->go_neg_req_sent,
 			  p2p_go_state_text(dev->go_state),
 			  dev->dialog_token,
@@ -3061,6 +3207,12 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 	}
 
 	return pos - buf;
+}
+
+
+int p2p_peer_known(struct p2p_data *p2p, const u8 *addr)
+{
+	return p2p_get_device(p2p, addr) != NULL;
 }
 
 
@@ -3623,4 +3775,21 @@ p2p_get_peer_found(struct p2p_data *p2p, const u8 *addr, int next)
 	}
 
 	return &dev->info;
+}
+
+#ifdef ANDROID_P2P
+int p2p_search_in_progress(struct p2p_data *p2p)
+{
+	if (p2p == NULL)
+		return 0;
+
+	return p2p->state == P2P_SEARCH;
+}
+#endif
+
+int p2p_in_progress(struct p2p_data *p2p)
+{
+	if (p2p == NULL)
+		return 0;
+	return p2p->state != P2P_IDLE && p2p->state != P2P_PROVISIONING;
 }

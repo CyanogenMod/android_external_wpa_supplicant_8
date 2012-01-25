@@ -54,3 +54,6 @@ $(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_supplicant_inte
 $(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_cli_intermediates/*)
 $(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_supplicant_intermediates/*)
 $(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/hostapd_intermediates/*)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_cli_intermediates/*)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/wpa_supplicant_intermediates/*)
+$(call add-clean-step, rm -rf $(PRODUCT_OUT)/obj/EXECUTABLES/hostapd_intermediates/*)

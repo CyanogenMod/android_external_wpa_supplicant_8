@@ -561,7 +561,7 @@ SM_STEP(SUPP_BE)
 		 * IEEE Std 802.1X-2004 has transitions from REQUEST to FAIL
 		 * and SUCCESS based on eapFail and eapSuccess, respectively.
 		 * However, IEEE Std 802.1X-2004 is also specifying that
-		 * eapNoResp should be set in conjuction with eapSuccess and
+		 * eapNoResp should be set in conjunction with eapSuccess and
 		 * eapFail which would mean that more than one of the
 		 * transitions here would be activated at the same time.
 		 * Skipping RESPONSE and/or RECEIVE states in these cases can
@@ -1813,7 +1813,7 @@ static void eapol_sm_notify_pending(void *ctx)
 
 
 #if defined(CONFIG_CTRL_IFACE) || !defined(CONFIG_NO_STDOUT_DEBUG)
-static void eapol_sm_eap_param_needed(void *ctx, const char *field,
+static void eapol_sm_eap_param_needed(void *ctx, enum wpa_ctrl_req_type field,
 				      const char *txt)
 {
 	struct eapol_sm *sm = ctx;
@@ -1883,6 +1883,7 @@ struct eapol_sm *eapol_sm_init(struct eapol_ctx *ctx)
 	conf.pkcs11_engine_path = ctx->pkcs11_engine_path;
 	conf.pkcs11_module_path = ctx->pkcs11_module_path;
 	conf.wps = ctx->wps;
+	conf.cert_in_cb = ctx->cert_in_cb;
 
 	sm->eap = eap_peer_sm_init(sm, &eapol_cb, sm->ctx->msg_ctx, &conf);
 	if (sm->eap == NULL) {

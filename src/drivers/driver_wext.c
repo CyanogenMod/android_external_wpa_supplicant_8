@@ -25,7 +25,7 @@
 #include <fcntl.h>
 #include <net/if_arp.h>
 
-#include "wireless_copy.h"
+#include "linux_wext.h"
 #include "common.h"
 #include "eloop.h"
 #include "common/ieee802_11_defs.h"
@@ -37,6 +37,9 @@
 #include "driver.h"
 #include "driver_wext.h"
 
+#ifdef ANDROID
+#include "android_drv.h"
+#endif /* ANDROID */
 
 static int wpa_driver_wext_flush_pmkid(void *priv);
 static int wpa_driver_wext_get_range(void *priv);
@@ -842,12 +845,13 @@ void * wpa_driver_wext_init(void *ctx, const char *ifname)
 	}
 
 	drv->mlme_sock = -1;
+
 #ifdef ANDROID
 	drv->errors = 0;
 	drv->driver_is_started = TRUE;
 	drv->skip_disconnect = 0;
 	drv->bgscan_enabled = 0;
-#endif
+#endif /* ANDROID */
 
 	if (wpa_driver_wext_finish_drv_init(drv) < 0)
 		goto err3;
@@ -1416,7 +1420,7 @@ static void wpa_driver_wext_add_scan_entry(struct wpa_scan_results *res,
 	tmp[res->num++] = r;
 	res->res = tmp;
 }
-				      
+
 
 /**
  * wpa_driver_wext_get_scan_results - Fetch the latest scan results
@@ -1426,7 +1430,7 @@ static void wpa_driver_wext_add_scan_entry(struct wpa_scan_results *res,
 struct wpa_scan_results * wpa_driver_wext_get_scan_results(void *priv)
 {
 	struct wpa_driver_wext_data *drv = priv;
-	size_t ap_num = 0, len;
+	size_t len;
 	int first;
 	u8 *res_buf;
 	struct iw_event iwe_buf, *iwe = &iwe_buf;
@@ -1438,7 +1442,6 @@ struct wpa_scan_results * wpa_driver_wext_get_scan_results(void *priv)
 	if (res_buf == NULL)
 		return NULL;
 
-	ap_num = 0;
 	first = 1;
 
 	res = os_zalloc(sizeof(*res));
@@ -1868,8 +1871,10 @@ static void wpa_driver_wext_disconnect(struct wpa_driver_wext_data *drv)
 {
 	struct iwreq iwr;
 	const u8 null_bssid[ETH_ALEN] = { 0, 0, 0, 0, 0, 0 };
+#ifndef ANDROID
 	u8 ssid[32];
 	int i;
+#endif /* ANDROID */
 
 	/*
 	 * Only force-disconnect when the card is in infrastructure mode,
@@ -1884,40 +1889,39 @@ static void wpa_driver_wext_disconnect(struct wpa_driver_wext_data *drv)
 	}
 
 	if (iwr.u.mode == IW_MODE_INFRA) {
+		/* Clear the BSSID selection */
+		if (wpa_driver_wext_set_bssid(drv, null_bssid) < 0) {
+			wpa_printf(MSG_DEBUG, "WEXT: Failed to clear BSSID "
+				   "selection on disconnect");
+		}
+
+#ifndef ANDROID
 		if (drv->cfg80211) {
 			/*
 			 * cfg80211 supports SIOCSIWMLME commands, so there is
 			 * no need for the random SSID hack, but clear the
-			 * BSSID and SSID.
+			 * SSID.
 			 */
-			if (wpa_driver_wext_set_bssid(drv, null_bssid) < 0 ||
-#ifdef ANDROID
-			    0) {
-#else
-			    wpa_driver_wext_set_ssid(drv, (u8 *) "", 0) < 0) {
-#endif
+			if (wpa_driver_wext_set_ssid(drv, (u8 *) "", 0) < 0) {
 				wpa_printf(MSG_DEBUG, "WEXT: Failed to clear "
-					   "to disconnect");
+					   "SSID on disconnect");
 			}
 			return;
 		}
+
 		/*
-		 * Clear the BSSID selection and set a random SSID to make sure
-		 * the driver will not be trying to associate with something
-		 * even if it does not understand SIOCSIWMLME commands (or
-		 * tries to associate automatically after deauth/disassoc).
+		 * Set a random SSID to make sure the driver will not be trying
+		 * to associate with something even if it does not understand
+		 * SIOCSIWMLME commands (or tries to associate automatically
+		 * after deauth/disassoc).
 		 */
 		for (i = 0; i < 32; i++)
 			ssid[i] = rand() & 0xFF;
-		if (wpa_driver_wext_set_bssid(drv, null_bssid) < 0 ||
-#ifdef ANDROID
-		    0) {
-#else
-		    wpa_driver_wext_set_ssid(drv, ssid, 32) < 0) {
-#endif
+		if (wpa_driver_wext_set_ssid(drv, ssid, 32) < 0) {
 			wpa_printf(MSG_DEBUG, "WEXT: Failed to set bogus "
-				   "BSSID/SSID to disconnect");
+				   "SSID to disconnect");
 		}
+#endif /* ANDROID */
 	}
 }
 
@@ -2350,6 +2354,129 @@ static const char * wext_get_radio_name(void *priv)
 }
 
 
+#ifdef ANDROID
+
+static int android_wext_cmd(struct wpa_driver_wext_data *drv, const char *cmd)
+{
+	struct iwreq iwr;
+	char buf[MAX_DRV_CMD_SIZE];
+	int ret;
+
+	os_memset(&iwr, 0, sizeof(iwr));
+	os_strlcpy(iwr.ifr_name, drv->ifname, IFNAMSIZ);
+
+	os_memset(buf, 0, sizeof(buf));
+	os_strlcpy(buf, cmd, sizeof(buf));
+
+	iwr.u.data.pointer = buf;
+	iwr.u.data.length = sizeof(buf);
+
+	ret = ioctl(drv->ioctl_sock, SIOCSIWPRIV, &iwr);
+
+	if (ret < 0) {
+		wpa_printf(MSG_ERROR, "%s failed (%d): %s", __func__, ret,
+			   cmd);
+		drv->errors++;
+		if (drv->errors > DRV_NUMBER_SEQUENTIAL_ERRORS) {
+			drv->errors = 0;
+			wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE
+				"HANGED");
+		}
+		return ret;
+	}
+
+	drv->errors = 0;
+	return 0;
+}
+
+
+static int wext_sched_scan(void *priv, struct wpa_driver_scan_params *params,
+			   u32 interval)
+{
+	struct wpa_driver_wext_data *drv = priv;
+	struct iwreq iwr;
+	int ret = 0, i = 0, bp;
+	char buf[WEXT_PNO_MAX_COMMAND_SIZE];
+
+	bp = WEXT_PNOSETUP_HEADER_SIZE;
+	os_memcpy(buf, WEXT_PNOSETUP_HEADER, bp);
+	buf[bp++] = WEXT_PNO_TLV_PREFIX;
+	buf[bp++] = WEXT_PNO_TLV_VERSION;
+	buf[bp++] = WEXT_PNO_TLV_SUBVERSION;
+	buf[bp++] = WEXT_PNO_TLV_RESERVED;
+
+	while (i < WEXT_PNO_AMOUNT && (size_t) i < params->num_ssids) {
+		/*
+		 * Check that there is enough space needed for 1 more SSID, the
+		 * other sections and null termination.
+		 */
+		if ((bp + WEXT_PNO_SSID_HEADER_SIZE + IW_ESSID_MAX_SIZE +
+		     WEXT_PNO_NONSSID_SECTIONS_SIZE + 1) >= (int) sizeof(buf))
+			break;
+
+		wpa_hexdump_ascii(MSG_DEBUG, "For PNO Scan",
+				  params->ssids[i].ssid,
+				  params->ssids[i].ssid_len);
+		buf[bp++] = WEXT_PNO_SSID_SECTION;
+		buf[bp++] = params->ssids[i].ssid_len;
+		os_memcpy(&buf[bp], params->ssids[i].ssid,
+			  params->ssids[i].ssid_len);
+		bp += params->ssids[i].ssid_len;
+		i++;
+	}
+
+	buf[bp++] = WEXT_PNO_SCAN_INTERVAL_SECTION;
+	/* TODO: consider using interval parameter (interval in msec) instead
+	 * of hardcoded value here */
+	os_snprintf(&buf[bp], WEXT_PNO_SCAN_INTERVAL_LENGTH + 1, "%x",
+		    WEXT_PNO_SCAN_INTERVAL);
+	bp += WEXT_PNO_SCAN_INTERVAL_LENGTH;
+
+	buf[bp++] = WEXT_PNO_REPEAT_SECTION;
+	os_snprintf(&buf[bp], WEXT_PNO_REPEAT_LENGTH + 1, "%x",
+		    WEXT_PNO_REPEAT);
+	bp += WEXT_PNO_REPEAT_LENGTH;
+
+	buf[bp++] = WEXT_PNO_MAX_REPEAT_SECTION;
+	os_snprintf(&buf[bp], WEXT_PNO_MAX_REPEAT_LENGTH + 1, "%x",
+		    WEXT_PNO_MAX_REPEAT);
+	bp += WEXT_PNO_MAX_REPEAT_LENGTH + 1;
+
+	os_memset(&iwr, 0, sizeof(iwr));
+	os_strncpy(iwr.ifr_name, drv->ifname, IFNAMSIZ);
+	iwr.u.data.pointer = buf;
+	iwr.u.data.length = bp;
+
+	ret = ioctl(drv->ioctl_sock, SIOCSIWPRIV, &iwr);
+	if (ret < 0) {
+		wpa_printf(MSG_ERROR, "ioctl[SIOCSIWPRIV] (pnosetup): %d",
+			   ret);
+		drv->errors++;
+		if (drv->errors > DRV_NUMBER_SEQUENTIAL_ERRORS) {
+			drv->errors = 0;
+			wpa_msg(drv->ctx, MSG_INFO,
+				WPA_EVENT_DRIVER_STATE "HANGED");
+		}
+		return ret;
+	}
+
+	drv->errors = 0;
+	drv->bgscan_enabled = 1;
+
+	return android_wext_cmd(drv, "PNOFORCE 1");
+}
+
+
+static int wext_stop_sched_scan(void *priv)
+{
+	struct wpa_driver_wext_data *drv = priv;
+	drv->bgscan_enabled = 0;
+	return android_wext_cmd(drv, "PNOFORCE 0");
+}
+
+#endif /* ANDROID */
+
+
 const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.name = "wext",
 	.desc = "Linux wireless extensions (generic)",
@@ -2371,7 +2498,7 @@ const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.set_operstate = wpa_driver_wext_set_operstate,
 	.get_radio_name = wext_get_radio_name,
 #ifdef ANDROID
-	.signal_poll = wpa_driver_signal_poll,
-	.driver_cmd = wpa_driver_wext_driver_cmd,
-#endif
+	.sched_scan = wext_sched_scan,
+	.stop_sched_scan = wext_stop_sched_scan,
+#endif /* ANDROID */
 };

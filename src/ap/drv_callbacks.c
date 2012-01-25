@@ -19,7 +19,6 @@
 #include "drivers/driver.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
-#include "common/wpa_ctrl.h"
 #include "crypto/random.h"
 #include "p2p/p2p.h"
 #include "wps/wps.h"
@@ -28,25 +27,22 @@
 #include "sta_info.h"
 #include "accounting.h"
 #include "tkip_countermeasures.h"
-#include "iapp.h"
 #include "ieee802_1x.h"
 #include "wpa_auth.h"
-#include "wmm.h"
 #include "wps_hostapd.h"
 #include "ap_drv_ops.h"
 #include "ap_config.h"
 
 
 int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
-			const u8 *ie, size_t ielen, int reassoc)
+			const u8 *req_ies, size_t req_ies_len, int reassoc)
 {
 	struct sta_info *sta;
 	int new_assoc, res;
 	struct ieee802_11_elems elems;
-#ifdef CONFIG_P2P
-	const u8 *all_ies = ie;
-	size_t all_ies_len = ielen;
-#endif /* CONFIG_P2P */
+	const u8 *ie;
+	size_t ielen;
+	u16 reason = WLAN_REASON_UNSPECIFIED;
 
 	if (addr == NULL) {
 		/*
@@ -65,7 +61,7 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 	hostapd_logger(hapd, addr, HOSTAPD_MODULE_IEEE80211,
 		       HOSTAPD_LEVEL_INFO, "associated");
 
-	ieee802_11_parse_elems(ie, ielen, &elems, 0);
+	ieee802_11_parse_elems(req_ies, req_ies_len, &elems, 0);
 	if (elems.wps_ie) {
 		ie = elems.wps_ie - 2;
 		ielen = elems.wps_ie_len + 2;
@@ -93,18 +89,19 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 		if (sta == NULL)
 			return -1;
 	}
-	sta->flags &= ~(WLAN_STA_WPS | WLAN_STA_MAYBE_WPS);
+	sta->flags &= ~(WLAN_STA_WPS | WLAN_STA_MAYBE_WPS | WLAN_STA_WPS2);
 
 #ifdef CONFIG_P2P
 	if (elems.p2p) {
 		wpabuf_free(sta->p2p_ie);
-		sta->p2p_ie = ieee802_11_vendor_ie_concat(all_ies, all_ies_len,
+		sta->p2p_ie = ieee802_11_vendor_ie_concat(req_ies, req_ies_len,
 							  P2P_IE_VENDOR_TYPE);
 	}
 #endif /* CONFIG_P2P */
 
 	if (hapd->conf->wpa) {
 		if (ie == NULL || ielen == 0) {
+#ifdef CONFIG_WPS
 			if (hapd->conf->wps_state) {
 				wpa_printf(MSG_DEBUG, "STA did not include "
 					   "WPA/RSN IE in (Re)Association "
@@ -112,15 +109,29 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 				sta->flags |= WLAN_STA_MAYBE_WPS;
 				goto skip_wpa_check;
 			}
+#endif /* CONFIG_WPS */
 
 			wpa_printf(MSG_DEBUG, "No WPA/RSN IE from STA");
 			return -1;
 		}
+#ifdef CONFIG_WPS
 		if (hapd->conf->wps_state && ie[0] == 0xdd && ie[1] >= 4 &&
 		    os_memcmp(ie + 2, "\x00\x50\xf2\x04", 4) == 0) {
+			struct wpabuf *wps;
 			sta->flags |= WLAN_STA_WPS;
+			wps = ieee802_11_vendor_ie_concat(ie, ielen,
+							  WPS_IE_VENDOR_TYPE);
+			if (wps) {
+				if (wps_is_20(wps)) {
+					wpa_printf(MSG_DEBUG, "WPS: STA "
+						   "supports WPS 2.0");
+					sta->flags |= WLAN_STA_WPS2;
+				}
+				wpabuf_free(wps);
+			}
 			goto skip_wpa_check;
 		}
+#endif /* CONFIG_WPS */
 
 		if (sta->wpa_sm == NULL)
 			sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth,
@@ -133,52 +144,55 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 		res = wpa_validate_wpa_ie(hapd->wpa_auth, sta->wpa_sm,
 					  ie, ielen, NULL, 0);
 		if (res != WPA_IE_OK) {
-			int resp;
 			wpa_printf(MSG_DEBUG, "WPA/RSN information element "
 				   "rejected? (res %u)", res);
 			wpa_hexdump(MSG_DEBUG, "IE", ie, ielen);
 			if (res == WPA_INVALID_GROUP)
-				resp = WLAN_REASON_GROUP_CIPHER_NOT_VALID;
+				reason = WLAN_REASON_GROUP_CIPHER_NOT_VALID;
 			else if (res == WPA_INVALID_PAIRWISE)
-				resp = WLAN_REASON_PAIRWISE_CIPHER_NOT_VALID;
+				reason = WLAN_REASON_PAIRWISE_CIPHER_NOT_VALID;
 			else if (res == WPA_INVALID_AKMP)
-				resp = WLAN_REASON_AKMP_NOT_VALID;
+				reason = WLAN_REASON_AKMP_NOT_VALID;
 #ifdef CONFIG_IEEE80211W
 			else if (res == WPA_MGMT_FRAME_PROTECTION_VIOLATION)
-				resp = WLAN_REASON_INVALID_IE;
+				reason = WLAN_REASON_INVALID_IE;
 			else if (res == WPA_INVALID_MGMT_GROUP_CIPHER)
-				resp = WLAN_REASON_GROUP_CIPHER_NOT_VALID;
+				reason = WLAN_REASON_GROUP_CIPHER_NOT_VALID;
 #endif /* CONFIG_IEEE80211W */
 			else
-				resp = WLAN_REASON_INVALID_IE;
-			hostapd_drv_sta_disassoc(hapd, sta->addr, resp);
-			ap_free_sta(hapd, sta);
-			return -1;
+				reason = WLAN_REASON_INVALID_IE;
+			goto fail;
 		}
 	} else if (hapd->conf->wps_state) {
-#ifdef CONFIG_WPS_STRICT
-		if (ie) {
-			struct wpabuf *wps;
-			wps = ieee802_11_vendor_ie_concat(ie, ielen,
+#ifdef CONFIG_WPS
+		struct wpabuf *wps;
+		if (req_ies)
+			wps = ieee802_11_vendor_ie_concat(req_ies, req_ies_len,
 							  WPS_IE_VENDOR_TYPE);
-			if (wps && wps_validate_assoc_req(wps) < 0) {
-				hostapd_drv_sta_disassoc(
-					hapd, sta->addr,
-					WLAN_REASON_INVALID_IE);
-				ap_free_sta(hapd, sta);
-				wpabuf_free(wps);
-				return -1;
-			}
+		else
+			wps = NULL;
+#ifdef CONFIG_WPS_STRICT
+		if (wps && wps_validate_assoc_req(wps) < 0) {
+			reason = WLAN_REASON_INVALID_IE;
 			wpabuf_free(wps);
+			goto fail;
 		}
 #endif /* CONFIG_WPS_STRICT */
-		if (ie && ielen > 4 && ie[0] == 0xdd && ie[1] >= 4 &&
-		    os_memcmp(ie + 2, "\x00\x50\xf2\x04", 4) == 0) {
+		if (wps) {
 			sta->flags |= WLAN_STA_WPS;
+			if (wps_is_20(wps)) {
+				wpa_printf(MSG_DEBUG, "WPS: STA supports "
+					   "WPS 2.0");
+				sta->flags |= WLAN_STA_WPS2;
+			}
 		} else
 			sta->flags |= WLAN_STA_MAYBE_WPS;
+		wpabuf_free(wps);
+#endif /* CONFIG_WPS */
 	}
+#ifdef CONFIG_WPS
 skip_wpa_check:
+#endif /* CONFIG_WPS */
 
 	new_assoc = (sta->flags & WLAN_STA_ASSOC) == 0;
 	sta->flags |= WLAN_STA_AUTH | WLAN_STA_ASSOC;
@@ -189,11 +203,18 @@ skip_wpa_check:
 	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
 
 #ifdef CONFIG_P2P
-	p2p_group_notif_assoc(hapd->p2p_group, sta->addr,
-			      all_ies, all_ies_len);
+	if (req_ies) {
+		p2p_group_notif_assoc(hapd->p2p_group, sta->addr,
+				      req_ies, req_ies_len);
+	}
 #endif /* CONFIG_P2P */
 
 	return 0;
+
+fail:
+	hostapd_drv_sta_disassoc(hapd, sta->addr, reason);
+	ap_free_sta(hapd, sta);
+	return -1;
 }
 
 
@@ -224,14 +245,8 @@ void hostapd_notif_disassoc(struct hostapd_data *hapd, const u8 *addr)
 		return;
 	}
 
+	ap_sta_set_authorized(hapd, sta, 0);
 	sta->flags &= ~(WLAN_STA_AUTH | WLAN_STA_ASSOC);
-	wpa_msg(hapd->msg_ctx, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
-		MAC2STR(sta->addr));
-#ifdef ANDROID_BRCM_P2P_PATCH
-	if(hapd->msg_ctx_parent)
-		wpa_msg(hapd->msg_ctx_parent, MSG_INFO, AP_STA_DISCONNECTED MACSTR,
-			MAC2STR(sta->addr));
-#endif /* ANDROID_BRCM_P2P_PATCH */
 	wpa_auth_sm_event(sta->wpa_sm, WPA_DISASSOC);
 	sta->acct_terminate_cause = RADIUS_ACCT_TERMINATE_CAUSE_USER_REQUEST;
 	ieee802_1x_notify_port_enabled(sta->eapol_sm, 0);
@@ -255,8 +270,8 @@ void hostapd_event_sta_low_ack(struct hostapd_data *hapd, const u8 *addr)
 }
 
 
-int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa,
-			 const u8 *ie, size_t ie_len)
+int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
+			 const u8 *bssid, const u8 *ie, size_t ie_len)
 {
 	size_t i;
 	int ret = 0;
@@ -267,7 +282,7 @@ int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa,
 	random_add_randomness(sa, ETH_ALEN);
 	for (i = 0; hapd->probereq_cb && i < hapd->num_probereq_cb; i++) {
 		if (hapd->probereq_cb[i].cb(hapd->probereq_cb[i].ctx,
-					    sa, ie, ie_len) > 0) {
+					    sa, da, bssid, ie, ie_len) > 0) {
 			ret = 1;
 			break;
 		}
@@ -279,46 +294,6 @@ int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa,
 #ifdef HOSTAPD
 
 #ifdef NEED_AP_MLME
-
-static const u8 * get_hdr_bssid(const struct ieee80211_hdr *hdr, size_t len)
-{
-	u16 fc, type, stype;
-
-	/*
-	 * PS-Poll frames are 16 bytes. All other frames are
-	 * 24 bytes or longer.
-	 */
-	if (len < 16)
-		return NULL;
-
-	fc = le_to_host16(hdr->frame_control);
-	type = WLAN_FC_GET_TYPE(fc);
-	stype = WLAN_FC_GET_STYPE(fc);
-
-	switch (type) {
-	case WLAN_FC_TYPE_DATA:
-		if (len < 24)
-			return NULL;
-		switch (fc & (WLAN_FC_FROMDS | WLAN_FC_TODS)) {
-		case WLAN_FC_FROMDS | WLAN_FC_TODS:
-		case WLAN_FC_TODS:
-			return hdr->addr1;
-		case WLAN_FC_FROMDS:
-			return hdr->addr2;
-		default:
-			return NULL;
-		}
-	case WLAN_FC_TYPE_CTRL:
-		if (stype != WLAN_FC_STYPE_PSPOLL)
-			return NULL;
-		return hdr->addr1;
-	case WLAN_FC_TYPE_MGMT:
-		return hdr->addr3;
-	default:
-		return NULL;
-	}
-}
-
 
 #define HAPD_BROADCAST ((struct hostapd_data *) -1)
 
@@ -343,17 +318,14 @@ static struct hostapd_data * get_hapd_bssid(struct hostapd_iface *iface,
 
 
 static void hostapd_rx_from_unknown_sta(struct hostapd_data *hapd,
-					const u8 *frame, size_t len)
+					const u8 *bssid, const u8 *addr,
+					int wds)
 {
-	const struct ieee80211_hdr *hdr = (const struct ieee80211_hdr *) frame;
-	u16 fc = le_to_host16(hdr->frame_control);
-	hapd = get_hapd_bssid(hapd->iface, get_hdr_bssid(hdr, len));
+	hapd = get_hapd_bssid(hapd->iface, bssid);
 	if (hapd == NULL || hapd == HAPD_BROADCAST)
 		return;
 
-	ieee802_11_rx_from_unknown(hapd, hdr->addr2,
-				   (fc & (WLAN_FC_TODS | WLAN_FC_FROMDS)) ==
-				   (WLAN_FC_TODS | WLAN_FC_FROMDS));
+	ieee802_11_rx_from_unknown(hapd, addr, wds);
 }
 
 
@@ -497,6 +469,23 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			  union wpa_event_data *data)
 {
 	struct hostapd_data *hapd = ctx;
+#ifndef CONFIG_NO_STDOUT_DEBUG
+	int level = MSG_DEBUG;
+
+	if (event == EVENT_RX_MGMT && data && data->rx_mgmt.frame &&
+	    data->rx_mgmt.frame_len >= 24) {
+		const struct ieee80211_hdr *hdr;
+		u16 fc;
+		hdr = (const struct ieee80211_hdr *) data->rx_mgmt.frame;
+		fc = le_to_host16(hdr->frame_control);
+		if (WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_MGMT &&
+		    WLAN_FC_GET_STYPE(fc) == WLAN_FC_STYPE_BEACON)
+			level = MSG_EXCESSIVE;
+	}
+
+	wpa_dbg(hapd->msg_ctx, level, "Event %s (%d) received",
+		event_to_string(event), event);
+#endif /* CONFIG_NO_STDOUT_DEBUG */
 
 	switch (event) {
 	case EVENT_MICHAEL_MIC_FAILURE:
@@ -532,9 +521,19 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			break;
 		}
 		break;
+	case EVENT_EAPOL_TX_STATUS:
+		hostapd_eapol_tx_status(hapd, data->eapol_tx_status.dst,
+					data->eapol_tx_status.data,
+					data->eapol_tx_status.data_len,
+					data->eapol_tx_status.ack);
+		break;
+	case EVENT_DRIVER_CLIENT_POLL_OK:
+		hostapd_client_poll_ok(hapd, data->client_poll.addr);
+		break;
 	case EVENT_RX_FROM_UNKNOWN:
-		hostapd_rx_from_unknown_sta(hapd, data->rx_from_unknown.frame,
-					    data->rx_from_unknown.len);
+		hostapd_rx_from_unknown_sta(hapd, data->rx_from_unknown.bssid,
+					    data->rx_from_unknown.addr,
+					    data->rx_from_unknown.wds);
 		break;
 	case EVENT_RX_MGMT:
 		hostapd_mgmt_rx(hapd, &data->rx_mgmt);
@@ -545,6 +544,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		    data->rx_probe_req.ie == NULL)
 			break;
 		hostapd_probe_req_rx(hapd, data->rx_probe_req.sa,
+				     data->rx_probe_req.da,
+				     data->rx_probe_req.bssid,
 				     data->rx_probe_req.ie,
 				     data->rx_probe_req.ie_len);
 		break;

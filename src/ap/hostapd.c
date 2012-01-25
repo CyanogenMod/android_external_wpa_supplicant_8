@@ -61,9 +61,11 @@ static void hostapd_reload_bss(struct hostapd_data *hapd)
 	else
 		hostapd_set_drv_ieee8021x(hapd, hapd->conf->iface, 0);
 
-	if (hapd->conf->wpa && hapd->wpa_auth == NULL)
+	if (hapd->conf->wpa && hapd->wpa_auth == NULL) {
 		hostapd_setup_wpa(hapd);
-	else if (hapd->conf->wpa) {
+		if (hapd->wpa_auth)
+			wpa_init_keys(hapd->wpa_auth);
+	} else if (hapd->conf->wpa) {
 		const u8 *wpa_ie;
 		size_t wpa_ie_len;
 		hostapd_reconfig_wpa(hapd);
@@ -259,6 +261,8 @@ static void hostapd_cleanup(struct hostapd_data *hapd)
 	wpabuf_free(hapd->p2p_probe_resp_ie);
 	hapd->p2p_probe_resp_ie = NULL;
 #endif /* CONFIG_P2P */
+
+	wpabuf_free(hapd->time_adv);
 }
 
 
@@ -287,6 +291,8 @@ static void hostapd_cleanup_iface(struct hostapd_iface *iface)
 	iface->hw_features = NULL;
 	os_free(iface->current_rates);
 	iface->current_rates = NULL;
+	os_free(iface->basic_rates);
+	iface->basic_rates = NULL;
 	ap_list_deinit(iface);
 	hostapd_config_free(iface->conf);
 	iface->conf = NULL;
@@ -341,12 +347,13 @@ static int hostapd_flush_old_stations(struct hostapd_data *hapd)
 	if (hostapd_drv_none(hapd) || hapd->drv_priv == NULL)
 		return 0;
 
-	wpa_printf(MSG_DEBUG, "Flushing old station entries");
+	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "Flushing old station entries");
 	if (hostapd_flush(hapd)) {
-		wpa_printf(MSG_WARNING, "Could not connect to kernel driver.");
+		wpa_msg(hapd->msg_ctx, MSG_WARNING, "Could not connect to "
+			"kernel driver");
 		ret = -1;
 	}
-	wpa_printf(MSG_DEBUG, "Deauthenticate all stations");
+	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "Deauthenticate all stations");
 	os_memset(addr, 0xff, ETH_ALEN);
 	hostapd_drv_sta_deauth(hapd, addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
 	hostapd_free_stas(hapd);
@@ -367,7 +374,6 @@ static int hostapd_validate_bssid_configuration(struct hostapd_iface *iface)
 	u8 mask[ETH_ALEN] = { 0 };
 	struct hostapd_data *hapd = iface->bss[0];
 	unsigned int i = iface->conf->num_bss, bits = 0, j;
-	int res;
 	int auto_addr = 0;
 
 	if (hostapd_drv_none(hapd))
@@ -430,17 +436,6 @@ static int hostapd_validate_bssid_configuration(struct hostapd_iface *iface)
 skip_mask_ext:
 	wpa_printf(MSG_DEBUG, "BSS count %lu, BSSID mask " MACSTR " (%d bits)",
 		   (unsigned long) iface->conf->num_bss, MAC2STR(mask), bits);
-
-	res = hostapd_valid_bss_mask(hapd, hapd->own_addr, mask);
-	if (res == 0)
-		return 0;
-
-	if (res < 0) {
-		wpa_printf(MSG_ERROR, "Driver did not accept BSSID mask "
-			   MACSTR " for start address " MACSTR ".",
-			   MAC2STR(mask), MAC2STR(hapd->own_addr));
-		return -1;
-	}
 
 	if (!auto_addr)
 		return 0;
@@ -639,6 +634,9 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 
 	ieee802_11_set_beacon(hapd);
 
+	if (hapd->wpa_auth && wpa_init_keys(hapd->wpa_auth) < 0)
+		return -1;
+
 	if (hapd->driver && hapd->driver->set_operstate)
 		hapd->driver->set_operstate(hapd->drv_priv, 1);
 
@@ -746,7 +744,7 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 	}
 
 	if (iface->current_mode) {
-		if (hostapd_prepare_rates(hapd, iface->current_mode)) {
+		if (hostapd_prepare_rates(iface, iface->current_mode)) {
 			wpa_printf(MSG_ERROR, "Failed to prepare rates "
 				   "table.");
 			hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,

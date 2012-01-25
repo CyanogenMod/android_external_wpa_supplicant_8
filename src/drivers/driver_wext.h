@@ -50,12 +50,13 @@ struct wpa_driver_wext_data {
 	int cfg80211; /* whether driver is using cfg80211 */
 
 	u8 max_level;
+
 #ifdef ANDROID
 	int errors;
 	int driver_is_started;
 	int skip_disconnect;
 	int bgscan_enabled;
-#endif
+#endif /* ANDROID */
 };
 
 int wpa_driver_wext_get_bssid(void *priv, u8 *bssid);
@@ -89,10 +90,5 @@ int wpa_driver_wext_set_auth_param(struct wpa_driver_wext_data *drv,
 				   int idx, u32 value);
 int wpa_driver_wext_cipher2wext(int cipher);
 int wpa_driver_wext_keymgmt2wext(int keymgmt);
-
-#ifdef ANDROID
-#define WPA_EVENT_DRIVER_STATE		"CTRL-EVENT-DRIVER-STATE "
-#define WEXT_CSCAN_AMOUNT		9
-#endif
 
 #endif /* DRIVER_WEXT_H */

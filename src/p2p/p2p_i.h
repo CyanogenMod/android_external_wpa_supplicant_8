@@ -18,8 +18,6 @@
 #include "utils/list.h"
 #include "p2p.h"
 
-/* TODO: add removal of expired P2P device entries */
-
 enum p2p_go_state {
 	UNKNOWN_GO,
 	LOCAL_GO,
@@ -69,9 +67,17 @@ struct p2p_device {
 	size_t oper_ssid_len;
 
 	/**
-	 * req_config_methods - Pending provisioning discovery methods
+	 * req_config_methods - Pending provision discovery methods
 	 */
 	u16 req_config_methods;
+
+	/**
+	 * wps_prov_info - Stored provisioning WPS config method
+	 *
+	 * This is used to store pending WPS config method between Provisioning
+	 * Discovery and connection to a running group.
+	 */
+	u16 wps_prov_info;
 
 #define P2P_DEV_PROBE_REQ_ONLY BIT(0)
 #define P2P_DEV_REPORTED BIT(1)
@@ -89,6 +95,7 @@ struct p2p_device {
 #define P2P_DEV_FORCE_FREQ BIT(13)
 #define P2P_DEV_PD_FOR_JOIN BIT(14)
 #define P2P_DEV_REPORTED_ONCE BIT(15)
+#define P2P_DEV_PREFER_PERSISTENT_RECONN BIT(16)
 	unsigned int flags;
 
 	int status; /* enum p2p_status_code */
@@ -200,6 +207,11 @@ struct p2p_data {
 		 * P2P_INVITE_LISTEN - Listen during Invite
 		 */
 		P2P_INVITE_LISTEN,
+
+		/**
+		 * P2P_SEARCH_WHEN_READY - Waiting to start Search
+		 */
+		P2P_SEARCH_WHEN_READY,
 	} state;
 
 	/**
@@ -271,6 +283,11 @@ struct p2p_data {
 	 * ssid_len - ssid length in octets
 	 */
 	size_t ssid_len;
+
+	/**
+	 * ssid_set - Whether SSID is already set for GO Negotiation
+	 */
+	int ssid_set;
 
 	/**
 	 * Regulatory class for own operational channel
@@ -349,6 +366,7 @@ struct p2p_data {
 	int inv_persistent;
 
 	enum p2p_discovery_type find_type;
+	unsigned int last_p2p_find_timeout;
 	u8 last_prog_scan_class;
 	u8 last_prog_scan_chan;
 	int p2p_scan_running;
@@ -532,11 +550,6 @@ struct p2p_noa_desc {
 
 /* p2p_group.c */
 const u8 * p2p_group_get_interface_addr(struct p2p_group *group);
-
-#ifdef ANDROID_BRCM_P2P_PATCH
-void p2p_get_group_noa(struct p2p_group *group, u8 *noa, size_t* noa_len);
-#endif
-
 u8 p2p_group_presence_req(struct p2p_group *group,
 			  const u8 *client_interface_addr,
 			  const u8 *noa, size_t noa_len);
@@ -606,7 +619,7 @@ void p2p_process_prov_disc_req(struct p2p_data *p2p, const u8 *sa,
 void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 				const u8 *data, size_t len);
 int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
-			   int join);
+			   int join, int force_freq);
 void p2p_reset_pending_pd(struct p2p_data *p2p);
 
 /* p2p_invitation.c */

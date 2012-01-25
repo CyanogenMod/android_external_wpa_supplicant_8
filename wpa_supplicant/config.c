@@ -1371,6 +1371,90 @@ static char * wpa_config_write_wep_key3(const struct parse_data *data,
 #endif /* NO_CONFIG_WRITE */
 
 
+#ifdef CONFIG_P2P
+
+static int wpa_config_parse_p2p_client_list(const struct parse_data *data,
+					    struct wpa_ssid *ssid, int line,
+					    const char *value)
+{
+	const char *pos;
+	u8 *buf, *n, addr[ETH_ALEN];
+	size_t count;
+
+	buf = NULL;
+	count = 0;
+
+	pos = value;
+	while (pos && *pos) {
+		while (*pos == ' ')
+			pos++;
+
+		if (hwaddr_aton(pos, addr)) {
+			wpa_printf(MSG_ERROR, "Line %d: Invalid "
+				   "p2p_client_list address '%s'.",
+				   line, value);
+			/* continue anyway */
+		} else {
+			n = os_realloc(buf, (count + 1) * ETH_ALEN);
+			if (n == NULL) {
+				os_free(buf);
+				return -1;
+			}
+			buf = n;
+			os_memcpy(buf + count * ETH_ALEN, addr, ETH_ALEN);
+			count++;
+			wpa_hexdump(MSG_MSGDUMP, "p2p_client_list",
+				    addr, ETH_ALEN);
+		}
+
+		pos = os_strchr(pos, ' ');
+	}
+
+	os_free(ssid->p2p_client_list);
+	ssid->p2p_client_list = buf;
+	ssid->num_p2p_clients = count;
+
+	return 0;
+}
+
+
+#ifndef NO_CONFIG_WRITE
+static char * wpa_config_write_p2p_client_list(const struct parse_data *data,
+					       struct wpa_ssid *ssid)
+{
+	char *value, *end, *pos;
+	int res;
+	size_t i;
+
+	if (ssid->p2p_client_list == NULL || ssid->num_p2p_clients == 0)
+		return NULL;
+
+	value = os_malloc(20 * ssid->num_p2p_clients);
+	if (value == NULL)
+		return NULL;
+	pos = value;
+	end = value + 20 * ssid->num_p2p_clients;
+
+	for (i = 0; i < ssid->num_p2p_clients; i++) {
+		res = os_snprintf(pos, end - pos, MACSTR " ",
+				  MAC2STR(ssid->p2p_client_list +
+					  i * ETH_ALEN));
+		if (res < 0 || res >= end - pos) {
+			os_free(value);
+			return NULL;
+		}
+		pos += res;
+	}
+
+	if (pos > value)
+		pos[-1] = '\0';
+
+	return value;
+}
+#endif /* NO_CONFIG_WRITE */
+
+#endif /* CONFIG_P2P */
+
 /* Helper macros for network block parser */
 
 #ifdef OFFSET
@@ -1544,6 +1628,9 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(frequency, 0, 10000) },
 	{ INT(wpa_ptk_rekey) },
 	{ STR(bgscan) },
+#ifdef CONFIG_P2P
+	{ FUNC(p2p_client_list) },
+#endif /* CONFIG_P2P */
 };
 
 #ifdef WPA_UNICODE_SSID
@@ -1719,6 +1806,7 @@ void wpa_config_free_ssid(struct wpa_ssid *ssid)
 	os_free(ssid->scan_freq);
 	os_free(ssid->freq_list);
 	os_free(ssid->bgscan);
+	os_free(ssid->p2p_client_list);
 	os_free(ssid);
 }
 
@@ -1768,6 +1856,12 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->config_methods);
 	os_free(config->p2p_ssid_postfix);
 	os_free(config->pssid);
+	os_free(config->home_realm);
+	os_free(config->home_username);
+	os_free(config->home_password);
+	os_free(config->home_ca_cert);
+	os_free(config->home_imsi);
+	os_free(config->home_milenage);
 	os_free(config);
 }
 
@@ -1947,6 +2041,27 @@ int wpa_config_set(struct wpa_ssid *ssid, const char *var, const char *value,
 		ret = -1;
 	}
 
+	return ret;
+}
+
+
+int wpa_config_set_quoted(struct wpa_ssid *ssid, const char *var,
+			  const char *value)
+{
+	size_t len;
+	char *buf;
+	int ret;
+
+	len = os_strlen(value);
+	buf = os_malloc(len + 3);
+	if (buf == NULL)
+		return -1;
+	buf[0] = '"';
+	os_memcpy(buf + 1, value, len);
+	buf[len + 1] = '"';
+	buf[len + 2] = '\0';
+	ret = wpa_config_set(ssid, var, buf, 0);
+	os_free(buf);
 	return ret;
 }
 
@@ -2215,6 +2330,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->bss_expiration_age = DEFAULT_BSS_EXPIRATION_AGE;
 	config->bss_expiration_scan_count = DEFAULT_BSS_EXPIRATION_SCAN_COUNT;
 	config->max_num_sta = DEFAULT_MAX_NUM_STA;
+	config->access_network_type = DEFAULT_ACCESS_NETWORK_TYPE;
 
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
@@ -2423,6 +2539,20 @@ static int wpa_config_process_sec_device_type(
 #endif /* CONFIG_P2P */
 
 
+static int wpa_config_process_hessid(
+	const struct global_parse_data *data,
+	struct wpa_config *config, int line, const char *pos)
+{
+	if (hwaddr_aton2(pos, config->hessid) < 0) {
+		wpa_printf(MSG_ERROR, "Line %d: Invalid hessid '%s'",
+			   line, pos);
+		return -1;
+	}
+
+	return 0;
+}
+
+
 #ifdef OFFSET
 #undef OFFSET
 #endif /* OFFSET */
@@ -2487,7 +2617,16 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(bss_expiration_scan_count), 0 },
 	{ INT_RANGE(filter_ssids, 0, 1), 0 },
 	{ INT(max_num_sta), 0 },
-	{ INT_RANGE(disassoc_low_ack, 0, 1), 0 }
+	{ INT_RANGE(disassoc_low_ack, 0, 1), 0 },
+	{ STR(home_realm), 0 },
+	{ STR(home_username), 0 },
+	{ STR(home_password), 0 },
+	{ STR(home_ca_cert), 0 },
+	{ STR(home_imsi), 0 },
+	{ STR(home_milenage), 0 },
+	{ INT_RANGE(interworking, 0, 1), 0 },
+	{ FUNC(hessid), 0 },
+	{ INT_RANGE(access_network_type, 0, 15), 0 }
 };
 
 #undef FUNC

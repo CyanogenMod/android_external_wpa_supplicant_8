@@ -116,7 +116,7 @@ DBusMessage * wpas_dbus_global_add_interface(DBusMessage *message,
 		DBusMessageIter iter_dict;
 		struct wpa_dbus_dict_entry entry;
 
-		if (!wpa_dbus_dict_open_read(&iter, &iter_dict))
+		if (!wpa_dbus_dict_open_read(&iter, &iter_dict, NULL))
 			goto error;
 		while (wpa_dbus_dict_has_dict_entry(&iter_dict)) {
 			if (!wpa_dbus_dict_get_entry(&iter_dict, &entry))
@@ -229,7 +229,7 @@ DBusMessage * wpas_dbus_global_remove_interface(DBusMessage *message,
 		goto out;
 	}
 
-	if (!wpa_supplicant_remove_iface(global, wpa_s, 0)) {
+	if (!wpa_supplicant_remove_iface(global, wpa_s)) {
 		reply = wpas_dbus_new_success_reply(message);
 	} else {
 		reply = dbus_message_new_error(message,
@@ -922,7 +922,7 @@ DBusMessage * wpas_dbus_iface_set_network(DBusMessage *message,
 
 	dbus_message_iter_init(message, &iter);
 
-	if (!wpa_dbus_dict_open_read(&iter, &iter_dict)) {
+	if (!wpa_dbus_dict_open_read(&iter, &iter_dict, NULL)) {
 		reply = wpas_dbus_new_invalid_opts_error(message, NULL);
 		goto out;
 	}
@@ -1202,7 +1202,7 @@ DBusMessage * wpas_dbus_iface_set_smartcard_modules(
 	if (!dbus_message_iter_init(message, &iter))
 		goto error;
 
-	if (!wpa_dbus_dict_open_read(&iter, &iter_dict))
+	if (!wpa_dbus_dict_open_read(&iter, &iter_dict, NULL))
 		goto error;
 
 	while (wpa_dbus_dict_has_dict_entry(&iter_dict)) {
@@ -1324,7 +1324,7 @@ DBusMessage * wpas_dbus_iface_set_blobs(DBusMessage *message,
 
 	dbus_message_iter_init(message, &iter);
 
-	if (!wpa_dbus_dict_open_read(&iter, &iter_dict))
+	if (!wpa_dbus_dict_open_read(&iter, &iter_dict, NULL))
 		return wpas_dbus_new_invalid_opts_error(message, NULL);
 
 	while (wpa_dbus_dict_has_dict_entry(&iter_dict)) {

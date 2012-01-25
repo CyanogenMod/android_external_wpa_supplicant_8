@@ -1,5 +1,5 @@
 /*
- * TLSv1 client (RFC 2246)
+ * TLS v1.0/v1.1/v1.2 client (RFC 2246, RFC 4346, RFC 5246)
  * Copyright (c) 2006-2011, Jouni Malinen <j@w1.fi>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,13 +29,13 @@ int tlsv1_client_prf(struct tlsv1_client *conn, const char *label,
 u8 * tlsv1_client_handshake(struct tlsv1_client *conn,
 			    const u8 *in_data, size_t in_len,
 			    size_t *out_len, u8 **appl_data,
-			    size_t *appl_data_len);
+			    size_t *appl_data_len, int *need_more_data);
 int tlsv1_client_encrypt(struct tlsv1_client *conn,
 			 const u8 *in_data, size_t in_len,
 			 u8 *out_data, size_t out_len);
-int tlsv1_client_decrypt(struct tlsv1_client *conn,
-			 const u8 *in_data, size_t in_len,
-			 u8 *out_data, size_t out_len);
+struct wpabuf * tlsv1_client_decrypt(struct tlsv1_client *conn,
+				     const u8 *in_data, size_t in_len,
+				     int *need_more_data);
 int tlsv1_client_get_cipher(struct tlsv1_client *conn, char *buf,
 			    size_t buflen);
 int tlsv1_client_shutdown(struct tlsv1_client *conn);

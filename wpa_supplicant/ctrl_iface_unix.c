@@ -281,7 +281,7 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 		goto fail;
 #ifdef ANDROID
 	os_snprintf(addr.sun_path, sizeof(addr.sun_path), "wpa_%s",
-		    wpa_s->ifname);
+		    wpa_s->conf->ctrl_interface);
 	priv->sock = android_get_control_socket(addr.sun_path);
 	if (priv->sock >= 0)
 		goto havesock;
