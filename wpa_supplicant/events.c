@@ -996,8 +996,13 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 }
 
 /* Return < 0 if no scan results could be fetched. */
+#ifdef ANDROID_P2P
+static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
+					      union wpa_event_data *data, int suppress_event)
+#else
 static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 					      union wpa_event_data *data)
+#endif
 {
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
@@ -1073,10 +1078,14 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		wpa_scan_results_free(scan_res);
 		return 0;
 	}
-
-	wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
-	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
-	wpas_notify_scan_results(wpa_s);
+#ifdef ANDROID_P2P
+	if(!suppress_event)
+#endif
+	{
+		wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
+		wpas_notify_scan_results(wpa_s);
+	}
 
 	wpas_notify_scan_done(wpa_s, 1);
 
@@ -1152,8 +1161,11 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 {
 	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
-
+#ifdef ANDROID_P2P
+	if (_wpa_supplicant_event_scan_results(wpa_s, data, 0) < 0) {
+#else
 	if (_wpa_supplicant_event_scan_results(wpa_s, data) < 0) {
+#endif
 		/*
 		 * If no scan results could be fetched, then no need to
 		 * notify those interfaces that did not actually request
@@ -1184,7 +1196,19 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (rn2 && os_strcmp(rn, rn2) == 0) {
 			wpa_printf(MSG_DEBUG, "%s: Updating scan results from "
 				   "sibling", ifs->ifname);
+#ifndef ANDROID_P2P
 			_wpa_supplicant_event_scan_results(ifs, data);
+#else
+			/* P2P_FIND will result in too many SCAN_RESULT_EVENTS within
+			 * no time. Avoid announcing it to application as it may not 
+			 * be that useful (since results will be that of only 1,6,11).
+			 * over to any other interface as it
+			 */
+			if((wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) && p2p_search_in_progress(wpa_s->global->p2p))
+				_wpa_supplicant_event_scan_results(ifs, data, 1);
+			else
+				_wpa_supplicant_event_scan_results(ifs, data, 0);
+#endif
 		}
 	}
 }
