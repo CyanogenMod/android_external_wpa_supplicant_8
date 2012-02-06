@@ -100,10 +100,8 @@ extern "C" {
 /** P2P device found */
 #define P2P_EVENT_DEVICE_FOUND "P2P-DEVICE-FOUND "
 
-#ifdef ANDROID_BRCM_P2P_PATCH
 /** P2P device lost */
 #define P2P_EVENT_DEVICE_LOST "P2P-DEVICE-LOST "
-#endif
 
 /** A P2P device requested GO negotiation, but we were not ready to start the
  * negotiation */
@@ -130,6 +128,10 @@ extern "C" {
 #define P2P_EVENT_SERV_DISC_RESP "P2P-SERV-DISC-RESP "
 #define P2P_EVENT_INVITATION_RECEIVED "P2P-INVITATION-RECEIVED "
 #define P2P_EVENT_INVITATION_RESULT "P2P-INVITATION-RESULT "
+#define P2P_EVENT_FIND_STOPPED "P2P-FIND-STOPPED "
+
+#define INTERWORKING_AP "INTERWORKING-AP "
+#define INTERWORKING_NO_MATCH "INTERWORKING-NO-MATCH "
 
 /* hostapd control interface - fixed message prefixes */
 #define WPS_EVENT_PIN_NEEDED "WPS-PIN-NEEDED "
@@ -266,6 +268,17 @@ int wpa_ctrl_pending(struct wpa_ctrl *ctrl);
  * wpa_ctrl_recv() must be used for this.
  */
 int wpa_ctrl_get_fd(struct wpa_ctrl *ctrl);
+
+#ifdef ANDROID
+/**
+ * wpa_ctrl_cleanup() - Delete any local UNIX domain socket files that
+ * may be left over from clients that were previously connected to
+ * wpa_supplicant. This keeps these files from being orphaned in the
+ * event of crashes that prevented them from being removed as part
+ * of the normal orderly shutdown.
+ */
+void wpa_ctrl_cleanup(void);
+#endif /* ANDROID */
 
 #ifdef CONFIG_CTRL_IFACE_UDP
 #define WPA_CTRL_IFACE_PORT 9877

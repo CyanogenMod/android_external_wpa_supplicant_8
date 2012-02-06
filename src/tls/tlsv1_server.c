@@ -1,6 +1,6 @@
 /*
- * TLSv1 server (RFC 2246)
- * Copyright (c) 2006-2007, Jouni Malinen <j@w1.fi>
+ * TLS v1.0/v1.1/v1.2 server (RFC 2246, RFC 4346, RFC 5246)
+ * Copyright (c) 2006-2011, Jouni Malinen <j@w1.fi>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -49,7 +49,8 @@ int tlsv1_server_derive_keys(struct tlsv1_server *conn,
 		os_memcpy(seed, conn->client_random, TLS_RANDOM_LEN);
 		os_memcpy(seed + TLS_RANDOM_LEN, conn->server_random,
 			  TLS_RANDOM_LEN);
-		if (tls_prf(pre_master_secret, pre_master_secret_len,
+		if (tls_prf(conn->rl.tls_version,
+			    pre_master_secret, pre_master_secret_len,
 			    "master secret", seed, 2 * TLS_RANDOM_LEN,
 			    conn->master_secret, TLS_MASTER_SECRET_LEN)) {
 			wpa_printf(MSG_DEBUG, "TLSv1: Failed to derive "
@@ -64,7 +65,8 @@ int tlsv1_server_derive_keys(struct tlsv1_server *conn,
 	os_memcpy(seed + TLS_RANDOM_LEN, conn->client_random, TLS_RANDOM_LEN);
 	key_block_len = 2 * (conn->rl.hash_size + conn->rl.key_material_len +
 			     conn->rl.iv_size);
-	if (tls_prf(conn->master_secret, TLS_MASTER_SECRET_LEN,
+	if (tls_prf(conn->rl.tls_version,
+		    conn->master_secret, TLS_MASTER_SECRET_LEN,
 		    "key expansion", seed, 2 * TLS_RANDOM_LEN,
 		    key_block, key_block_len)) {
 		wpa_printf(MSG_DEBUG, "TLSv1: Failed to derive key_block");
@@ -115,6 +117,7 @@ u8 * tlsv1_server_handshake(struct tlsv1_server *conn,
 	const u8 *pos, *end;
 	u8 *msg = NULL, *in_msg, *in_pos, *in_end, alert, ct;
 	size_t in_msg_len;
+	int used;
 
 	if (in_data == NULL || in_len == 0) {
 		wpa_printf(MSG_DEBUG, "TLSv1: No input data to server");
@@ -130,10 +133,18 @@ u8 * tlsv1_server_handshake(struct tlsv1_server *conn,
 	/* Each received packet may include multiple records */
 	while (pos < end) {
 		in_msg_len = in_len;
-		if (tlsv1_record_receive(&conn->rl, pos, end - pos,
-					 in_msg, &in_msg_len, &alert)) {
+		used = tlsv1_record_receive(&conn->rl, pos, end - pos,
+					    in_msg, &in_msg_len, &alert);
+		if (used < 0) {
 			wpa_printf(MSG_DEBUG, "TLSv1: Processing received "
 				   "record failed");
+			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
+			goto failed;
+		}
+		if (used == 0) {
+			/* need more data */
+			wpa_printf(MSG_DEBUG, "TLSv1: Partial processing not "
+				   "yet supported");
 			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
 			goto failed;
 		}
@@ -152,7 +163,7 @@ u8 * tlsv1_server_handshake(struct tlsv1_server *conn,
 			in_pos += in_msg_len;
 		}
 
-		pos += TLS_RECORD_HEADER_LEN + WPA_GET_BE16(pos + 3);
+		pos += used;
 	}
 
 	os_free(in_msg);
@@ -201,10 +212,8 @@ int tlsv1_server_encrypt(struct tlsv1_server *conn,
 	wpa_hexdump_key(MSG_MSGDUMP, "TLSv1: Plaintext AppData",
 			in_data, in_len);
 
-	os_memcpy(out_data + TLS_RECORD_HEADER_LEN, in_data, in_len);
-
 	if (tlsv1_record_send(&conn->rl, TLS_CONTENT_TYPE_APPLICATION_DATA,
-			      out_data, out_len, in_len, &rlen) < 0) {
+			      out_data, out_len, in_data, in_len, &rlen) < 0) {
 		wpa_printf(MSG_DEBUG, "TLSv1: Failed to create a record");
 		tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
 				   TLS_ALERT_INTERNAL_ERROR);
@@ -232,8 +241,8 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 			 u8 *out_data, size_t out_len)
 {
 	const u8 *in_end, *pos;
-	int res;
-	u8 alert, *out_end, *out_pos;
+	int used;
+	u8 alert, *out_end, *out_pos, ct;
 	size_t olen;
 
 	pos = in_data;
@@ -242,7 +251,46 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 	out_end = out_data + out_len;
 
 	while (pos < in_end) {
-		if (pos[0] != TLS_CONTENT_TYPE_APPLICATION_DATA) {
+		ct = pos[0];
+		olen = out_end - out_pos;
+		used = tlsv1_record_receive(&conn->rl, pos, in_end - pos,
+					    out_pos, &olen, &alert);
+		if (used < 0) {
+			wpa_printf(MSG_DEBUG, "TLSv1: Record layer processing "
+				   "failed");
+			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
+			return -1;
+		}
+		if (used == 0) {
+			/* need more data */
+			wpa_printf(MSG_DEBUG, "TLSv1: Partial processing not "
+				   "yet supported");
+			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
+			return -1;
+		}
+
+		if (ct == TLS_CONTENT_TYPE_ALERT) {
+			if (olen < 2) {
+				wpa_printf(MSG_DEBUG, "TLSv1: Alert "
+					   "underflow");
+				tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
+						   TLS_ALERT_DECODE_ERROR);
+				return -1;
+			}
+			wpa_printf(MSG_DEBUG, "TLSv1: Received alert %d:%d",
+				   out_pos[0], out_pos[1]);
+			if (out_pos[0] == TLS_ALERT_LEVEL_WARNING) {
+				/* Continue processing */
+				pos += used;
+				continue;
+			}
+
+			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
+					   out_pos[1]);
+			return -1;
+		}
+
+		if (ct != TLS_CONTENT_TYPE_APPLICATION_DATA) {
 			wpa_printf(MSG_DEBUG, "TLSv1: Unexpected content type "
 				   "0x%x", pos[0]);
 			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
@@ -250,15 +298,6 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 			return -1;
 		}
 
-		olen = out_end - out_pos;
-		res = tlsv1_record_receive(&conn->rl, pos, in_end - pos,
-					   out_pos, &olen, &alert);
-		if (res < 0) {
-			wpa_printf(MSG_DEBUG, "TLSv1: Record layer processing "
-				   "failed");
-			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
-			return -1;
-		}
 		out_pos += olen;
 		if (out_pos > out_end) {
 			wpa_printf(MSG_DEBUG, "TLSv1: Buffer not large enough "
@@ -268,7 +307,7 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 			return -1;
 		}
 
-		pos += TLS_RECORD_HEADER_LEN + WPA_GET_BE16(pos + 3);
+		pos += used;
 	}
 
 	return out_pos - out_data;
@@ -412,7 +451,8 @@ int tlsv1_server_prf(struct tlsv1_server *conn, const char *label,
 			  TLS_RANDOM_LEN);
 	}
 
-	return tls_prf(conn->master_secret, TLS_MASTER_SECRET_LEN,
+	return tls_prf(conn->rl.tls_version,
+		       conn->master_secret, TLS_MASTER_SECRET_LEN,
 		       label, seed, 2 * TLS_RANDOM_LEN, out, out_len);
 }
 

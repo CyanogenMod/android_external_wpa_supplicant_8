@@ -24,8 +24,6 @@ struct tls_keys {
 	size_t client_random_len;
 	const u8 *server_random;
 	size_t server_random_len;
-	const u8 *inner_secret; /* TLS/IA inner secret */
-	size_t inner_secret_len;
 };
 
 enum tls_event {
@@ -72,6 +70,7 @@ struct tls_config {
 	const char *pkcs11_engine_path;
 	const char *pkcs11_module_path;
 	int fips_mode;
+	int cert_in_cb;
 
 	void (*event_cb)(void *ctx, enum tls_event ev,
 			 union tls_event_data *data);
@@ -114,7 +113,6 @@ struct tls_config {
  * specific for now)
  * @cert_id: the certificate's id when using engine
  * @ca_cert_id: the CA certificate's id when using engine
- * @tls_ia: Whether to enable TLS/IA (for EAP-TTLSv1)
  * @flags: Parameter options (TLS_CONN_*)
  *
  * TLS connection parameters to be configured with tls_connection_set_params()
@@ -142,7 +140,6 @@ struct tls_connection_params {
 	const char *dh_file;
 	const u8 *dh_blob;
 	size_t dh_blob_len;
-	int tls_ia;
 
 	/* OpenSSL specific variables */
 	int engine;
@@ -282,20 +279,6 @@ int __must_check tls_connection_set_verify(void *tls_ctx,
 					   int verify_peer);
 
 /**
- * tls_connection_set_ia - Set TLS/IA parameters
- * @tls_ctx: TLS context data from tls_init()
- * @conn: Connection context data from tls_connection_init()
- * @tls_ia: 1 = enable TLS/IA
- * Returns: 0 on success, -1 on failure
- *
- * This function is used to configure TLS/IA in server mode where
- * tls_connection_set_params() is not used.
- */
-int __must_check tls_connection_set_ia(void *tls_ctx,
-				       struct tls_connection *conn,
-				       int tls_ia);
-
-/**
  * tls_connection_get_keys - Get master key and random data from TLS connection
  * @tls_ctx: TLS context data from tls_init()
  * @conn: Connection context data from tls_connection_init()
@@ -322,7 +305,7 @@ int __must_check tls_connection_get_keys(void *tls_ctx,
  * not exported from the TLS library, tls_connection_prf() is required so that
  * further keying material can be derived from the master secret. If not
  * implemented, the function will still need to be defined, but it can just
- * return -1. Example implementation of this function is in tls_prf() function
+ * return -1. Example implementation of this function is in tls_prf_sha1_md5()
  * when it is called with seed set to client_random|server_random (or
  * server_random|client_random).
  */
@@ -363,6 +346,12 @@ struct wpabuf * tls_connection_handshake(void *tls_ctx,
 					 struct tls_connection *conn,
 					 const struct wpabuf *in_data,
 					 struct wpabuf **appl_data);
+
+struct wpabuf * tls_connection_handshake2(void *tls_ctx,
+					  struct tls_connection *conn,
+					  const struct wpabuf *in_data,
+					  struct wpabuf **appl_data,
+					  int *more_data_needed);
 
 /**
  * tls_connection_server_handshake - Process TLS handshake (server side)
@@ -408,6 +397,11 @@ struct wpabuf * tls_connection_encrypt(void *tls_ctx,
 struct wpabuf * tls_connection_decrypt(void *tls_ctx,
 				       struct tls_connection *conn,
 				       const struct wpabuf *in_data);
+
+struct wpabuf * tls_connection_decrypt2(void *tls_ctx,
+					struct tls_connection *conn,
+					const struct wpabuf *in_data,
+					int *more_data_needed);
 
 /**
  * tls_connection_resumed - Was session resumption used
@@ -514,49 +508,12 @@ int tls_connection_get_write_alerts(void *tls_ctx,
 int tls_connection_get_keyblock_size(void *tls_ctx,
 				     struct tls_connection *conn);
 
-#define TLS_CAPABILITY_IA 0x0001 /* TLS Inner Application (TLS/IA) */
 /**
  * tls_capabilities - Get supported TLS capabilities
  * @tls_ctx: TLS context data from tls_init()
  * Returns: Bit field of supported TLS capabilities (TLS_CAPABILITY_*)
  */
 unsigned int tls_capabilities(void *tls_ctx);
-
-/**
- * tls_connection_ia_send_phase_finished - Send a TLS/IA PhaseFinished message
- * @tls_ctx: TLS context data from tls_init()
- * @conn: Connection context data from tls_connection_init()
- * @final: 1 = FinalPhaseFinished, 0 = IntermediatePhaseFinished
- * Returns: Encrypted TLS/IA data, %NULL on failure
- *
- * This function is used to send the TLS/IA end phase message, e.g., when the
- * EAP server completes EAP-TTLSv1.
- */
-struct wpabuf * tls_connection_ia_send_phase_finished(
-	void *tls_ctx, struct tls_connection *conn, int final);
-
-/**
- * tls_connection_ia_final_phase_finished - Has final phase been completed
- * @tls_ctx: TLS context data from tls_init()
- * @conn: Connection context data from tls_connection_init()
- * Returns: 1 if valid FinalPhaseFinished has been received, 0 if not, or -1
- * on failure
- */
-int __must_check tls_connection_ia_final_phase_finished(
-	void *tls_ctx, struct tls_connection *conn);
-
-/**
- * tls_connection_ia_permute_inner_secret - Permute TLS/IA inner secret
- * @tls_ctx: TLS context data from tls_init()
- * @conn: Connection context data from tls_connection_init()
- * @key: Session key material (session_key vectors with 2-octet length), or
- * %NULL if no session key was generating in the current phase
- * @key_len: Length of session key material
- * Returns: 0 on success, -1 on failure
- */
-int __must_check tls_connection_ia_permute_inner_secret(
-	void *tls_ctx, struct tls_connection *conn,
-	const u8 *key, size_t key_len);
 
 typedef int (*tls_session_ticket_cb)
 (void *ctx, const u8 *ticket, size_t len, const u8 *client_random,

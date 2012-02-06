@@ -2,7 +2,7 @@
  * hostapd / Hardware feature query and different modes
  * Copyright 2002-2003, Instant802 Networks, Inc.
  * Copyright 2005-2006, Devicescape Software, Inc.
- * Copyright (c) 2008-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2011, Jouni Malinen <j@w1.fi>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -101,7 +101,7 @@ int hostapd_get_hw_features(struct hostapd_iface *iface)
 }
 
 
-int hostapd_prepare_rates(struct hostapd_data *hapd,
+int hostapd_prepare_rates(struct hostapd_iface *iface,
 			  struct hostapd_hw_modes *mode)
 {
 	int i, num_basic_rates = 0;
@@ -110,8 +110,8 @@ int hostapd_prepare_rates(struct hostapd_data *hapd,
 	int basic_rates_g[] = { 10, 20, 55, 110, -1 };
 	int *basic_rates;
 
-	if (hapd->iconf->basic_rates)
-		basic_rates = hapd->iconf->basic_rates;
+	if (iface->conf->basic_rates)
+		basic_rates = iface->conf->basic_rates;
 	else switch (mode->mode) {
 	case HOSTAPD_MODE_IEEE80211A:
 		basic_rates = basic_rates_a;
@@ -126,18 +126,20 @@ int hostapd_prepare_rates(struct hostapd_data *hapd,
 		return -1;
 	}
 
-	if (hostapd_set_rate_sets(hapd, hapd->iconf->supported_rates,
-				  basic_rates, mode->mode)) {
-		wpa_printf(MSG_ERROR, "Failed to update rate sets in kernel "
-			   "module");
-	}
+	i = 0;
+	while (basic_rates[i] >= 0)
+		i++;
+	os_free(iface->basic_rates);
+	iface->basic_rates = os_malloc(i * sizeof(int));
+	if (iface->basic_rates)
+		os_memcpy(iface->basic_rates, basic_rates, i * sizeof(int));
 
-	os_free(hapd->iface->current_rates);
-	hapd->iface->num_rates = 0;
+	os_free(iface->current_rates);
+	iface->num_rates = 0;
 
-	hapd->iface->current_rates =
+	iface->current_rates =
 		os_zalloc(mode->num_rates * sizeof(struct hostapd_rate_data));
-	if (!hapd->iface->current_rates) {
+	if (!iface->current_rates) {
 		wpa_printf(MSG_ERROR, "Failed to allocate memory for rate "
 			   "table.");
 		return -1;
@@ -146,27 +148,27 @@ int hostapd_prepare_rates(struct hostapd_data *hapd,
 	for (i = 0; i < mode->num_rates; i++) {
 		struct hostapd_rate_data *rate;
 
-		if (hapd->iconf->supported_rates &&
-		    !hostapd_rate_found(hapd->iconf->supported_rates,
+		if (iface->conf->supported_rates &&
+		    !hostapd_rate_found(iface->conf->supported_rates,
 					mode->rates[i]))
 			continue;
 
-		rate = &hapd->iface->current_rates[hapd->iface->num_rates];
+		rate = &iface->current_rates[iface->num_rates];
 		rate->rate = mode->rates[i];
 		if (hostapd_rate_found(basic_rates, rate->rate)) {
 			rate->flags |= HOSTAPD_RATE_BASIC;
 			num_basic_rates++;
 		}
 		wpa_printf(MSG_DEBUG, "RATE[%d] rate=%d flags=0x%x",
-			   hapd->iface->num_rates, rate->rate, rate->flags);
-		hapd->iface->num_rates++;
+			   iface->num_rates, rate->rate, rate->flags);
+		iface->num_rates++;
 	}
 
-	if ((hapd->iface->num_rates == 0 || num_basic_rates == 0) &&
-	    (!hapd->iconf->ieee80211n || !hapd->iconf->require_ht)) {
+	if ((iface->num_rates == 0 || num_basic_rates == 0) &&
+	    (!iface->conf->ieee80211n || !iface->conf->require_ht)) {
 		wpa_printf(MSG_ERROR, "No rates remaining in supported/basic "
 			   "rate sets (%d,%d).",
-			   hapd->iface->num_rates, num_basic_rates);
+			   iface->num_rates, num_basic_rates);
 		return -1;
 	}
 
@@ -407,20 +409,6 @@ static int ieee80211n_check_40mhz_2g4(struct hostapd_iface *iface,
 }
 
 
-static void wpa_scan_results_free(struct wpa_scan_results *res)
-{
-	size_t i;
-
-	if (res == NULL)
-		return;
-
-	for (i = 0; i < res->num; i++)
-		os_free(res->res[i]);
-	os_free(res->res);
-	os_free(res);
-}
-
-
 static void ieee80211n_check_scan(struct hostapd_iface *iface)
 {
 	struct wpa_scan_results *scan_res;
@@ -630,7 +618,8 @@ int hostapd_select_hw_mode(struct hostapd_iface *iface)
 		hostapd_logger(iface->bss[0], NULL, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_WARNING,
 			       "Hardware does not support configured mode "
-			       "(%d)", (int) iface->conf->hw_mode);
+			       "(%d) (hw_mode in hostapd.conf)",
+			       (int) iface->conf->hw_mode);
 		return -2;
 	}
 
@@ -642,8 +631,15 @@ int hostapd_select_hw_mode(struct hostapd_iface *iface)
 			if (chan->flag & HOSTAPD_CHAN_DISABLED) {
 				wpa_printf(MSG_ERROR,
 					   "channel [%i] (%i) is disabled for "
-					   "use in AP mode, flags: 0x%x",
-					   j, chan->chan, chan->flag);
+					   "use in AP mode, flags: 0x%x%s%s%s",
+					   j, chan->chan, chan->flag,
+					   chan->flag & HOSTAPD_CHAN_NO_IBSS ?
+					   " NO-IBSS" : "",
+					   chan->flag &
+					   HOSTAPD_CHAN_PASSIVE_SCAN ?
+					   " PASSIVE-SCAN" : "",
+					   chan->flag & HOSTAPD_CHAN_RADAR ?
+					   " RADAR" : "");
 			} else {
 				ok = 1;
 				break;

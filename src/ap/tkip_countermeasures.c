@@ -1,6 +1,6 @@
 /*
  * hostapd / TKIP countermeasures
- * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2011, Jouni Malinen <j@w1.fi>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -60,9 +60,15 @@ static void ieee80211_tkip_countermeasures_start(struct hostapd_data *hapd)
 }
 
 
+void ieee80211_tkip_countermeasures_deinit(struct hostapd_data *hapd)
+{
+	eloop_cancel_timeout(ieee80211_tkip_countermeasures_stop, hapd, NULL);
+}
+
+
 void michael_mic_failure(struct hostapd_data *hapd, const u8 *addr, int local)
 {
-	time_t now;
+	struct os_time now;
 
 	if (addr && local) {
 		struct sta_info *sta = ap_get_sta(hapd, addr);
@@ -82,13 +88,13 @@ void michael_mic_failure(struct hostapd_data *hapd, const u8 *addr, int local)
 		}
 	}
 
-	time(&now);
-	if (now > hapd->michael_mic_failure + 60) {
+	os_get_time(&now);
+	if (now.sec > hapd->michael_mic_failure + 60) {
 		hapd->michael_mic_failures = 1;
 	} else {
 		hapd->michael_mic_failures++;
 		if (hapd->michael_mic_failures > 1)
 			ieee80211_tkip_countermeasures_start(hapd);
 	}
-	hapd->michael_mic_failure = now;
+	hapd->michael_mic_failure = now.sec;
 }

@@ -310,13 +310,17 @@ static void wps_registrar_add_pbc_session(struct wps_registrar *reg,
 
 
 static void wps_registrar_remove_pbc_session(struct wps_registrar *reg,
-					     const u8 *uuid_e)
+					     const u8 *uuid_e,
+					     const u8 *p2p_dev_addr)
 {
 	struct wps_pbc_session *pbc, *prev = NULL, *tmp;
 
 	pbc = reg->pbc_sessions;
 	while (pbc) {
-		if (os_memcmp(pbc->uuid_e, uuid_e, WPS_UUID_LEN) == 0) {
+		if (os_memcmp(pbc->uuid_e, uuid_e, WPS_UUID_LEN) == 0 ||
+		    (p2p_dev_addr && !is_zero_ether_addr(reg->p2p_dev_addr) &&
+		     os_memcmp(reg->p2p_dev_addr, p2p_dev_addr, ETH_ALEN) ==
+		     0)) {
 			if (prev)
 				prev->next = pbc->next;
 			else
@@ -485,10 +489,8 @@ static void wps_set_pushbutton(u16 *methods, u16 conf_methods)
 		*methods |= WPS_CONFIG_VIRT_PUSHBUTTON;
 	if (conf_methods & WPS_CONFIG_PHY_PUSHBUTTON)
 		*methods |= WPS_CONFIG_PHY_PUSHBUTTON;
-	if ((*methods & WPS_CONFIG_VIRT_PUSHBUTTON) !=
-	    WPS_CONFIG_VIRT_PUSHBUTTON ||
-	    (*methods & WPS_CONFIG_PHY_PUSHBUTTON) !=
-	    WPS_CONFIG_PHY_PUSHBUTTON) {
+	if (!(*methods & (WPS_CONFIG_VIRT_PUSHBUTTON |
+			  WPS_CONFIG_PHY_PUSHBUTTON))) {
 		/*
 		 * Required to include virtual/physical flag, but we were not
 		 * configured with push button type, so have to default to one
@@ -549,15 +551,7 @@ static int wps_build_probe_config_methods(struct wps_registrar *reg,
 static int wps_build_config_methods_r(struct wps_registrar *reg,
 				      struct wpabuf *msg)
 {
-	u16 methods;
-	methods = reg->wps->config_methods & ~WPS_CONFIG_PUSHBUTTON;
-#ifdef CONFIG_WPS2
-	methods &= ~(WPS_CONFIG_VIRT_PUSHBUTTON |
-		     WPS_CONFIG_PHY_PUSHBUTTON);
-#endif /* CONFIG_WPS2 */
-	if (reg->pbc)
-		wps_set_pushbutton(&methods, reg->wps->config_methods);
-	return wps_build_config_methods(msg, methods);
+	return wps_build_config_methods(msg, reg->wps->config_methods);
 }
 
 
@@ -901,8 +895,8 @@ static void wps_registrar_pbc_timeout(void *eloop_ctx, void *timeout_ctx)
  * PBC mode. The PBC mode will be stopped after walk time (2 minutes) timeout
  * or when a PBC registration is completed. If more than one Enrollee in active
  * PBC mode has been detected during the monitor time (previous 2 minutes), the
- * PBC mode is not actived and -2 is returned to indicate session overlap. This
- * is skipped if a specific Enrollee is selected.
+ * PBC mode is not activated and -2 is returned to indicate session overlap.
+ * This is skipped if a specific Enrollee is selected.
  */
 int wps_registrar_button_pushed(struct wps_registrar *reg,
 				const u8 *p2p_dev_addr)
@@ -948,6 +942,18 @@ static void wps_registrar_pin_completed(struct wps_registrar *reg)
 	eloop_cancel_timeout(wps_registrar_set_selected_timeout, reg, NULL);
 	reg->selected_registrar = 0;
 	wps_registrar_selected_registrar_changed(reg);
+}
+
+
+void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e)
+{
+	if (registrar->pbc) {
+		wps_registrar_remove_pbc_session(registrar,
+						 uuid_e, NULL);
+		wps_registrar_pbc_completed(registrar);
+	} else {
+		wps_registrar_pin_completed(registrar);
+	}
 }
 
 
@@ -1420,6 +1426,25 @@ static int wps_build_credential(struct wpabuf *msg,
 }
 
 
+int wps_build_credential_wrap(struct wpabuf *msg,
+			      const struct wps_credential *cred)
+{
+	struct wpabuf *wbuf;
+	wbuf = wpabuf_alloc(200);
+	if (wbuf == NULL)
+		return -1;
+	if (wps_build_credential(wbuf, cred)) {
+		wpabuf_free(wbuf);
+		return -1;
+	}
+	wpabuf_put_be16(msg, ATTR_CRED);
+	wpabuf_put_be16(msg, wpabuf_len(wbuf));
+	wpabuf_put_buf(msg, wbuf);
+	wpabuf_free(wbuf);
+	return 0;
+}
+
+
 int wps_build_cred(struct wps_data *wps, struct wpabuf *msg)
 {
 	struct wpabuf *cred;
@@ -1590,6 +1615,35 @@ static int wps_build_ap_settings(struct wps_data *wps, struct wpabuf *msg)
 		return -1;
 
 	return 0;
+}
+
+
+static struct wpabuf * wps_build_ap_cred(struct wps_data *wps)
+{
+	struct wpabuf *msg, *plain;
+
+	msg = wpabuf_alloc(1000);
+	if (msg == NULL)
+		return NULL;
+
+	plain = wpabuf_alloc(200);
+	if (plain == NULL) {
+		wpabuf_free(msg);
+		return NULL;
+	}
+
+	if (wps_build_ap_settings(wps, plain)) {
+		wpabuf_free(plain);
+		wpabuf_free(msg);
+		return NULL;
+	}
+
+	wpabuf_put_be16(msg, ATTR_CRED);
+	wpabuf_put_be16(msg, wpabuf_len(plain));
+	wpabuf_put_buf(msg, plain);
+	wpabuf_free(plain);
+
+	return msg;
 }
 
 
@@ -2551,6 +2605,8 @@ static void wps_cred_update(struct wps_credential *dst,
 static int wps_process_ap_settings_r(struct wps_data *wps,
 				     struct wps_parse_attr *attr)
 {
+	struct wpabuf *msg;
+
 	if (wps->wps->ap || wps->er)
 		return 0;
 
@@ -2577,12 +2633,24 @@ static int wps_process_ap_settings_r(struct wps_data *wps,
 		 */
 		wps_registrar_pin_completed(wps->wps->registrar);
 
+		msg = wps_build_ap_cred(wps);
+		if (msg == NULL)
+			return -1;
+		wps->cred.cred_attr = wpabuf_head(msg);
+		wps->cred.cred_attr_len = wpabuf_len(msg);
+
 		if (wps->ap_settings_cb) {
 			wps->ap_settings_cb(wps->ap_settings_cb_ctx,
 					    &wps->cred);
+			wpabuf_free(msg);
 			return 1;
 		}
 		wps_sta_cred_cb(wps);
+
+		wps->cred.cred_attr = NULL;
+		wps->cred.cred_attr_len = 0;
+		wpabuf_free(msg);
+
 		return 1;
 	}
 }
@@ -2983,7 +3051,8 @@ static enum wps_process_res wps_process_wsc_done(struct wps_data *wps,
 
 	if (wps->pbc) {
 		wps_registrar_remove_pbc_session(wps->wps->registrar,
-						 wps->uuid_e);
+						 wps->uuid_e,
+						 wps->p2p_dev_addr);
 		wps_registrar_pbc_completed(wps->wps->registrar);
 	} else {
 		wps_registrar_pin_completed(wps->wps->registrar);

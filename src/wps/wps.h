@@ -99,6 +99,7 @@ struct wps_device_data {
 	u8 num_sec_dev_types;
 	u32 os_version;
 	u8 rf_bands;
+	u16 config_methods;
 	struct wpabuf *vendor_ext[MAX_WPS_VENDOR_EXTENSIONS];
 
 	int p2p;
@@ -239,6 +240,7 @@ int wps_ap_priority_compar(const struct wpabuf *wps_a,
 int wps_is_addr_authorized(const struct wpabuf *msg, const u8 *addr,
 			   int ver1_compat);
 const u8 * wps_get_uuid_e(const struct wpabuf *msg);
+int wps_is_20(const struct wpabuf *msg);
 
 struct wpabuf * wps_build_assoc_req_ie(enum wps_request_type req_type);
 struct wpabuf * wps_build_assoc_resp_ie(void);
@@ -782,6 +784,7 @@ int wps_registrar_wps_cancel(struct wps_registrar *reg);
 int wps_registrar_unlock_pin(struct wps_registrar *reg, const u8 *uuid);
 int wps_registrar_button_pushed(struct wps_registrar *reg,
 				const u8 *p2p_dev_addr);
+void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e);
 void wps_registrar_probe_req_rx(struct wps_registrar *reg, const u8 *addr,
 				const struct wpabuf *wps_data,
 				int p2p_wildcard);
@@ -790,6 +793,9 @@ int wps_registrar_get_info(struct wps_registrar *reg, const u8 *addr,
 			   char *buf, size_t buflen);
 int wps_registrar_config_ap(struct wps_registrar *reg,
 			    struct wps_credential *cred);
+
+int wps_build_credential_wrap(struct wpabuf *msg,
+			      const struct wps_credential *cred);
 
 unsigned int wps_pin_checksum(unsigned int pin);
 unsigned int wps_pin_valid(unsigned int pin);

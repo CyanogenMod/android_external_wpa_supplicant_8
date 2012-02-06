@@ -107,8 +107,6 @@ static int p2p_peer_channels(struct p2p_data *p2p, struct p2p_device *dev,
 static u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method)
 {
 	switch (wps_method) {
-	case WPS_PIN_LABEL:
-		return DEV_PW_DEFAULT;
 	case WPS_PIN_DISPLAY:
 		return DEV_PW_REGISTRAR_SPECIFIED;
 	case WPS_PIN_KEYPAD:
@@ -124,8 +122,6 @@ static u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method)
 static const char * p2p_wps_method_str(enum p2p_wps_method wps_method)
 {
 	switch (wps_method) {
-	case WPS_PIN_LABEL:
-		return "Label";
 	case WPS_PIN_DISPLAY:
 		return "Display";
 	case WPS_PIN_KEYPAD:
@@ -156,8 +152,11 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 
 	len = p2p_buf_add_ie_hdr(buf);
 	group_capab = 0;
-	if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP)
+	if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP) {
 		group_capab |= P2P_GROUP_CAPAB_PERSISTENT_GROUP;
+		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_RECONN)
+			group_capab |= P2P_GROUP_CAPAB_PERSISTENT_RECONN;
+	}
 	if (p2p->cross_connect)
 		group_capab |= P2P_GROUP_CAPAB_CROSS_CONN;
 	if (p2p->cfg->p2p_intra_bss)
@@ -246,8 +245,12 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	p2p_buf_add_status(buf, status);
 	group_capab = 0;
 	if (peer && peer->go_state == LOCAL_GO) {
-		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP)
+		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP) {
 			group_capab |= P2P_GROUP_CAPAB_PERSISTENT_GROUP;
+			if (peer->flags & P2P_DEV_PREFER_PERSISTENT_RECONN)
+				group_capab |=
+					P2P_GROUP_CAPAB_PERSISTENT_RECONN;
+		}
 		if (p2p->cross_connect)
 			group_capab |= P2P_GROUP_CAPAB_CROSS_CONN;
 		if (p2p->cfg->p2p_intra_bss)
@@ -491,15 +494,7 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 		}
 
 		if (dev->go_neg_req_sent &&
-#ifdef ANDROID_BRCM_P2P_PATCH 
-		/* P2P_ADDR: compare against the p2p device address. The own mac 
-		address may not not be the actual p2p device address, if you 
-		are using a virtual interface.
-		*/
-		    os_memcmp(sa, p2p->cfg->p2p_dev_addr, ETH_ALEN) > 0) {
-#else
 		    os_memcmp(sa, p2p->cfg->dev_addr, ETH_ALEN) > 0) {
-#endif
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Do not reply since peer has higher "
 				"address and GO Neg Request already sent");
@@ -524,18 +519,6 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 		}
 
 		switch (msg.dev_password_id) {
-		case DEV_PW_DEFAULT:
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-				"P2P: PIN from peer Label");
-			if (dev->wps_method != WPS_PIN_KEYPAD) {
-				wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-					"P2P: We have wps_method=%s -> "
-					"incompatible",
-					p2p_wps_method_str(dev->wps_method));
-				status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;
-				goto fail;
-			}
-			break;
 		case DEV_PW_REGISTRAR_SPECIFIED:
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: PIN from peer Display");
@@ -551,8 +534,7 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 		case DEV_PW_USER_SPECIFIED:
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Peer entered PIN on Keypad");
-			if (dev->wps_method != WPS_PIN_LABEL &&
-			    dev->wps_method != WPS_PIN_DISPLAY) {
+			if (dev->wps_method != WPS_PIN_DISPLAY) {
 				wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 					"P2P: We have wps_method=%s -> "
 					"incompatible",
@@ -606,7 +588,10 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 						   p2p->op_channel))
 				p2p_reselect_channel(p2p, &intersection);
 
-			p2p_build_ssid(p2p, p2p->ssid, &p2p->ssid_len);
+			if (!p2p->ssid_set) {
+				p2p_build_ssid(p2p, p2p->ssid, &p2p->ssid_len);
+				p2p->ssid_set = 1;
+			}
 		}
 
 		dev->go_state = go ? LOCAL_GO : REMOTE_GO;
@@ -695,8 +680,12 @@ static struct wpabuf * p2p_build_go_neg_conf(struct p2p_data *p2p,
 	p2p_buf_add_status(buf, status);
 	group_capab = 0;
 	if (peer->go_state == LOCAL_GO) {
-		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP)
+		if (peer->flags & P2P_DEV_PREFER_PERSISTENT_GROUP) {
 			group_capab |= P2P_GROUP_CAPAB_PERSISTENT_GROUP;
+			if (peer->flags & P2P_DEV_PREFER_PERSISTENT_RECONN)
+				group_capab |=
+					P2P_GROUP_CAPAB_PERSISTENT_RECONN;
+		}
 		if (p2p->cross_connect)
 			group_capab |= P2P_GROUP_CAPAB_CROSS_CONN;
 		if (p2p->cfg->p2p_intra_bss)
@@ -907,18 +896,6 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 		dev->oper_freq = 0;
 
 	switch (msg.dev_password_id) {
-	case DEV_PW_DEFAULT:
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: PIN from peer Label");
-		if (dev->wps_method != WPS_PIN_KEYPAD) {
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-				"P2P: We have wps_method=%s -> "
-				"incompatible",
-				p2p_wps_method_str(dev->wps_method));
-			status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;
-			goto fail;
-		}
-		break;
 	case DEV_PW_REGISTRAR_SPECIFIED:
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: PIN from peer Display");
@@ -934,8 +911,7 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 	case DEV_PW_USER_SPECIFIED:
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Peer entered PIN on Keypad");
-		if (dev->wps_method != WPS_PIN_LABEL &&
-		    dev->wps_method != WPS_PIN_DISPLAY) {
+		if (dev->wps_method != WPS_PIN_DISPLAY) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: We have wps_method=%s -> "
 				"incompatible",
@@ -988,7 +964,10 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 					   p2p->op_channel))
 			p2p_reselect_channel(p2p, &intersection);
 
-		p2p_build_ssid(p2p, p2p->ssid, &p2p->ssid_len);
+		if (!p2p->ssid_set) {
+			p2p_build_ssid(p2p, p2p->ssid, &p2p->ssid_len);
+			p2p->ssid_set = 1;
+		}
 	}
 
 	p2p_set_state(p2p, P2P_GO_NEG);

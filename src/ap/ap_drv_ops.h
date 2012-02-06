@@ -21,13 +21,19 @@ struct wpa_driver_scan_params;
 struct ieee80211_ht_capabilities;
 
 u32 hostapd_sta_flags_to_drv(u32 flags);
+int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
+			       struct wpabuf **beacon,
+			       struct wpabuf **proberesp,
+			       struct wpabuf **assocresp);
+void hostapd_free_ap_extra_ies(struct hostapd_data *hapd, struct wpabuf *beacon,
+			       struct wpabuf *proberesp,
+			       struct wpabuf *assocresp);
 int hostapd_set_ap_wps_ie(struct hostapd_data *hapd);
 int hostapd_set_authorized(struct hostapd_data *hapd,
 			   struct sta_info *sta, int authorized);
 int hostapd_set_sta_flags(struct hostapd_data *hapd, struct sta_info *sta);
 int hostapd_set_drv_ieee8021x(struct hostapd_data *hapd, const char *ifname,
 			      int enabled);
-int hostapd_set_bss_params(struct hostapd_data *hapd, int use_protection);
 int hostapd_vlan_if_add(struct hostapd_data *hapd, const char *ifname);
 int hostapd_vlan_if_remove(struct hostapd_data *hapd, const char *ifname);
 int hostapd_set_wds_sta(struct hostapd_data *hapd, const u8 *addr, int aid,
@@ -36,7 +42,8 @@ int hostapd_sta_add(struct hostapd_data *hapd,
 		    const u8 *addr, u16 aid, u16 capability,
 		    const u8 *supp_rates, size_t supp_rates_len,
 		    u16 listen_interval,
-		    const struct ieee80211_ht_capabilities *ht_capab);
+		    const struct ieee80211_ht_capabilities *ht_capab,
+		    u32 flags, u8 qosinfo);
 int hostapd_set_privacy(struct hostapd_data *hapd, int enabled);
 int hostapd_set_generic_elem(struct hostapd_data *hapd, const u8 *elem,
 			     size_t elem_len);
@@ -59,23 +66,13 @@ int hostapd_set_rts(struct hostapd_data *hapd, int rts);
 int hostapd_set_frag(struct hostapd_data *hapd, int frag);
 int hostapd_sta_set_flags(struct hostapd_data *hapd, u8 *addr,
 			  int total_flags, int flags_or, int flags_and);
-int hostapd_set_rate_sets(struct hostapd_data *hapd, int *supp_rates,
-			  int *basic_rates, int mode);
 int hostapd_set_country(struct hostapd_data *hapd, const char *country);
-int hostapd_set_cts_protect(struct hostapd_data *hapd, int value);
-int hostapd_set_preamble(struct hostapd_data *hapd, int value);
-int hostapd_set_short_slot_time(struct hostapd_data *hapd, int value);
 int hostapd_set_tx_queue_params(struct hostapd_data *hapd, int queue, int aifs,
 				int cw_min, int cw_max, int burst_time);
-int hostapd_valid_bss_mask(struct hostapd_data *hapd, const u8 *addr,
-			   const u8 *mask);
 struct hostapd_hw_modes *
 hostapd_get_hw_feature_data(struct hostapd_data *hapd, u16 *num_modes,
 			    u16 *flags);
 int hostapd_driver_commit(struct hostapd_data *hapd);
-int hostapd_set_ht_params(struct hostapd_data *hapd,
-			  const u8 *ht_capab, size_t ht_capab_len,
-			  const u8 *ht_oper, size_t ht_oper_len);
 int hostapd_drv_none(struct hostapd_data *hapd);
 int hostapd_driver_scan(struct hostapd_data *hapd,
 			struct wpa_driver_scan_params *params);
@@ -90,11 +87,19 @@ int hostapd_drv_set_key(const char *ifname,
 			const u8 *seq, size_t seq_len,
 			const u8 *key, size_t key_len);
 int hostapd_drv_send_mlme(struct hostapd_data *hapd,
-			  const void *msg, size_t len);
+			  const void *msg, size_t len, int noack);
 int hostapd_drv_sta_deauth(struct hostapd_data *hapd,
 			   const u8 *addr, int reason);
 int hostapd_drv_sta_disassoc(struct hostapd_data *hapd,
 			     const u8 *addr, int reason);
+int hostapd_add_sta_node(struct hostapd_data *hapd, const u8 *addr,
+			 u16 auth_alg);
+int hostapd_sta_auth(struct hostapd_data *hapd, const u8 *addr,
+		     u16 seq, u16 status, const u8 *ie, size_t len);
+int hostapd_sta_assoc(struct hostapd_data *hapd, const u8 *addr,
+		      int reassoc, u16 status, const u8 *ie, size_t len);
+int hostapd_add_tspec(struct hostapd_data *hapd, const u8 *addr,
+		      u8 *tspec_ie, size_t tspec_ielen);
 
 
 #include "drivers/driver.h"
@@ -163,16 +168,12 @@ static inline int hostapd_drv_sta_clear_stats(struct hostapd_data *hapd,
 	return hapd->driver->sta_clear_stats(hapd->drv_priv, addr);
 }
 
-static inline int hostapd_drv_set_beacon(struct hostapd_data *hapd,
-					 const u8 *head, size_t head_len,
-					 const u8 *tail, size_t tail_len,
-					 int dtim_period, int beacon_int)
+static inline int hostapd_drv_set_ap(struct hostapd_data *hapd,
+				     struct wpa_driver_ap_params *params)
 {
-	if (hapd->driver == NULL || hapd->driver->set_beacon == NULL)
+	if (hapd->driver == NULL || hapd->driver->set_ap == NULL)
 		return 0;
-	return hapd->driver->set_beacon(hapd->drv_priv,
-					head, head_len, tail, tail_len,
-					dtim_period, beacon_int);
+	return hapd->driver->set_ap(hapd->drv_priv, params);
 }
 
 static inline int hostapd_drv_set_radius_acl_auth(struct hostapd_data *hapd,
@@ -200,6 +201,15 @@ static inline int hostapd_drv_set_authmode(struct hostapd_data *hapd,
 	if (hapd->driver == NULL || hapd->driver->set_authmode == NULL)
 		return 0;
 	return hapd->driver->set_authmode(hapd->drv_priv, auth_algs);
+}
+
+static inline void hostapd_drv_poll_client(struct hostapd_data *hapd,
+					   const u8 *own_addr, const u8 *addr,
+					   int qos)
+{
+	if (hapd->driver == NULL || hapd->driver->poll_client == NULL)
+		return;
+	hapd->driver->poll_client(hapd->drv_priv, own_addr, addr, qos);
 }
 
 #endif /* AP_DRV_OPS */

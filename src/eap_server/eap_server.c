@@ -136,6 +136,14 @@ SM_STATE(EAP, INITIALIZE)
 {
 	SM_ENTRY(EAP, INITIALIZE);
 
+	if (sm->eap_if.eapRestart && !sm->eap_server && sm->identity) {
+		/*
+		 * Need to allow internal Identity method to be used instead
+		 * of passthrough at the beginning of reauthentication.
+		 */
+		eap_server_clear_identity(sm);
+	}
+
 	sm->currentId = -1;
 	sm->eap_if.eapSuccess = FALSE;
 	sm->eap_if.eapFail = FALSE;
@@ -1028,9 +1036,12 @@ void eap_sm_process_nak(struct eap_sm *sm, const u8 *nak_list, size_t len)
 
 	not_found:
 		/* not found - remove from the list */
-		os_memmove(&sm->user->methods[i], &sm->user->methods[i + 1],
-			   (EAP_MAX_METHODS - i - 1) *
-			   sizeof(sm->user->methods[0]));
+		if (i + 1 < EAP_MAX_METHODS) {
+			os_memmove(&sm->user->methods[i],
+				   &sm->user->methods[i + 1],
+				   (EAP_MAX_METHODS - i - 1) *
+				   sizeof(sm->user->methods[0]));
+		}
 		sm->user->methods[EAP_MAX_METHODS - 1].vendor =
 			EAP_VENDOR_IETF;
 		sm->user->methods[EAP_MAX_METHODS - 1].method = EAP_TYPE_NONE;

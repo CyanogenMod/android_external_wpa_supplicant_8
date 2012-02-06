@@ -56,7 +56,7 @@ struct p2p_channels {
 };
 
 enum p2p_wps_method {
-	WPS_NOT_READY, WPS_PIN_LABEL, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC
+	WPS_NOT_READY, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC
 };
 
 /**
@@ -120,6 +120,9 @@ struct p2p_go_neg_results {
 
 	/**
 	 * persistent_group - Whether the group should be made persistent
+	 * 0 = not persistent
+	 * 1 = persistent group without persistent reconnect
+	 * 2 = persistent group with persistent reconnect
 	 */
 	int persistent_group;
 
@@ -291,17 +294,6 @@ struct p2p_config {
 	 * dev_addr - P2P Device Address
 	 */
 	u8 dev_addr[ETH_ALEN];
-
-#ifdef ANDROID_BRCM_P2P_PATCH
-	/**
-	 * p2p_dev_addr - P2P Device Address
-	 *
-	 * Holds the p2p device address. If the driver uses primary mac address
-	 * for p2p operations, then this will hold the same value as that of 
-	 * dev_addr.
-	 */
-	u8 p2p_dev_addr[ETH_ALEN];
-#endif
 
 	/**
 	 * dev_name - Device Name
@@ -602,6 +594,8 @@ struct p2p_config {
 	 * @supp_config_methods: Supported configuration Methods
 	 * @dev_capab: Device Capabilities
 	 * @group_capab: Group Capabilities
+	 * @group_id: P2P Group ID (or %NULL if not included)
+	 * @group_id_len: Length of P2P Group ID
 	 *
 	 * This callback is used to indicate reception of a Provision Discovery
 	 * Request frame that the P2P module accepted.
@@ -609,7 +603,8 @@ struct p2p_config {
 	void (*prov_disc_req)(void *ctx, const u8 *peer, u16 config_methods,
 			      const u8 *dev_addr, const u8 *pri_dev_type,
 			      const char *dev_name, u16 supp_config_methods,
-			      u8 dev_capab, u8 group_capab);
+			      u8 dev_capab, u8 group_capab,
+			      const u8 *group_id, size_t group_id_len);
 
 	/**
 	 * prov_disc_resp - Callback on Provisiong Discovery Response
@@ -857,7 +852,9 @@ int p2p_listen(struct p2p_data *p2p, unsigned int timeout);
  * @go_intent: Local GO intent value (1..15)
  * @own_interface_addr: Intended interface address to use with the group
  * @force_freq: The only allowed channel frequency in MHz or 0
- * @persistent_group: Whether to create a persistent group
+ * @persistent_group: Whether to create a persistent group (0 = no, 1 =
+ * persistent group without persistent reconnect, 2 = persistent group with
+ * persistent reconnect)
  * Returns: 0 on success, -1 on failure
  */
 int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
@@ -873,7 +870,9 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
  * @go_intent: Local GO intent value (1..15)
  * @own_interface_addr: Intended interface address to use with the group
  * @force_freq: The only allowed channel frequency in MHz or 0
- * @persistent_group: Whether to create a persistent group
+ * @persistent_group: Whether to create a persistent group (0 = no, 1 =
+ * persistent group without persistent reconnect, 2 = persistent group with
+ * persistent reconnect)
  * Returns: 0 on success, -1 on failure
  *
  * This is like p2p_connect(), but the actual group negotiation is not
@@ -898,6 +897,7 @@ int p2p_reject(struct p2p_data *p2p, const u8 *peer_addr);
  * @peer_addr: MAC address of the peer P2P client
  * @config_methods: WPS Config Methods value (only one bit set)
  * @join: Whether this is used by a client joining an active group
+ * @force_freq: Forced TX frequency for the frame (mainly for the join case)
  * Returns: 0 on success, -1 on failure
  *
  * This function can be used to request a discovered P2P peer to display a PIN
@@ -909,7 +909,7 @@ int p2p_reject(struct p2p_data *p2p, const u8 *peer_addr);
  * indicated with the p2p_config::prov_disc_resp() callback.
  */
 int p2p_prov_disc_req(struct p2p_data *p2p, const u8 *peer_addr,
-		      u16 config_methods, int join);
+		      u16 config_methods, int join, int force_freq);
 
 /**
  * p2p_sd_request - Schedule a service discovery query
@@ -1039,6 +1039,28 @@ void p2p_wps_success_cb(struct p2p_data *p2p, const u8 *mac_addr);
  */
 void p2p_group_formation_failed(struct p2p_data *p2p);
 
+/**
+ * p2p_get_provisioning_info - Get any stored provisioning info
+ * @p2p: P2P module context from p2p_init()
+ * @addr: Peer P2P Device Address
+ * Returns: WPS provisioning information (WPS config method) or 0 if no
+ * information is available
+ *
+ * This function is used to retrieve stored WPS provisioning info for the given
+ * peer.
+ */
+u16 p2p_get_provisioning_info(struct p2p_data *p2p, const u8 *addr);
+
+/**
+ * p2p_clear_provisioning_info - Clear any stored provisioning info
+ * @p2p: P2P module context from p2p_init()
+ * @iface_addr: Peer P2P Interface Address
+ *
+ * This function is used to clear stored WPS provisioning info for the given
+ * peer.
+ */
+void p2p_clear_provisioning_info(struct p2p_data *p2p, const u8 *iface_addr);
+
 
 /* Event notifications from lower layer driver operations */
 
@@ -1046,12 +1068,14 @@ void p2p_group_formation_failed(struct p2p_data *p2p);
  * p2p_probe_req_rx - Report reception of a Probe Request frame
  * @p2p: P2P module context from p2p_init()
  * @addr: Source MAC address
+ * @dst: Destination MAC address if available or %NULL
+ * @bssid: BSSID if available or %NULL
  * @ie: Information elements from the Probe Request frame body
  * @ie_len: Length of ie buffer in octets
  * Returns: 0 to indicate the frame was not processed or 1 if it was
  */
-int p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *ie,
-		     size_t ie_len);
+int p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *dst,
+		     const u8 *bssid, const u8 *ie, size_t ie_len);
 
 /**
  * p2p_rx_action - Report received Action frame
@@ -1173,6 +1197,9 @@ struct p2p_group;
 struct p2p_group_config {
 	/**
 	 * persistent_group - Whether the group is persistent
+	 * 0 = not a persistent group
+	 * 1 = persistent group without persistent reconnect
+	 * 2 = persistent group with persistent reconnect
 	 */
 	int persistent_group;
 
@@ -1244,16 +1271,6 @@ void p2p_group_deinit(struct p2p_group *group);
  */
 int p2p_group_notif_assoc(struct p2p_group *group, const u8 *addr,
 			  const u8 *ie, size_t len);
-#ifdef ANDROID_BRCM_P2P_PATCH
-/**
- * p2p_group_get_dev_addr - Retreive the device address of an assocated P2P
- * client. 
- * @group: P2P group context from p2p_group_init()
- * @addr: Interface address of the P2P client
- * Returns: P2P dev_addr on success, NULL on failure
- */
-u8 *p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr);
-#endif /*ANDROID_BRCM_P2P_PATCH */
 
 /**
  * p2p_group_assoc_resp_ie - Build P2P IE for (re)association response
@@ -1363,6 +1380,13 @@ int p2p_assoc_req_ie(struct p2p_data *p2p, const u8 *bssid, u8 *buf,
 void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies);
 
 /**
+ * p2p_scan_ie_buf_len - Get maximum buffer length needed for p2p_scan_ie
+ * @p2p: P2P module context from p2p_init()
+ * Returns: Number of octets that p2p_scan_ie() may add to the buffer
+ */
+size_t p2p_scan_ie_buf_len(struct p2p_data *p2p);
+
+/**
  * p2p_go_params - Generate random P2P group parameters
  * @p2p: P2P module context from p2p_init()
  * @params: Buffer for parameters
@@ -1392,16 +1416,36 @@ int p2p_get_cross_connect_disallowed(const struct wpabuf *p2p_ie);
 const u8 * p2p_get_go_dev_addr(const struct wpabuf *p2p_ie);
 
 /**
- * p2p_get_peer_info - Get P2P peer information in text format
+ * p2p_get_peer_info - Get P2P peer information
  * @p2p: P2P module context from p2p_init()
  * @addr: P2P Device Address of the peer or %NULL to indicate the first peer
  * @next: Whether to select the peer entry following the one indicated by addr
+ * Returns: Pointer to peer info or %NULL if not found
+ */
+const struct p2p_peer_info * p2p_get_peer_info(struct p2p_data *p2p,
+					       const u8 *addr, int next);
+
+/**
+ * p2p_get_peer_info_txt - Get internal P2P peer information in text format
+ * @info: Pointer to P2P peer info from p2p_get_peer_info()
  * @buf: Buffer for returning text
  * @buflen: Maximum buffer length
  * Returns: Number of octets written to the buffer or -1 on failure
+ *
+ * Note: This information is internal to the P2P module and subject to change.
+ * As such, this should not really be used by external programs for purposes
+ * other than debugging.
  */
-int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
-		      char *buf, size_t buflen);
+int p2p_get_peer_info_txt(const struct p2p_peer_info *info,
+			  char *buf, size_t buflen);
+
+/**
+ * p2p_peer_known - Check whether P2P peer is known
+ * @p2p: P2P module context from p2p_init()
+ * @addr: P2P Device Address of the peer
+ * Returns: 1 if the specified device is in the P2P peer table or 0 if not
+ */
+int p2p_peer_known(struct p2p_data *p2p, const u8 *addr);
 
 /**
  * p2p_set_client_discoverability - Set client discoverability capability
@@ -1415,7 +1459,7 @@ int p2p_get_peer_info(struct p2p_data *p2p, const u8 *addr, int next,
 void p2p_set_client_discoverability(struct p2p_data *p2p, int enabled);
 
 /**
- * p2p_set_manageD_oper - Set managed P2P Device operations capability
+ * p2p_set_managed_oper - Set managed P2P Device operations capability
  * @p2p: P2P module context from p2p_init()
  * @enabled: Whether managed P2P Device operations will be enabled
  */
@@ -1490,6 +1534,15 @@ unsigned int p2p_get_group_num_members(struct p2p_group *group);
 const u8 * p2p_iterate_group_members(struct p2p_group *group, void **next);
 
 /**
+ * p2p_group_get_dev_addr - Get a P2P Device Address of a client in a group
+ * @group: P2P group context from p2p_group_init()
+ * @addr: P2P Interface Address of the client
+ * Returns: P2P Device Address of the client if found or %NULL if no match
+ * found
+ */
+const u8 * p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr);
+
+/**
  * p2p_get_peer_found - Get P2P peer info structure of a found peer
  * @p2p: P2P module context from p2p_init()
  * @addr: P2P Device Address of the peer or %NULL to indicate the first peer
@@ -1527,5 +1580,30 @@ int p2p_add_wps_vendor_extension(struct p2p_data *p2p,
  */
 int p2p_set_oper_channel(struct p2p_data *p2p, u8 op_reg_class, u8 op_channel,
 			 int cfg_op_channel);
+
+/**
+ * p2p_in_progress - Check whether a P2P operation is progress
+ * @p2p: P2P module context from p2p_init()
+ * Returns: 0 if P2P module is idle or 1 if an operation is in progress
+ */
+int p2p_in_progress(struct p2p_data *p2p);
+
+#ifdef ANDROID_P2P
+/**
+ * p2p_in_progress - Check whether a P2P SEARCH is in progress
+ * @p2p: P2P module context from p2p_init()
+ * Returns: 0 if P2P module is idle or 1 if an operation is in progress
+ */
+int p2p_search_in_progress(struct p2p_data *p2p);
+#endif
+
+/**
+ * p2p_other_scan_completed - Notify completion of non-P2P scan
+ * @p2p: P2P module context from p2p_init()
+ * Returns: 0 if P2P module is idle or 1 if an operation was started
+ */
+int p2p_other_scan_completed(struct p2p_data *p2p);
+
+const char * p2p_wps_method_text(enum p2p_wps_method method);
 
 #endif /* P2P_H */

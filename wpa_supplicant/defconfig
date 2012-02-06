@@ -114,11 +114,6 @@ CONFIG_DRIVER_NL80211=y
 # Driver interface for development testing
 #CONFIG_DRIVER_TEST=y
 
-# Include client MLME (management frame processing) for test driver
-# This can be used to test MLME operations in hostapd with the test interface.
-# space.
-#CONFIG_CLIENT_MLME=y
-
 # Driver interface for wired Ethernet drivers
 CONFIG_DRIVER_WIRED=y
 
@@ -203,6 +198,9 @@ CONFIG_EAP_LEAP=y
 #CONFIG_WPS2=y
 # Enable WPS external registrar functionality
 #CONFIG_WPS_ER=y
+# Disable credentials for an open network by default when acting as a WPS
+# registrar.
+#CONFIG_WPS_REG_DISABLE_OPEN=y
 
 # EAP-IKEv2
 #CONFIG_EAP_IKEV2=y
@@ -322,18 +320,24 @@ CONFIG_PEERKEY=y
 
 # Select TLS implementation
 # openssl = OpenSSL (default)
-# gnutls = GnuTLS (needed for TLS/IA, see also CONFIG_GNUTLS_EXTRA)
+# gnutls = GnuTLS
 # internal = Internal TLSv1 implementation (experimental)
 # none = Empty template
 #CONFIG_TLS=openssl
 
-# Whether to enable TLS/IA support, which is required for EAP-TTLSv1.
-# You need CONFIG_TLS=gnutls for this to have any effect. Please note that
-# even though the core GnuTLS library is released under LGPL, this extra
-# library uses GPL and as such, the terms of GPL apply to the combination
-# of wpa_supplicant and GnuTLS if this option is enabled. BSD license may not
-# apply for distribution of the resulting binary.
-#CONFIG_GNUTLS_EXTRA=y
+# TLS-based EAP methods require at least TLS v1.0. Newer version of TLS (v1.1)
+# can be enabled to get a stronger construction of messages when block ciphers
+# are used. It should be noted that some existing TLS v1.0 -based
+# implementation may not be compatible with TLS v1.1 message (ClientHello is
+# sent prior to negotiating which version will be used)
+#CONFIG_TLSV11=y
+
+# TLS-based EAP methods require at least TLS v1.0. Newer version of TLS (v1.2)
+# can be enabled to enable use of stronger crypto algorithms. It should be
+# noted that some existing TLS v1.0 -based implementation may not be compatible
+# with TLS v1.2 message (ClientHello is sent prior to negotiating which version
+# will be used)
+#CONFIG_TLSV12=y
 
 # If CONFIG_TLS=internal is used, additional library and include paths are
 # needed for LibTomMath. Alternatively, an integrated, minimal version of
@@ -455,3 +459,12 @@ CONFIG_PEERKEY=y
 # should only be considered for builds that are known to be used on devices
 # that meet the requirements described above.
 #CONFIG_NO_RANDOM_POOL=y
+
+# IEEE 802.11n (High Throughput) support (mainly for AP mode)
+#CONFIG_IEEE80211N=y
+
+# Interworking (IEEE 802.11u)
+# This can be used to enable functionality to improve interworking with
+# external networks (GAS/ANQP to learn more about the networks and network
+# selection based on available credentials).
+#CONFIG_INTERWORKING=y

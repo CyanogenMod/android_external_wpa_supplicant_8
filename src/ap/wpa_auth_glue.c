@@ -29,11 +29,13 @@
 #include "ap_drv_ops.h"
 #include "ap_config.h"
 #include "wpa_auth.h"
+#include "wpa_auth_glue.h"
 
 
 static void hostapd_wpa_auth_conf(struct hostapd_bss_config *conf,
 				  struct wpa_auth_config *wconf)
 {
+	os_memset(wconf, 0, sizeof(*wconf));
 	wconf->wpa = conf->wpa;
 	wconf->wpa_key_mgmt = conf->wpa_key_mgmt;
 	wconf->wpa_pairwise = conf->wpa_pairwise;
@@ -184,6 +186,9 @@ static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
 					   const u8 *prev_psk)
 {
 	struct hostapd_data *hapd = ctx;
+	struct sta_info *sta = ap_get_sta(hapd, addr);
+	if (sta && sta->psk)
+		return sta->psk;
 	return hostapd_get_psk(hapd->conf, addr, prev_psk);
 }
 
@@ -384,7 +389,7 @@ static int hostapd_wpa_auth_send_ether(void *ctx, const u8 *dst, u16 proto,
 	ret = l2_packet_send(hapd->l2, dst, proto, (u8 *) buf,
 			     sizeof(*buf) + data_len);
 	os_free(buf);
-	return -1;
+	return ret;
 }
 
 
@@ -414,7 +419,7 @@ static int hostapd_wpa_auth_send_ft_action(void *ctx, const u8 *dst,
 	os_memcpy(m->bssid, hapd->own_addr, ETH_ALEN);
 	os_memcpy(&m->u, data, data_len);
 
-	res = hostapd_drv_send_mlme(hapd, (u8 *) m, mlen);
+	res = hostapd_drv_send_mlme(hapd, (u8 *) m, mlen, 0);
 	os_free(m);
 	return res;
 }
@@ -547,6 +552,7 @@ void hostapd_reconfig_wpa(struct hostapd_data *hapd)
 
 void hostapd_deinit_wpa(struct hostapd_data *hapd)
 {
+	ieee80211_tkip_countermeasures_deinit(hapd);
 	rsn_preauth_iface_deinit(hapd);
 	if (hapd->wpa_auth) {
 		wpa_deinit(hapd->wpa_auth);

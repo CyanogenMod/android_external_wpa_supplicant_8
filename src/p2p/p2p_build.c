@@ -164,27 +164,20 @@ void p2p_buf_add_device_info(struct wpabuf *buf, struct p2p_data *p2p,
 	len = wpabuf_put(buf, 2); /* IE length to be filled */
 
 	/* P2P Device address */
-#ifdef ANDROID_BRCM_P2P_PATCH
-	/* 
-	* P2P_ADDR: Supplicant uses primary mac addr for p2p and hence advertises that. To
-	* to make it compatible with solution using virtual interface for P2P, a new variable
-	* is added to hold the actual p2p device address.
-	*/
-	wpabuf_put_data(buf, p2p->cfg->p2p_dev_addr, ETH_ALEN);
-#else
 	wpabuf_put_data(buf, p2p->cfg->dev_addr, ETH_ALEN);
-#endif
 
 	/* Config Methods */
 	methods = 0;
 	if (peer && peer->wps_method != WPS_NOT_READY) {
 		if (peer->wps_method == WPS_PBC)
 			methods |= WPS_CONFIG_PUSHBUTTON;
-		else if (peer->wps_method == WPS_PIN_LABEL)
-			methods |= WPS_CONFIG_LABEL;
 		else if (peer->wps_method == WPS_PIN_DISPLAY ||
 			 peer->wps_method == WPS_PIN_KEYPAD)
 			methods |= WPS_CONFIG_DISPLAY | WPS_CONFIG_KEYPAD;
+	} else if (p2p->cfg->config_methods) {
+		methods |= p2p->cfg->config_methods &
+			(WPS_CONFIG_PUSHBUTTON | WPS_CONFIG_DISPLAY |
+			 WPS_CONFIG_KEYPAD);
 	} else {
 		methods |= WPS_CONFIG_PUSHBUTTON;
 		methods |= WPS_CONFIG_DISPLAY | WPS_CONFIG_KEYPAD;

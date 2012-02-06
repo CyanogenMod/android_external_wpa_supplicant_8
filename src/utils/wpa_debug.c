@@ -34,7 +34,7 @@ int wpa_debug_timestamp = 0;
 
 #ifndef ANDROID_LOG_NAME
 #define ANDROID_LOG_NAME	"wpa_supplicant"
-#endif
+#endif /* ANDROID_LOG_NAME */
 
 void android_printf(int level, char *format, ...)
 {

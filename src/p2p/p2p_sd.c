@@ -16,6 +16,7 @@
 
 #include "common.h"
 #include "common/ieee802_11_defs.h"
+#include "common/gas.h"
 #include "p2p_i.h"
 #include "p2p.h"
 
@@ -26,7 +27,7 @@ struct p2p_sd_query * p2p_pending_sd_req(struct p2p_data *p2p,
 	struct p2p_sd_query *q;
 
 	if (!(dev->info.dev_capab & P2P_DEV_CAPAB_SERVICE_DISCOVERY))
-		return 0; /* peer does not support SD */
+		return NULL; /* peer does not support SD */
 
 	for (q = p2p->sd_queries; q; q = q->next) {
 		if (q->for_all_peers && !(dev->flags & P2P_DEV_SD_INFO))
@@ -90,51 +91,21 @@ static struct wpabuf * p2p_build_sd_query(u16 update_indic,
 					  struct wpabuf *tlvs)
 {
 	struct wpabuf *buf;
-	u8 *len_pos, *len_pos2;
+	u8 *len_pos;
 
-	buf = wpabuf_alloc(1000 + wpabuf_len(tlvs));
+	buf = gas_anqp_build_initial_req(0, 100 + wpabuf_len(tlvs));
 	if (buf == NULL)
 		return NULL;
 
-	wpabuf_put_u8(buf, WLAN_ACTION_PUBLIC);
-	wpabuf_put_u8(buf, WLAN_PA_GAS_INITIAL_REQ);
-	wpabuf_put_u8(buf, 0); /* Dialog Token */
-
-	/* Advertisement Protocol IE */
-	wpabuf_put_u8(buf, WLAN_EID_ADV_PROTO);
-	wpabuf_put_u8(buf, 2); /* Length */
-	wpabuf_put_u8(buf, 0); /* QueryRespLenLimit | PAME-BI */
-	wpabuf_put_u8(buf, NATIVE_QUERY_PROTOCOL); /* Advertisement Protocol */
-
-	/* Query Request */
-	len_pos = wpabuf_put(buf, 2); /* Length (to be filled) */
-
-	/* NQP Query Request Frame */
-	wpabuf_put_le16(buf, NQP_VENDOR_SPECIFIC); /* Info ID */
-	len_pos2 = wpabuf_put(buf, 2); /* Length (to be filled) */
+	/* ANQP Query Request Frame */
+	len_pos = gas_anqp_add_element(buf, ANQP_VENDOR_SPECIFIC);
 	wpabuf_put_be24(buf, OUI_WFA);
 	wpabuf_put_u8(buf, P2P_OUI_TYPE);
 	wpabuf_put_le16(buf, update_indic); /* Service Update Indicator */
 	wpabuf_put_buf(buf, tlvs);
+	gas_anqp_set_element_len(buf, len_pos);
 
-	WPA_PUT_LE16(len_pos2, (u8 *) wpabuf_put(buf, 0) - len_pos2 - 2);
-	WPA_PUT_LE16(len_pos, (u8 *) wpabuf_put(buf, 0) - len_pos - 2);
-
-	return buf;
-}
-
-
-static struct wpabuf * p2p_build_gas_comeback_req(u8 dialog_token)
-{
-	struct wpabuf *buf;
-
-	buf = wpabuf_alloc(3);
-	if (buf == NULL)
-		return NULL;
-
-	wpabuf_put_u8(buf, WLAN_ACTION_PUBLIC);
-	wpabuf_put_u8(buf, WLAN_PA_GAS_COMEBACK_REQ);
-	wpabuf_put_u8(buf, dialog_token);
+	gas_anqp_set_len(buf);
 
 	return buf;
 }
@@ -145,7 +116,7 @@ static void p2p_send_gas_comeback_req(struct p2p_data *p2p, const u8 *dst,
 {
 	struct wpabuf *req;
 
-	req = p2p_build_gas_comeback_req(dialog_token);
+	req = gas_build_comeback_req(dialog_token);
 	if (req == NULL)
 		return;
 
@@ -165,42 +136,26 @@ static struct wpabuf * p2p_build_sd_response(u8 dialog_token, u16 status_code,
 					     const struct wpabuf *tlvs)
 {
 	struct wpabuf *buf;
-	u8 *len_pos, *len_pos2;
+	u8 *len_pos;
 
-	buf = wpabuf_alloc(1000 + (tlvs ? wpabuf_len(tlvs) : 0));
+	buf = gas_anqp_build_initial_resp(dialog_token, status_code,
+					  comeback_delay,
+					  100 + (tlvs ? wpabuf_len(tlvs) : 0));
 	if (buf == NULL)
 		return NULL;
 
-	wpabuf_put_u8(buf, WLAN_ACTION_PUBLIC);
-	wpabuf_put_u8(buf, WLAN_PA_GAS_INITIAL_RESP);
-	wpabuf_put_u8(buf, dialog_token);
-	wpabuf_put_le16(buf, status_code);
-	wpabuf_put_le16(buf, comeback_delay);
-
-	/* Advertisement Protocol IE */
-	wpabuf_put_u8(buf, WLAN_EID_ADV_PROTO);
-	wpabuf_put_u8(buf, 2); /* Length */
-	wpabuf_put_u8(buf, 0x7f); /* QueryRespLenLimit | PAME-BI */
-	wpabuf_put_u8(buf, NATIVE_QUERY_PROTOCOL); /* Advertisement Protocol */
-
-	/* Query Response */
-	len_pos = wpabuf_put(buf, 2); /* Length (to be filled) */
-
 	if (tlvs) {
-		/* NQP Query Response Frame */
-		wpabuf_put_le16(buf, NQP_VENDOR_SPECIFIC); /* Info ID */
-		len_pos2 = wpabuf_put(buf, 2); /* Length (to be filled) */
+		/* ANQP Query Response Frame */
+		len_pos = gas_anqp_add_element(buf, ANQP_VENDOR_SPECIFIC);
 		wpabuf_put_be24(buf, OUI_WFA);
 		wpabuf_put_u8(buf, P2P_OUI_TYPE);
 		 /* Service Update Indicator */
 		wpabuf_put_le16(buf, update_indic);
 		wpabuf_put_buf(buf, tlvs);
-
-		WPA_PUT_LE16(len_pos2,
-			     (u8 *) wpabuf_put(buf, 0) - len_pos2 - 2);
+		gas_anqp_set_element_len(buf, len_pos);
 	}
 
-	WPA_PUT_LE16(len_pos, (u8 *) wpabuf_put(buf, 0) - len_pos - 2);
+	gas_anqp_set_len(buf);
 
 	return buf;
 }
@@ -214,31 +169,15 @@ static struct wpabuf * p2p_build_gas_comeback_resp(u8 dialog_token,
 						   u16 total_len)
 {
 	struct wpabuf *buf;
-	u8 *len_pos;
 
-	buf = wpabuf_alloc(1000 + len);
+	buf = gas_anqp_build_comeback_resp(dialog_token, status_code, frag_id,
+					   more, 0, 100 + len);
 	if (buf == NULL)
 		return NULL;
 
-	wpabuf_put_u8(buf, WLAN_ACTION_PUBLIC);
-	wpabuf_put_u8(buf, WLAN_PA_GAS_COMEBACK_RESP);
-	wpabuf_put_u8(buf, dialog_token);
-	wpabuf_put_le16(buf, status_code);
-	wpabuf_put_u8(buf, frag_id | (more ? 0x80 : 0));
-	wpabuf_put_le16(buf, 0); /* Comeback Delay */
-
-	/* Advertisement Protocol IE */
-	wpabuf_put_u8(buf, WLAN_EID_ADV_PROTO);
-	wpabuf_put_u8(buf, 2); /* Length */
-	wpabuf_put_u8(buf, 0x7f); /* QueryRespLenLimit | PAME-BI */
-	wpabuf_put_u8(buf, NATIVE_QUERY_PROTOCOL); /* Advertisement Protocol */
-
-	/* Query Response */
-	len_pos = wpabuf_put(buf, 2); /* Length (to be filled) */
-
 	if (frag_id == 0) {
-		/* NQP Query Response Frame */
-		wpabuf_put_le16(buf, NQP_VENDOR_SPECIFIC); /* Info ID */
+		/* ANQP Query Response Frame */
+		wpabuf_put_le16(buf, ANQP_VENDOR_SPECIFIC); /* Info ID */
 		wpabuf_put_le16(buf, 3 + 1 + 2 + total_len);
 		wpabuf_put_be24(buf, OUI_WFA);
 		wpabuf_put_u8(buf, P2P_OUI_TYPE);
@@ -247,8 +186,7 @@ static struct wpabuf * p2p_build_gas_comeback_resp(u8 dialog_token,
 	}
 
 	wpabuf_put_data(buf, data, len);
-
-	WPA_PUT_LE16(len_pos, (u8 *) wpabuf_put(buf, 0) - len_pos - 2);
+	gas_anqp_set_len(buf);
 
 	return buf;
 }
@@ -349,7 +287,7 @@ void p2p_rx_gas_initial_req(struct p2p_data *p2p, const u8 *sa,
 	}
 	pos++; /* skip QueryRespLenLimit and PAME-BI */
 
-	if (*pos != NATIVE_QUERY_PROTOCOL) {
+	if (*pos != ACCESS_NETWORK_QUERY_PROTOCOL) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Unsupported GAS advertisement protocol id %u",
 			*pos);
@@ -366,12 +304,12 @@ void p2p_rx_gas_initial_req(struct p2p_data *p2p, const u8 *sa,
 		return;
 	end = pos + slen;
 
-	/* NQP Query Request */
+	/* ANQP Query Request */
 	if (pos + 4 > end)
 		return;
-	if (WPA_GET_LE16(pos) != NQP_VENDOR_SPECIFIC) {
+	if (WPA_GET_LE16(pos) != ANQP_VENDOR_SPECIFIC) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP Info ID %u", WPA_GET_LE16(pos));
+			"P2P: Unsupported ANQP Info ID %u", WPA_GET_LE16(pos));
 		return;
 	}
 	pos += 2;
@@ -380,20 +318,20 @@ void p2p_rx_gas_initial_req(struct p2p_data *p2p, const u8 *sa,
 	pos += 2;
 	if (pos + slen > end || slen < 3 + 1) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Invalid NQP Query Request length");
+			"P2P: Invalid ANQP Query Request length");
 		return;
 	}
 
 	if (WPA_GET_BE24(pos) != OUI_WFA) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP OUI %06x", WPA_GET_BE24(pos));
+			"P2P: Unsupported ANQP OUI %06x", WPA_GET_BE24(pos));
 		return;
 	}
 	pos += 3;
 
 	if (*pos != P2P_OUI_TYPE) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP vendor type %u", *pos);
+			"P2P: Unsupported ANQP vendor type %u", *pos);
 		return;
 	}
 	pos++;
@@ -451,11 +389,7 @@ void p2p_sd_response(struct p2p_data *p2p, int freq, const u8 *dst,
 
 	p2p->pending_action_state = P2P_NO_PENDING_ACTION;
 	if (p2p_send_action(p2p, freq, dst, p2p->cfg->dev_addr,
-		#ifdef ANDROID_BRCM_P2P_PATCH
-			   p2p->cfg->p2p_dev_addr,
-		#else
 			    p2p->cfg->dev_addr,
-		#endif
 			    wpabuf_head(resp), wpabuf_len(resp), 200) < 0)
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Failed to send Action frame");
@@ -529,7 +463,7 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 	}
 	pos++; /* skip QueryRespLenLimit and PAME-BI */
 
-	if (*pos != NATIVE_QUERY_PROTOCOL) {
+	if (*pos != ACCESS_NETWORK_QUERY_PROTOCOL) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Unsupported GAS advertisement protocol id %u",
 			*pos);
@@ -567,12 +501,12 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 		return;
 	}
 
-	/* NQP Query Response */
+	/* ANQP Query Response */
 	if (pos + 4 > end)
 		return;
-	if (WPA_GET_LE16(pos) != NQP_VENDOR_SPECIFIC) {
+	if (WPA_GET_LE16(pos) != ANQP_VENDOR_SPECIFIC) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP Info ID %u", WPA_GET_LE16(pos));
+			"P2P: Unsupported ANQP Info ID %u", WPA_GET_LE16(pos));
 		return;
 	}
 	pos += 2;
@@ -581,20 +515,20 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 	pos += 2;
 	if (pos + slen > end || slen < 3 + 1) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Invalid NQP Query Response length");
+			"P2P: Invalid ANQP Query Response length");
 		return;
 	}
 
 	if (WPA_GET_BE24(pos) != OUI_WFA) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP OUI %06x", WPA_GET_BE24(pos));
+			"P2P: Unsupported ANQP OUI %06x", WPA_GET_BE24(pos));
 		return;
 	}
 	pos += 3;
 
 	if (*pos != P2P_OUI_TYPE) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP vendor type %u", *pos);
+			"P2P: Unsupported ANQP vendor type %u", *pos);
 		return;
 	}
 	pos++;
@@ -776,7 +710,7 @@ void p2p_rx_gas_comeback_resp(struct p2p_data *p2p, const u8 *sa,
 	}
 	pos++; /* skip QueryRespLenLimit and PAME-BI */
 
-	if (*pos != NATIVE_QUERY_PROTOCOL) {
+	if (*pos != ACCESS_NETWORK_QUERY_PROTOCOL) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Unsupported GAS advertisement protocol id %u",
 			*pos);
@@ -808,29 +742,29 @@ void p2p_rx_gas_comeback_resp(struct p2p_data *p2p, const u8 *sa,
 
 	if (p2p->sd_rx_resp) {
 		 /*
-		  * NQP header is only included in the first fragment; rest of
+		  * ANQP header is only included in the first fragment; rest of
 		  * the fragments start with continue TLVs.
 		  */
 		goto skip_nqp_header;
 	}
 
-	/* NQP Query Response */
+	/* ANQP Query Response */
 	if (pos + 4 > end)
 		return;
-	if (WPA_GET_LE16(pos) != NQP_VENDOR_SPECIFIC) {
+	if (WPA_GET_LE16(pos) != ANQP_VENDOR_SPECIFIC) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP Info ID %u", WPA_GET_LE16(pos));
+			"P2P: Unsupported ANQP Info ID %u", WPA_GET_LE16(pos));
 		return;
 	}
 	pos += 2;
 
 	slen = WPA_GET_LE16(pos);
 	pos += 2;
-	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: NQP Query Response "
+	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: ANQP Query Response "
 		"length: %u", slen);
 	if (slen < 3 + 1) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Invalid NQP Query Response length");
+			"P2P: Invalid ANQP Query Response length");
 		return;
 	}
 	if (pos + 4 > end)
@@ -838,14 +772,14 @@ void p2p_rx_gas_comeback_resp(struct p2p_data *p2p, const u8 *sa,
 
 	if (WPA_GET_BE24(pos) != OUI_WFA) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP OUI %06x", WPA_GET_BE24(pos));
+			"P2P: Unsupported ANQP OUI %06x", WPA_GET_BE24(pos));
 		return;
 	}
 	pos += 3;
 
 	if (*pos != P2P_OUI_TYPE) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-			"P2P: Unsupported NQP vendor type %u", *pos);
+			"P2P: Unsupported ANQP vendor type %u", *pos);
 		return;
 	}
 	pos++;

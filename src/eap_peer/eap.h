@@ -216,10 +216,10 @@ struct eapol_callbacks {
 	/**
 	 * eap_param_needed - Notify that EAP parameter is needed
 	 * @ctx: eapol_ctx from eap_peer_sm_init() call
-	 * @field: Field name (e.g., "IDENTITY")
+	 * @field: Field indicator (e.g., WPA_CTRL_REQ_EAP_IDENTITY)
 	 * @txt: User readable text describing the required parameter
 	 */
-	void (*eap_param_needed)(void *ctx, const char *field,
+	void (*eap_param_needed)(void *ctx, enum wpa_ctrl_req_type field,
 				 const char *txt);
 
 	/**
@@ -262,6 +262,11 @@ struct eap_config {
 	 * This is only used by EAP-WSC and can be left %NULL if not available.
 	 */
 	struct wps_context *wps;
+
+	/**
+	 * cert_in_cb - Include server certificates in callback
+	 */
+	int cert_in_cb;
 };
 
 struct eap_sm * eap_peer_sm_init(void *eapol_ctx,

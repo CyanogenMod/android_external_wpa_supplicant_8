@@ -28,6 +28,7 @@
 #define DEFAULT_BSS_EXPIRATION_AGE 180
 #define DEFAULT_BSS_EXPIRATION_SCAN_COUNT 2
 #define DEFAULT_MAX_NUM_STA 128
+#define DEFAULT_ACCESS_NETWORK_TYPE 15
 
 #include "config_ssid.h"
 #include "wps/wps.h"
@@ -123,7 +124,7 @@ struct wpa_config {
 	 * If this is specified, %wpa_supplicant will open a control interface
 	 * that is available for external programs to manage %wpa_supplicant.
 	 * The meaning of this string depends on which control interface
-	 * mechanism is used. For all cases, the existance of this parameter
+	 * mechanism is used. For all cases, the existence of this parameter
 	 * in configuration is used to determine whether the control interface
 	 * is enabled.
 	 *
@@ -376,7 +377,10 @@ struct wpa_config {
 	 * stations in the group. As a P2P client, this means no GO seen in
 	 * scan results. The maximum idle time is specified in seconds with 0
 	 * indicating no time limit, i.e., the P2P group remains in active
-	 * state indefinitely until explicitly removed.
+	 * state indefinitely until explicitly removed. As a P2P client, the
+	 * maximum idle time of P2P_MAX_CLIENT_IDLE seconds is enforced, i.e.,
+	 * this parameter is mainly meant for GO use and for P2P client, it can
+	 * only be used to reduce the default timeout to smaller value.
 	 */
 	unsigned int p2p_group_idle;
 
@@ -426,6 +430,60 @@ struct wpa_config {
 	 * disassoc_low_ack - Disassocicate stations with massive packet loss
 	 */
 	int disassoc_low_ack;
+
+	/**
+	 * interworking - Whether Interworking (IEEE 802.11u) is enabled
+	 */
+	int interworking;
+
+	/**
+	 * access_network_type - Access Network Type
+	 *
+	 * When Interworking is enabled, scans will be limited to APs that
+	 * advertise the specified Access Network Type (0..15; with 15
+	 * indicating wildcard match).
+	 */
+	int access_network_type;
+
+	/**
+	 * hessid - Homogenous ESS identifier
+	 *
+	 * If this is set (any octet is non-zero), scans will be used to
+	 * request response only from BSSes belonging to the specified
+	 * Homogeneous ESS. This is used only if interworking is enabled.
+	 */
+	u8 hessid[ETH_ALEN];
+
+	/**
+	 * home_realm - Home Realm for Interworking
+	 */
+	char *home_realm;
+
+	/**
+	 * home_username - Username for Interworking network selection
+	 */
+	char *home_username;
+
+	/**
+	 * home_password - Password for Interworking network selection
+	 */
+	char *home_password;
+
+	/**
+	 * home_ca_cert - CA certificate for Interworking network selection
+	 */
+	char *home_ca_cert;
+
+	/**
+	 * home_imsi - IMSI in <MCC> | <MNC> | '-' | <MSIN> format
+	 */
+	char *home_imsi;
+
+	/**
+	 * home_milenage - Milenage parameters for SIM/USIM simulator in
+	 *	<Ki>:<OPc>:<SQN> format
+	 */
+	char *home_milenage;
 };
 
 
@@ -442,6 +500,8 @@ int wpa_config_remove_network(struct wpa_config *config, int id);
 void wpa_config_set_network_defaults(struct wpa_ssid *ssid);
 int wpa_config_set(struct wpa_ssid *ssid, const char *var, const char *value,
 		   int line);
+int wpa_config_set_quoted(struct wpa_ssid *ssid, const char *var,
+			  const char *value);
 char ** wpa_config_get_all(struct wpa_ssid *ssid, int get_keys);
 char * wpa_config_get(struct wpa_ssid *ssid, const char *var);
 char * wpa_config_get_no_key(struct wpa_ssid *ssid, const char *var);
