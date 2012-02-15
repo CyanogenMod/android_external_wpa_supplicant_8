@@ -37,7 +37,7 @@ INCLUDES = $(LOCAL_PATH)
 INCLUDES += $(LOCAL_PATH)/src
 INCLUDES += $(LOCAL_PATH)/src/utils
 INCLUDES += external/openssl/include
-INCLUDES += frameworks/base/cmds/keystore
+INCLUDES += system/security/keystore
 ifdef CONFIG_DRIVER_NL80211
 INCLUDES += external/libnl-headers
 endif
