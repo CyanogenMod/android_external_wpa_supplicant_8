@@ -36,6 +36,11 @@ L_CFLAGS += -DVERSION_STR_POSTFIX=\"-$(PLATFORM_VERSION)\"
 # Set Android log name
 L_CFLAGS += -DANDROID_LOG_NAME=\"wpa_supplicant\"
 
+# Disable roaming in wpa_supplicant
+ifdef CONFIG_NO_ROAMING
+L_CFLAGS += -DCONFIG_NO_ROAMING
+endif
+
 ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
 L_CFLAGS += -DANDROID_P2P
 endif
