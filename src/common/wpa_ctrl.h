@@ -2,14 +2,8 @@
  * wpa_supplicant/hostapd control interface library
  * Copyright (c) 2004-2006, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef WPA_CTRL_H
@@ -62,6 +56,10 @@ extern "C" {
 #define WPA_EVENT_BSS_ADDED "CTRL-EVENT-BSS-ADDED "
 /** A BSS entry was removed (followed by BSS entry id and BSSID) */
 #define WPA_EVENT_BSS_REMOVED "CTRL-EVENT-BSS-REMOVED "
+#ifdef ANDROID_P2P
+/** Notify the Userspace about the freq conflict */
+#define WPA_EVENT_FREQ_CONFLICT "CTRL-EVENT-FREQ-CONFLICT "
+#endif
 
 /** WPS overlap detected in PBC mode */
 #define WPS_EVENT_OVERLAP "WPS-OVERLAP-DETECTED "

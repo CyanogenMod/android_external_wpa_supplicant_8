@@ -576,7 +576,7 @@ DBusMessage * wpas_dbus_handler_remove_interface(DBusMessage *message,
 	wpa_s = get_iface_by_dbus_path(global, path);
 	if (wpa_s == NULL)
 		reply = wpas_dbus_error_iface_unknown(message);
-	else if (wpa_supplicant_remove_iface(global, wpa_s)) {
+	else if (wpa_supplicant_remove_iface(global, wpa_s, 0)) {
 		reply = wpas_dbus_error_unknown_error(
 			message, "wpa_supplicant couldn't remove this "
 			"interface.");
@@ -920,6 +920,16 @@ static int wpas_dbus_get_scan_ssids(DBusMessage *message, DBusMessageIter *var,
 		dbus_message_iter_recurse(&array_iter, &sub_array_iter);
 
 		dbus_message_iter_get_fixed_array(&sub_array_iter, &val, &len);
+
+		if (len > MAX_SSID_LEN) {
+			wpa_printf(MSG_DEBUG,
+				   "wpas_dbus_handler_scan[dbus]: "
+				   "SSID too long (len=%d max_len=%d)",
+				   len, MAX_SSID_LEN);
+			*reply = wpas_dbus_error_invalid_args(
+				message, "Invalid SSID: too long");
+			return -1;
+		}
 
 		if (len != 0) {
 			ssid = os_malloc(len);
@@ -2171,6 +2181,54 @@ dbus_bool_t wpas_dbus_setter_ap_scan(DBusMessageIter *iter, DBusError *error,
 
 
 /**
+ * wpas_dbus_getter_fast_reauth - Control fast
+ * reauthentication (TLS session resumption)
+ * @iter: Pointer to incoming dbus message iter
+ * @error: Location to store error on failure
+ * @user_data: Function specific data
+ * Returns: TRUE on success, FALSE on failure
+ *
+ * Getter function for "FastReauth" property.
+ */
+dbus_bool_t wpas_dbus_getter_fast_reauth(DBusMessageIter *iter,
+					 DBusError *error,
+					 void *user_data)
+{
+	struct wpa_supplicant *wpa_s = user_data;
+	dbus_bool_t fast_reauth = wpa_s->conf->fast_reauth ? TRUE : FALSE;
+
+	return wpas_dbus_simple_property_getter(iter, DBUS_TYPE_BOOLEAN,
+						&fast_reauth, error);
+}
+
+
+/**
+ * wpas_dbus_setter_fast_reauth - Control fast
+ * reauthentication (TLS session resumption)
+ * @iter: Pointer to incoming dbus message iter
+ * @error: Location to store error on failure
+ * @user_data: Function specific data
+ * Returns: TRUE on success, FALSE on failure
+ *
+ * Setter function for "FastReauth" property.
+ */
+dbus_bool_t wpas_dbus_setter_fast_reauth(DBusMessageIter *iter,
+				     DBusError *error,
+				     void *user_data)
+{
+	struct wpa_supplicant *wpa_s = user_data;
+	dbus_bool_t fast_reauth;
+
+	if (!wpas_dbus_simple_property_setter(iter, error, DBUS_TYPE_BOOLEAN,
+					      &fast_reauth))
+		return FALSE;
+
+	wpa_s->conf->fast_reauth = fast_reauth;
+	return TRUE;
+}
+
+
+/**
  * wpas_dbus_getter_bss_expire_age - Get BSS entry expiration age
  * @iter: Pointer to incoming dbus message iter
  * @error: Location to store error on failure
@@ -2809,13 +2867,15 @@ dbus_bool_t wpas_dbus_getter_bss_signal(DBusMessageIter *iter,
 {
 	struct bss_handler_args *args = user_data;
 	struct wpa_bss *res;
+	s16 level;
 
 	res = get_bss_helper(args, error, __func__);
 	if (!res)
 		return FALSE;
 
+	level = (s16) res->level;
 	return wpas_dbus_simple_property_getter(iter, DBUS_TYPE_INT16,
-						&res->level, error);
+						&level, error);
 }
 
 
@@ -2833,13 +2893,15 @@ dbus_bool_t wpas_dbus_getter_bss_frequency(DBusMessageIter *iter,
 {
 	struct bss_handler_args *args = user_data;
 	struct wpa_bss *res;
+	u16 freq;
 
 	res = get_bss_helper(args, error, __func__);
 	if (!res)
 		return FALSE;
 
+	freq = (u16) res->freq;
 	return wpas_dbus_simple_property_getter(iter, DBUS_TYPE_UINT16,
-						&res->freq, error);
+						&freq, error);
 }
 
 

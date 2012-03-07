@@ -2,14 +2,8 @@
  * hostapd / Station table
  * Copyright (c) 2002-2011, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -284,8 +278,14 @@ void ap_handle_timer(void *eloop_ctx, void *timeout_ctx)
 		if (inactive_sec == -1) {
 			wpa_msg(hapd->msg_ctx, MSG_DEBUG,
 				"Check inactivity: Could not "
-				"get station info rom kernel driver for "
+				"get station info from kernel driver for "
 				MACSTR, MAC2STR(sta->addr));
+			/*
+			 * The driver may not support this functionality.
+			 * Anyway, try again after the next inactivity timeout,
+			 * but do not disconnect the station now.
+			 */
+			next_time = hapd->conf->ap_max_inactivity;
 		} else if (inactive_sec < hapd->conf->ap_max_inactivity &&
 			   sta->flags & WLAN_STA_ASSOC) {
 			/* station activity detected; reset timeout state */
@@ -845,6 +845,8 @@ void ap_sta_disconnect(struct hostapd_data *hapd, struct sta_info *sta,
 	if (sta == NULL)
 		return;
 	ap_sta_set_authorized(hapd, sta, 0);
+	wpa_auth_sm_event(sta->wpa_sm, WPA_DEAUTH);
+	ieee802_1x_notify_port_enabled(sta->eapol_sm, 0);
 	sta->flags &= ~(WLAN_STA_AUTH | WLAN_STA_ASSOC);
 	eloop_cancel_timeout(ap_handle_timer, hapd, sta);
 	eloop_register_timeout(AP_MAX_INACTIVITY_AFTER_DEAUTH, 0,

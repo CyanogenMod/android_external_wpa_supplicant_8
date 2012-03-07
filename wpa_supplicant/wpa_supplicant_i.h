@@ -2,14 +2,8 @@
  * wpa_supplicant - Internal definitions
  * Copyright (c) 2003-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef WPA_SUPPLICANT_I_H
@@ -36,6 +30,7 @@ struct scan_info;
 struct wpa_bss;
 struct wpa_scan_results;
 struct hostapd_hw_modes;
+struct wpa_driver_associate_params;
 
 /*
  * Forward declarations of private structures used within the ctrl_iface
@@ -285,6 +280,9 @@ struct wpa_supplicant {
 	void *drv_priv; /* private data used by driver_ops */
 	void *global_drv_priv;
 
+	/* previous scan was wildcard when interleaving between
+	 * wildcard scans and specific SSID scan when max_ssids=1 */
+	int prev_scan_wildcard;
 	struct wpa_ssid *prev_scan_ssid; /* previously scanned SSID;
 					  * NULL = not yet initialized (start
 					  * with wildcard SSID)
@@ -482,7 +480,10 @@ struct wpa_supplicant {
 		P2P_GROUP_REMOVAL_UNKNOWN,
 		P2P_GROUP_REMOVAL_REQUESTED,
 		P2P_GROUP_REMOVAL_IDLE_TIMEOUT,
-		P2P_GROUP_REMOVAL_UNAVAILABLE
+		P2P_GROUP_REMOVAL_UNAVAILABLE,
+#ifdef ANDROID_P2P
+		P2P_GROUP_REMOVAL_FREQ_CONFLICT
+#endif
 	} removal_reason;
 
 	unsigned int p2p_cb_on_scan_complete:1;
@@ -495,6 +496,7 @@ struct wpa_supplicant {
 	struct wpa_ssid *connect_without_scan;
 
 	int after_wps;
+	int known_wps_freq;
 	unsigned int wps_freq;
 	int wps_fragment_size;
 	int auto_reconnect_disabled;
@@ -524,6 +526,10 @@ struct wpa_supplicant {
 
 
 /* wpa_supplicant.c */
+void wpa_supplicant_apply_ht_overrides(
+	struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
+	struct wpa_driver_associate_params *params);
+
 int wpa_set_wep_keys(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
 
 int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s);
@@ -593,6 +599,9 @@ void wpa_supplicant_update_config(struct wpa_supplicant *wpa_s);
 void wpa_supplicant_clear_status(struct wpa_supplicant *wpa_s);
 void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid);
 int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s);
+#ifdef ANDROID_P2P
+int wpas_is_interface_prioritized(struct wpa_supplicant *wpa_s);
+#endif
 
 /* events.c */
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);

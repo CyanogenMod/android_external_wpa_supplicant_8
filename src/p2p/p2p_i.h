@@ -2,14 +2,8 @@
  * P2P - Internal definitions for P2P module
  * Copyright (c) 2009-2010, Atheros Communications
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef P2P_I_H
@@ -381,6 +375,8 @@ struct p2p_data {
 	/* Requested device types for find/search */
 	unsigned int num_req_dev_types;
 	u8 *req_dev_types;
+	u8 *find_dev_id;
+	u8 find_dev_id_buf[ETH_ALEN];
 
 	struct p2p_group **groups;
 	size_t num_groups;
@@ -655,6 +651,8 @@ struct p2p_device * p2p_add_dev_from_go_neg_req(struct p2p_data *p2p,
 						struct p2p_message *msg);
 void p2p_add_dev_info(struct p2p_data *p2p, const u8 *addr,
 		      struct p2p_device *dev, struct p2p_message *msg);
+int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
+		   const u8 *ies, size_t ies_len);
 struct p2p_device * p2p_get_device(struct p2p_data *p2p, const u8 *addr);
 struct p2p_device * p2p_get_device_interface(struct p2p_data *p2p,
 					     const u8 *addr);

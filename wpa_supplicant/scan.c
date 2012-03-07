@@ -2,14 +2,8 @@
  * WPA Supplicant - Scanning
  * Copyright (c) 2003-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -71,10 +65,12 @@ static int wpas_wps_in_use(struct wpa_supplicant *wpa_s,
 	}
 
 #ifdef CONFIG_P2P
-	wpa_s->wps->dev.p2p = 1;
-	if (!wps) {
-		wps = 1;
-		*req_type = WPS_REQ_ENROLLEE_INFO;
+	if (!wpa_s->global->p2p_disabled && wpa_s->global->p2p) {
+		wpa_s->wps->dev.p2p = 1;
+		if (!wps) {
+			wps = 1;
+			*req_type = WPS_REQ_ENROLLEE_INFO;
+		}
 	}
 #endif /* CONFIG_P2P */
 
@@ -344,6 +340,16 @@ static void wpa_supplicant_optimize_freqs(
 		wpa_s->after_wps--;
 	}
 
+	if (params->freqs == NULL && wpa_s->known_wps_freq && wpa_s->wps_freq)
+	{
+		/* Optimize provisioning scan based on already known channel */
+		wpa_dbg(wpa_s, MSG_DEBUG, "WPS: Scan only frequency %u MHz",
+			wpa_s->wps_freq);
+		params->freqs = os_zalloc(2 * sizeof(int));
+		if (params->freqs)
+			params->freqs[0] = wpa_s->wps_freq;
+		wpa_s->known_wps_freq = 0; /* only do this once */
+	}
 #endif /* CONFIG_WPS */
 }
 
@@ -518,6 +524,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 
 	if (scan_req != 2 && wpa_s->conf->ap_scan == 2) {
 		wpa_s->connect_without_scan = NULL;
+		wpa_s->prev_scan_wildcard = 0;
 		wpa_supplicant_assoc_try(wpa_s, ssid);
 		return;
 #ifndef ANDROID
@@ -568,15 +575,32 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		int_array_sort_unique(params.freqs);
 	}
 
-	if (ssid) {
-		wpa_s->prev_scan_ssid = ssid;
-		if (max_ssids > 1) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Include wildcard SSID in "
-				"the scan request");
-			params.num_ssids++;
+	if (ssid && max_ssids == 1) {
+		/*
+		 * If the driver is limited to 1 SSID at a time interleave
+		 * wildcard SSID scans with specific SSID scans to avoid
+		 * waiting a long time for a wildcard scan.
+		 */
+		if (!wpa_s->prev_scan_wildcard) {
+			params.ssids[0].ssid = NULL;
+			params.ssids[0].ssid_len = 0;
+			wpa_s->prev_scan_wildcard = 1;
+			wpa_dbg(wpa_s, MSG_DEBUG, "Starting AP scan for "
+				"wildcard SSID (Interleave with specific)");
+		} else {
+			wpa_s->prev_scan_ssid = ssid;
+			wpa_s->prev_scan_wildcard = 0;
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Starting AP scan for specific SSID: %s",
+				wpa_ssid_txt(ssid->ssid, ssid->ssid_len));
 		}
-		wpa_dbg(wpa_s, MSG_DEBUG, "Starting AP scan for specific "
-			"SSID(s)");
+	} else if (ssid) {
+		/* max_ssids > 1 */
+
+		wpa_s->prev_scan_ssid = ssid;
+		wpa_dbg(wpa_s, MSG_DEBUG, "Include wildcard SSID in "
+			"the scan request");
+		params.num_ssids++;
 	} else {
 		wpa_s->prev_scan_ssid = WILDCARD_SSID_SCAN;
 		params.num_ssids++;
@@ -888,7 +912,9 @@ void wpa_supplicant_cancel_scan(struct wpa_supplicant *wpa_s)
 {
 	wpa_dbg(wpa_s, MSG_DEBUG, "Cancelling scan request");
 	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
+#ifdef ANDROID
 	wpa_supplicant_notify_scanning(wpa_s, 0);
+#endif
 }
 
 

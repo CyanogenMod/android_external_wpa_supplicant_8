@@ -2,14 +2,8 @@
  * WPA Supplicant / Configuration file structures
  * Copyright (c) 2003-2005, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef CONFIG_H
@@ -47,6 +41,9 @@
 #define CFG_CHANGED_VENDOR_EXTENSION BIT(10)
 #define CFG_CHANGED_P2P_LISTEN_CHANNEL BIT(11)
 #define CFG_CHANGED_P2P_OPER_CHANNEL BIT(12)
+#ifdef ANDROID_P2P
+#define CFG_CHANGED_IFACE_PRIORITY BIT(13)
+#endif
 
 /**
  * struct wpa_config - wpa_supplicant configuration data
@@ -484,6 +481,15 @@ struct wpa_config {
 	 *	<Ki>:<OPc>:<SQN> format
 	 */
 	char *home_milenage;
+#ifdef ANDROID_P2P
+	/**
+	 * prioritize - Prioritize an Interface
+	 * Interface name of the interface that needs to be proritized; Useful
+	 * for resolving conflicts in connection. up to 16 octets encoded in
+	 * UTF-8
+	 */
+	char *prioritize;
+#endif
 };
 
 

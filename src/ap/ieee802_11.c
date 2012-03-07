@@ -1,15 +1,9 @@
 /*
  * hostapd / IEEE 802.11 Management
- * Copyright (c) 2002-2011, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2012, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -1744,7 +1738,7 @@ void hostapd_tx_status(struct hostapd_data *hapd, const u8 *addr,
 				break;
 		}
 	}
-	if (sta == NULL)
+	if (sta == NULL || !(sta->flags & WLAN_STA_ASSOC))
 		return;
 	if (sta->flags & WLAN_STA_PENDING_POLL) {
 		wpa_printf(MSG_DEBUG, "STA " MACSTR " %s pending "
@@ -1774,8 +1768,12 @@ void hostapd_eapol_tx_status(struct hostapd_data *hapd, const u8 *dst,
 				break;
 		}
 	}
-	if (sta == NULL)
+	if (sta == NULL || !(sta->flags & WLAN_STA_ASSOC)) {
+		wpa_printf(MSG_DEBUG, "Ignore TX status for Data frame to STA "
+			   MACSTR " that is not currently associated",
+			   MAC2STR(dst));
 		return;
+	}
 
 	ieee802_1x_eapol_tx_status(hapd, sta, data, len, ack);
 }

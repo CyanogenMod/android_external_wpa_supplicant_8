@@ -2,14 +2,8 @@
  * WPA Supplicant / PC/SC smartcard interface for USIM, GSM SIM
  * Copyright (c) 2004-2006, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef PCSC_FUNCS_H
@@ -26,6 +20,7 @@
 #define SCARD_FILE_GSM_DF	0x7F20
 #define SCARD_FILE_UMTS_DF	0x7F50
 #define SCARD_FILE_GSM_EF_IMSI	0x6F07
+#define SCARD_FILE_GSM_EF_AD	0x6FAD
 #define SCARD_FILE_EF_DIR	0x2F00
 #define SCARD_FILE_EF_ICCID	0x2FE2
 #define SCARD_FILE_EF_CK	0x6FE1
@@ -47,6 +42,7 @@ void scard_deinit(struct scard_data *scard);
 
 int scard_set_pin(struct scard_data *scard, const char *pin);
 int scard_get_imsi(struct scard_data *scard, char *imsi, size_t *len);
+int scard_get_mnc_len(struct scard_data *scard);
 int scard_gsm_auth(struct scard_data *scard, const unsigned char *_rand,
 		   unsigned char *sres, unsigned char *kc);
 int scard_umts_auth(struct scard_data *scard, const unsigned char *_rand,

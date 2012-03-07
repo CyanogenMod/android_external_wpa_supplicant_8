@@ -2555,6 +2555,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_interface_properties[] = {
 	  wpas_dbus_getter_networks,
 	  NULL
 	},
+	{ "FastReauth", WPAS_DBUS_NEW_IFACE_INTERFACE, "b",
+	  wpas_dbus_getter_fast_reauth,
+	  wpas_dbus_setter_fast_reauth
+	},
 #ifdef CONFIG_WPS
 	{ "ProcessCredentials", WPAS_DBUS_NEW_IFACE_WPS, "b",
 	  wpas_dbus_getter_process_credentials,
@@ -2893,8 +2897,36 @@ int wpas_dbus_unregister_interface(struct wpa_supplicant *wpa_s)
 #ifdef CONFIG_P2P
 
 static const struct wpa_dbus_property_desc wpas_dbus_p2p_peer_properties[] = {
-	{ "Properties", WPAS_DBUS_NEW_IFACE_P2P_PEER, "a{sv}",
-	  wpas_dbus_getter_p2p_peer_properties,
+	{ "DeviceName", WPAS_DBUS_NEW_IFACE_P2P_PEER, "s",
+	  wpas_dbus_getter_p2p_peer_device_name,
+	  NULL
+	},
+	{ "PrimaryDeviceType", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",
+	  wpas_dbus_getter_p2p_peer_primary_device_type,
+	  NULL
+	},
+	{ "config_method", WPAS_DBUS_NEW_IFACE_P2P_PEER, "q",
+	  wpas_dbus_getter_p2p_peer_config_method,
+	  NULL
+	},
+	{ "level", WPAS_DBUS_NEW_IFACE_P2P_PEER, "i",
+	  wpas_dbus_getter_p2p_peer_level,
+	  NULL
+	},
+	{ "devicecapability", WPAS_DBUS_NEW_IFACE_P2P_PEER, "y",
+	  wpas_dbus_getter_p2p_peer_device_capability,
+	  NULL
+	},
+	{ "groupcapability", WPAS_DBUS_NEW_IFACE_P2P_PEER, "y",
+	  wpas_dbus_getter_p2p_peer_group_capability,
+	  NULL
+	},
+	{ "SecondaryDeviceTypes", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",
+	  wpas_dbus_getter_p2p_peer_secondary_device_types,
+	  NULL
+	},
+	{ "VendorExtension", WPAS_DBUS_NEW_IFACE_P2P_PEER, "as",
+	  wpas_dbus_getter_p2p_peer_vendor_extension,
 	  NULL
 	},
 	{ "IEs", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",

@@ -2,14 +2,8 @@
  * WPA Supplicant / PC/SC smartcard interface for USIM, GSM SIM
  * Copyright (c) 2004-2007, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  *
  * This file implements wrapper functions for accessing GSM SIM and 3GPP USIM
  * cards through PC/SC smartcard library. These functions are used to implement
@@ -1020,6 +1014,61 @@ int scard_get_imsi(struct scard_data *scard, char *imsi, size_t *len)
 	*len = imsilen;
 
 	return 0;
+}
+
+
+/**
+ * scard_get_mnc_len - Read length of MNC in the IMSI from SIM/USIM card
+ * @scard: Pointer to private data from scard_init()
+ * Returns: length (>0) on success, -1 if administrative data file cannot be
+ * selected, -2 if administrative data file selection returns invalid result
+ * code, -3 if parsing FSP template file fails (USIM only), -4 if length of
+ * the file is unexpected, -5 if reading file fails, -6 if MNC length is not
+ * in range (i.e. 2 or 3), -7 if MNC length is not available.
+ *
+ */
+int scard_get_mnc_len(struct scard_data *scard)
+{
+	unsigned char buf[100];
+	size_t blen;
+	int file_size;
+
+	wpa_printf(MSG_DEBUG, "SCARD: reading MNC len from (GSM) EF-AD");
+	blen = sizeof(buf);
+	if (scard_select_file(scard, SCARD_FILE_GSM_EF_AD, buf, &blen))
+		return -1;
+	if (blen < 4) {
+		wpa_printf(MSG_WARNING, "SCARD: too short (GSM) EF-AD "
+			   "header (len=%ld)", (long) blen);
+		return -2;
+	}
+
+	if (scard->sim_type == SCARD_GSM_SIM) {
+		file_size = (buf[2] << 8) | buf[3];
+	} else {
+		if (scard_parse_fsp_templ(buf, blen, NULL, &file_size))
+			return -3;
+	}
+	if (file_size == 3) {
+		wpa_printf(MSG_DEBUG, "SCARD: MNC length not available");
+		return -7;
+	}
+	if (file_size < 4 || file_size > (int) sizeof(buf)) {
+		wpa_printf(MSG_DEBUG, "SCARD: invalid file length=%ld",
+			   (long) file_size);
+		return -4;
+	}
+
+	if (scard_read_file(scard, buf, file_size))
+		return -5;
+	buf[3] = buf[3] & 0x0f; /* upper nibble reserved for future use  */
+	if (buf[3] < 2 || buf[3] > 3) {
+		wpa_printf(MSG_DEBUG, "SCARD: invalid MNC length=%ld",
+			   (long) buf[3]);
+		return -6;
+	}
+	wpa_printf(MSG_DEBUG, "SCARD: MNC length=%ld", (long) buf[3]);
+	return buf[3];
 }
 
 

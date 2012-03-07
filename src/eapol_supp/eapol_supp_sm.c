@@ -2,14 +2,8 @@
  * EAPOL supplicant state machines
  * Copyright (c) 2004-2008, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -268,6 +262,15 @@ SM_STATE(SUPP_PAE, DISCONNECTED)
 
 	sm->unicast_key_received = FALSE;
 	sm->broadcast_key_received = FALSE;
+
+	/*
+	 * IEEE Std 802.1X-2004 does not clear heldWhile here, but doing so
+	 * allows the timer tick to be stopped more quickly when the port is
+	 * not enabled. Since this variable is used only within HELD state,
+	 * clearing it on initialization does not change actual state machine
+	 * behavior.
+	 */
+	sm->heldWhile = 0;
 }
 
 
@@ -535,6 +538,15 @@ SM_STATE(SUPP_BE, INITIALIZE)
 	SM_ENTRY(SUPP_BE, INITIALIZE);
 	eapol_sm_abortSupp(sm);
 	sm->suppAbort = FALSE;
+
+	/*
+	 * IEEE Std 802.1X-2004 does not clear authWhile here, but doing so
+	 * allows the timer tick to be stopped more quickly when the port is
+	 * not enabled. Since this variable is used only within RECEIVE state,
+	 * clearing it on initialization does not change actual state machine
+	 * behavior.
+	 */
+	sm->authWhile = 0;
 }
 
 

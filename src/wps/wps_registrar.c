@@ -2,14 +2,8 @@
  * Wi-Fi Protected Setup - Registrar
  * Copyright (c) 2008-2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -804,10 +798,11 @@ static const u8 * wps_registrar_get_pin(struct wps_registrar *reg,
 		/* Check for wildcard UUIDs since none of the UUID-specific
 		 * PINs matched */
 		dl_list_for_each(pin, &reg->pins, struct wps_uuid_pin, list) {
-			if (pin->wildcard_uuid == 1) {
+			if (pin->wildcard_uuid == 1 ||
+			    pin->wildcard_uuid == 2) {
 				wpa_printf(MSG_DEBUG, "WPS: Found a wildcard "
 					   "PIN. Assigned it for this UUID-E");
-				pin->wildcard_uuid = 2;
+				pin->wildcard_uuid++;
 				os_memcpy(pin->uuid, uuid, WPS_UUID_LEN);
 				found = pin;
 				break;
@@ -849,7 +844,7 @@ int wps_registrar_unlock_pin(struct wps_registrar *reg, const u8 *uuid)
 
 	dl_list_for_each(pin, &reg->pins, struct wps_uuid_pin, list) {
 		if (os_memcmp(pin->uuid, uuid, WPS_UUID_LEN) == 0) {
-			if (pin->wildcard_uuid == 2) {
+			if (pin->wildcard_uuid == 3) {
 				wpa_printf(MSG_DEBUG, "WPS: Invalidating used "
 					   "wildcard PIN");
 				return wps_registrar_invalidate_pin(reg, uuid);
@@ -962,6 +957,7 @@ int wps_registrar_wps_cancel(struct wps_registrar *reg)
 	if (reg->pbc) {
 		wpa_printf(MSG_DEBUG, "WPS: PBC is set - cancelling it");
 		wps_registrar_pbc_timeout(reg, NULL);
+		eloop_cancel_timeout(wps_registrar_pbc_timeout, reg, NULL);
 		return 1;
 	} else if (reg->selected_registrar) {
 		/* PIN Method */
@@ -2102,6 +2098,13 @@ static int wps_process_e_snonce2(struct wps_data *wps, const u8 *e_snonce2)
 		   "half of the device password");
 	wps->wps_pin_revealed = 0;
 	wps_registrar_unlock_pin(wps->wps->registrar, wps->uuid_e);
+
+	/*
+	 * In case wildcard PIN is used and WPS handshake succeeds in the first
+	 * attempt, wps_registrar_unlock_pin() would not free the PIN, so make
+	 * sure the PIN gets invalidated here.
+	 */
+	wps_registrar_invalidate_pin(wps->wps->registrar, wps->uuid_e);
 
 	return 0;
 }

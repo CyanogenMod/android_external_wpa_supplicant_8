@@ -2,14 +2,8 @@
  * Interworking (IEEE 802.11u)
  * Copyright (c) 2011, Qualcomm Atheros
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -726,8 +720,8 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 				goto fail;
 			break;
 		case NAI_REALM_INNER_NON_EAP_MSCHAP:
-			if (wpa_config_set(ssid, "phase2", "\"auth=CHAP\"", 0)
-			    < 0)
+			if (wpa_config_set(ssid, "phase2", "\"auth=MSCHAP\"",
+					   0) < 0)
 				goto fail;
 			break;
 		case NAI_REALM_INNER_NON_EAP_MSCHAPV2:

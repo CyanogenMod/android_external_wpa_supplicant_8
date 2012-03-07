@@ -2,14 +2,8 @@
  * Wi-Fi Protected Setup - Enrollee
  * Copyright (c) 2008, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -257,20 +251,47 @@ static int wps_build_cred_ssid(struct wps_data *wps, struct wpabuf *msg)
 
 static int wps_build_cred_auth_type(struct wps_data *wps, struct wpabuf *msg)
 {
-	wpa_printf(MSG_DEBUG, "WPS:  * Authentication Type");
+	u16 auth_type = wps->wps->auth_types;
+
+	/* Select the best authentication type */
+	if (auth_type & WPS_AUTH_WPA2PSK)
+		auth_type = WPS_AUTH_WPA2PSK;
+	else if (auth_type & WPS_AUTH_WPAPSK)
+		auth_type = WPS_AUTH_WPAPSK;
+	else if (auth_type & WPS_AUTH_OPEN)
+		auth_type = WPS_AUTH_OPEN;
+	else if (auth_type & WPS_AUTH_SHARED)
+		auth_type = WPS_AUTH_SHARED;
+
+	wpa_printf(MSG_DEBUG, "WPS:  * Authentication Type (0x%x)", auth_type);
 	wpabuf_put_be16(msg, ATTR_AUTH_TYPE);
 	wpabuf_put_be16(msg, 2);
-	wpabuf_put_be16(msg, wps->wps->auth_types);
+	wpabuf_put_be16(msg, auth_type);
 	return 0;
 }
 
 
 static int wps_build_cred_encr_type(struct wps_data *wps, struct wpabuf *msg)
 {
-	wpa_printf(MSG_DEBUG, "WPS:  * Encryption Type");
+	u16 encr_type = wps->wps->encr_types;
+
+	/* Select the best encryption type */
+	if (wps->wps->auth_types & (WPS_AUTH_WPA2PSK | WPS_AUTH_WPAPSK)) {
+		if (encr_type & WPS_ENCR_AES)
+			encr_type = WPS_ENCR_AES;
+		else if (encr_type & WPS_ENCR_TKIP)
+			encr_type = WPS_ENCR_TKIP;
+	} else {
+		if (encr_type & WPS_ENCR_WEP)
+			encr_type = WPS_ENCR_WEP;
+		else if (encr_type & WPS_ENCR_NONE)
+			encr_type = WPS_ENCR_NONE;
+	}
+
+	wpa_printf(MSG_DEBUG, "WPS:  * Encryption Type (0x%x)", encr_type);
 	wpabuf_put_be16(msg, ATTR_ENCR_TYPE);
 	wpabuf_put_be16(msg, 2);
-	wpabuf_put_be16(msg, wps->wps->encr_types);
+	wpabuf_put_be16(msg, encr_type);
 	return 0;
 }
 
@@ -1036,6 +1057,10 @@ static enum wps_process_res wps_process_m6(struct wps_data *wps,
 		return WPS_CONTINUE;
 	}
 	wpabuf_free(decrypted);
+
+	if (wps->wps->ap)
+		wps->wps->event_cb(wps->wps->cb_ctx, WPS_EV_AP_PIN_SUCCESS,
+				   NULL);
 
 	wps->state = SEND_M7;
 	return WPS_CONTINUE;

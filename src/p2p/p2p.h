@@ -2,14 +2,8 @@
  * Wi-Fi Direct - P2P module
  * Copyright (c) 2009-2010, Atheros Communications
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef P2P_H
@@ -359,6 +353,7 @@ struct p2p_config {
 	 * @freq: Specific frequency (MHz) to scan or 0 for no restriction
 	 * @num_req_dev_types: Number of requested device types
 	 * @req_dev_types: Array containing requested device types
+	 * @dev_id: Device ID to search for or %NULL to find all devices
 	 * Returns: 0 on success, -1 on failure
 	 *
 	 * This callback function is used to request a P2P scan or search
@@ -382,7 +377,7 @@ struct p2p_config {
 	 */
 	int (*p2p_scan)(void *ctx, enum p2p_scan_type type, int freq,
 			unsigned int num_req_dev_types,
-			const u8 *req_dev_types);
+			const u8 *req_dev_types, const u8 *dev_id);
 
 	/**
 	 * send_probe_resp - Transmit a Probe Response frame
@@ -705,6 +700,15 @@ struct p2p_config {
 	 * local failure in transmitting the Invitation Request.
 	 */
 	void (*invitation_result)(void *ctx, int status, const u8 *bssid);
+
+	/**
+	 * go_connected - Check whether we are connected to a GO
+	 * @ctx: Callback context from cb_ctx
+	 * @dev_addr: P2P Device Address of a GO
+	 * Returns: 1 if we are connected as a P2P client to the specified GO
+	 * or 0 if not.
+	 */
+	int (*go_connected)(void *ctx, const u8 *dev_addr);
 };
 
 
@@ -809,11 +813,13 @@ enum p2p_discovery_type {
  * @req_dev_types: Requested device types array, must be an array
  *	containing num_req_dev_types * WPS_DEV_TYPE_LEN bytes; %NULL if no
  *	requested device types.
+ * @dev_id: Device ID to search for or %NULL to find all devices
  * Returns: 0 on success, -1 on failure
  */
 int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 	     enum p2p_discovery_type type,
-	     unsigned int num_req_dev_types, const u8 *req_dev_types);
+	     unsigned int num_req_dev_types, const u8 *req_dev_types,
+	     const u8 *dev_id);
 
 /**
  * p2p_stop_find - Stop P2P Find (Device Discovery)
@@ -1324,6 +1330,11 @@ int p2p_group_notif_noa(struct p2p_group *group, const u8 *noa,
 int p2p_group_match_dev_type(struct p2p_group *group, struct wpabuf *wps);
 
 /**
+ * p2p_group_match_dev_id - Match P2P Device Address in group with requested device id
+ */
+int p2p_group_match_dev_id(struct p2p_group *group, struct wpabuf *p2p);
+
+/**
  * p2p_group_go_discover - Send GO Discoverability Request to a group client
  * @group: P2P group context from p2p_group_init()
  * Returns: 0 on success (frame scheduled); -1 if client was not found
@@ -1360,6 +1371,15 @@ int p2p_ie_text(struct wpabuf *p2p_ie, char *buf, char *end);
 int p2p_scan_result_text(const u8 *ies, size_t ies_len, char *buf, char *end);
 
 /**
+ * p2p_parse_dev_addr - Parse P2P Device Address from P2P IE(s)
+ * @ies: Information elements from scan results
+ * @ies_len: ies buffer length in octets
+ * @dev_addr: Buffer for returning P2P Device Address
+ * Returns: 0 on success or -1 if P2P Device Address could not be parsed
+ */
+int p2p_parse_dev_addr(const u8 *ies, size_t ies_len, u8 *dev_addr);
+
+/**
  * p2p_assoc_req_ie - Build P2P IE for (Re)Association Request frame
  * @p2p: P2P module context from p2p_init()
  * @bssid: BSSID
@@ -1376,8 +1396,9 @@ int p2p_assoc_req_ie(struct p2p_data *p2p, const u8 *bssid, u8 *buf,
  * p2p_scan_ie - Build P2P IE for Probe Request
  * @p2p: P2P module context from p2p_init()
  * @ies: Buffer for writing P2P IE
+ * @dev_id: Device ID to search for or %NULL for any
  */
-void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies);
+void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies, const u8 *dev_id);
 
 /**
  * p2p_scan_ie_buf_len - Get maximum buffer length needed for p2p_scan_ie
@@ -1485,9 +1506,6 @@ void p2p_set_cross_connect(struct p2p_data *p2p, int enabled);
 
 int p2p_get_oper_freq(struct p2p_data *p2p, const u8 *iface_addr);
 
-int p2p_add_device(struct p2p_data *p2p, const u8 *addr, int freq, int level,
-		   const u8 *ies, size_t ies_len);
-
 /**
  * p2p_set_intra_bss_dist - Set intra BSS distribution
  * @p2p: P2P module context from p2p_init()
@@ -1541,6 +1559,14 @@ const u8 * p2p_iterate_group_members(struct p2p_group *group, void **next);
  * found
  */
 const u8 * p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr);
+
+/**
+ * p2p_group_is_client_connected - Check whether a specific client is connected
+ * @group: P2P group context from p2p_group_init()
+ * @addr: P2P Device Address of the client
+ * Returns: 1 if client is connected or 0 if not
+ */
+int p2p_group_is_client_connected(struct p2p_group *group, const u8 *dev_addr);
 
 /**
  * p2p_get_peer_found - Get P2P peer info structure of a found peer

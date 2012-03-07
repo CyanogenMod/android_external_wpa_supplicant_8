@@ -131,7 +131,8 @@ DBusMessage * wpas_dbus_handler_p2p_find(DBusMessage *message,
 		wpa_dbus_dict_entry_clear(&entry);
 	}
 
-	wpas_p2p_find(wpa_s, timeout, type, num_req_dev_types, req_dev_types);
+	wpas_p2p_find(wpa_s, timeout, type, num_req_dev_types, req_dev_types,
+		      NULL);
 	os_free(req_dev_types);
 	return reply;
 
@@ -1171,14 +1172,13 @@ dbus_bool_t wpas_dbus_getter_p2p_peergo(DBusMessageIter *iter,
  * Peer object properties accessor methods
  */
 
-dbus_bool_t wpas_dbus_getter_p2p_peer_properties(DBusMessageIter *iter,
-	DBusError *error, void *user_data)
+dbus_bool_t wpas_dbus_getter_p2p_peer_device_name(DBusMessageIter *iter,
+						  DBusError *error,
+						  void *user_data)
 {
 	struct peer_handler_args *peer_args = user_data;
-	DBusMessageIter variant_iter, dict_iter;
-	const struct p2p_peer_info *info = NULL;
-	const struct wpabuf *vendor_extension[P2P_MAX_WPS_VENDOR_EXT];
-	int i, num;
+	const struct p2p_peer_info *info;
+	char *tmp;
 
 	if (!wpa_dbus_p2p_check_enabled(peer_args->wpa_s, NULL, NULL, error))
 		return FALSE;
@@ -1187,66 +1187,210 @@ dbus_bool_t wpas_dbus_getter_p2p_peer_properties(DBusMessageIter *iter,
 	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
 				  peer_args->p2p_device_addr, 0);
 	if (info == NULL) {
-		dbus_set_error(error, DBUS_ERROR_FAILED, "failed to find peer");
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
 		return FALSE;
 	}
 
-	if (!dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT,
-					      "a{sv}", &variant_iter) ||
-	    !wpa_dbus_dict_open_write(&variant_iter, &dict_iter))
-		goto err_no_mem;
+	tmp = os_strdup(info->device_name);
+	if (!tmp) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
 
-	/* Fill out the dictionary */
-	if (!wpa_dbus_dict_append_string(&dict_iter, "DeviceName",
-					 info->device_name))
-		goto err_no_mem;
-	if (!wpa_dbus_dict_append_byte_array(&dict_iter, "PrimaryDeviceType",
-					     (char *)info->pri_dev_type,
-					     WPS_DEV_TYPE_LEN))
-		goto err_no_mem;
-	if (!wpa_dbus_dict_append_uint16(&dict_iter, "config_method",
-					 info->config_methods))
-		goto err_no_mem;
-	if (!wpa_dbus_dict_append_int32(&dict_iter, "level",
-					info->level))
-		goto err_no_mem;
-	if (!wpa_dbus_dict_append_byte(&dict_iter, "devicecapability",
-				       info->dev_capab))
-		goto err_no_mem;
-	if (!wpa_dbus_dict_append_byte(&dict_iter, "groupcapability",
-				       info->group_capab))
-		goto err_no_mem;
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_STRING, &tmp,
+					      error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		os_free(tmp);
+		return FALSE;
+	}
+
+	os_free(tmp);
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_primary_device_type(
+	DBusMessageIter *iter, DBusError *error, void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_BYTE,
+						    (char *)
+						    info->pri_dev_type,
+						    WPS_DEV_TYPE_LEN, error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_config_method(DBusMessageIter *iter,
+                                                    DBusError *error,
+                                                    void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_UINT16,
+					      &info->config_methods, error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_level(DBusMessageIter *iter,
+                                            DBusError *error,
+                                            void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_INT32,
+					      &info->level, error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_device_capability(DBusMessageIter *iter,
+                                                        DBusError *error,
+                                                        void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_BYTE,
+					      &info->dev_capab, error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_group_capability(DBusMessageIter *iter,
+						       DBusError *error,
+						       void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_BYTE,
+					      &info->group_capab, error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_secondary_device_types(
+	DBusMessageIter *iter, DBusError *error, void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
 
 	if (info->wps_sec_dev_type_list_len) {
 		const u8 *sec_dev_type_list = info->wps_sec_dev_type_list;
-		int num_sec_dev_types =
-			info->wps_sec_dev_type_list_len / WPS_DEV_TYPE_LEN;
-		DBusMessageIter iter_secdev_dict_entry, iter_secdev_dict_val,
-				iter_secdev_dict_array;
+		int num_sec_dev_types = info->wps_sec_dev_type_list_len;
 
-		if (num_sec_dev_types) {
-			if (!wpa_dbus_dict_begin_array(&dict_iter,
-						"SecondaryDeviceTypes",
-						DBUS_TYPE_ARRAY_AS_STRING
-						DBUS_TYPE_BYTE_AS_STRING,
-						&iter_secdev_dict_entry,
-						&iter_secdev_dict_val,
-						&iter_secdev_dict_array))
-				goto err_no_mem;
-			for (i = 0; i < num_sec_dev_types; i++) {
-				wpa_dbus_dict_bin_array_add_element(
-						&iter_secdev_dict_array,
-						sec_dev_type_list,
-						WPS_DEV_TYPE_LEN);
-				sec_dev_type_list += WPS_DEV_TYPE_LEN;
-			}
+		if (!wpas_dbus_simple_array_property_getter(iter,
+							    DBUS_TYPE_BYTE,
+							    sec_dev_type_list,
+							    num_sec_dev_types,
+							    error))
+			goto err_no_mem;
+		else
+			return TRUE;
+	}
 
-			if (!wpa_dbus_dict_end_array(&dict_iter,
-						&iter_secdev_dict_entry,
-						&iter_secdev_dict_val,
-						&iter_secdev_dict_array))
-				goto err_no_mem;
-		}
+	if (!wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_BYTE, NULL,
+						    0, error))
+		goto err_no_mem;
+
+	return TRUE;
+
+err_no_mem:
+	dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+	return FALSE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_vendor_extension(DBusMessageIter *iter,
+						       DBusError *error,
+						       void *user_data)
+{
+	const struct wpabuf *vendor_extension[P2P_MAX_WPS_VENDOR_EXT];
+	int i, num;
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
 	}
 
 	/* Add WPS vendor extensions attribute */
@@ -1257,19 +1401,14 @@ dbus_bool_t wpas_dbus_getter_p2p_peer_properties(DBusMessageIter *iter,
 		num++;
 	}
 
-	if (!wpa_dbus_dict_append_wpabuf_array(&dict_iter, "VendorExtension",
-					       vendor_extension, num))
-		goto err_no_mem;
-
-	if (!wpa_dbus_dict_close_write(&variant_iter, &dict_iter) ||
-	    !dbus_message_iter_close_container(iter, &variant_iter))
-		goto err_no_mem;
+	if (!wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_STRING,
+						    vendor_extension, num,
+						    error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
 
 	return TRUE;
-
-err_no_mem:
-	dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
-	return FALSE;
 }
 
 
@@ -1663,14 +1802,41 @@ dbus_bool_t wpas_dbus_getter_p2p_group_properties(DBusMessageIter *iter,
 {
 	struct wpa_supplicant *wpa_s = user_data;
 	DBusMessageIter variant_iter, dict_iter;
-	struct hostapd_data *hapd = wpa_s->ap_iface->bss[0];
+	struct hostapd_data *hapd = NULL;
 	const struct wpabuf *vendor_ext[MAX_WPS_VENDOR_EXTENSIONS];
 	int num_vendor_ext = 0;
 	int i;
+	u8 role = wpas_get_p2p_role(wpa_s);
+	u16 op_freq = 0;
+	u8 *p_bssid = NULL;
+	char *role_name = NULL;
 
-	if (!hapd) {
-		dbus_set_error_const(error, DBUS_ERROR_FAILED,
-				     "internal error");
+	if (!wpa_s->current_ssid)
+		return FALSE;
+
+	/* Check current role and adjust information accordingly */
+	switch (role) {
+	case WPAS_P2P_ROLE_CLIENT:
+		/* go_params is only valid for a client */
+		if (wpa_s->go_params) {
+			op_freq = wpa_s->go_params->freq;
+			p_bssid = wpa_s->current_ssid->bssid;
+			role_name = "client";
+		} else
+			return FALSE;
+		break;
+	case WPAS_P2P_ROLE_GO:
+		/* ap_iface is only valid for a GO */
+		if (wpa_s->ap_iface) {
+			hapd = wpa_s->ap_iface->bss[0];
+			p_bssid = hapd->own_addr;
+			op_freq = wpa_s->ap_iface->freq;
+			role_name = "GO";
+		} else
+			return FALSE;
+		break;
+	default:
+		/* Error condition; this should NEVER occur */
 		return FALSE;
 	}
 
@@ -1678,18 +1844,49 @@ dbus_bool_t wpas_dbus_getter_p2p_group_properties(DBusMessageIter *iter,
 					      "a{sv}", &variant_iter) ||
 	    !wpa_dbus_dict_open_write(&variant_iter, &dict_iter))
 		goto err_no_mem;
-
-	/* Parse WPS Vendor Extensions sent in Beacon/Probe Response */
-	for (i = 0; i < MAX_WPS_VENDOR_EXTENSIONS; i++) {
-		if (hapd->conf->wps_vendor_ext[i] == NULL)
-			continue;
-		vendor_ext[num_vendor_ext++] = hapd->conf->wps_vendor_ext[i];
-	}
-
-	if (!wpa_dbus_dict_append_wpabuf_array(&dict_iter,
-					       "WPSVendorExtensions",
-					       vendor_ext, num_vendor_ext))
+	/* Provide the SSID */
+	if (!wpa_dbus_dict_append_byte_array(
+		    &dict_iter, "SSID",
+		    (const char *) wpa_s->current_ssid->ssid,
+		    wpa_s->current_ssid->ssid_len))
 		goto err_no_mem;
+	/* Provide the BSSID */
+	if (p_bssid &&
+	    !wpa_dbus_dict_append_byte_array(&dict_iter, "BSSID",
+					     (const char *) p_bssid, ETH_ALEN))
+		goto err_no_mem;
+	/* Provide the role within the group */
+	if (role_name &&
+	    !wpa_dbus_dict_append_string(&dict_iter, "Role", role_name))
+		goto err_no_mem;
+	/* Provide the operational frequency */
+	if (!wpa_dbus_dict_append_uint16(&dict_iter, "Frequency", op_freq))
+		goto err_no_mem;
+
+	/* Additional information for group owners */
+	if (role == WPAS_P2P_ROLE_GO) {
+		/* Provide the passphrase */
+		if (!wpa_dbus_dict_append_string(&dict_iter, "Passphrase",
+					wpa_s->current_ssid->passphrase))
+			goto err_no_mem;
+		/* Parse WPS Vendor Extensions sent in Beacon/Probe Response */
+		for (i = 0; hapd && i < MAX_WPS_VENDOR_EXTENSIONS; i++) {
+			if (hapd->conf->wps_vendor_ext[i] == NULL)
+				continue;
+			vendor_ext[num_vendor_ext++] =
+				hapd->conf->wps_vendor_ext[i];
+		}
+		if (!wpa_dbus_dict_append_wpabuf_array(&dict_iter,
+					"WPSVendorExtensions",
+					vendor_ext, num_vendor_ext))
+			goto err_no_mem;
+	} else {
+		/* If not a GO, provide the PSK */
+		if (!wpa_dbus_dict_append_byte_array(
+			    &dict_iter, "PSK",
+			    (const char *) wpa_s->current_ssid->psk, 32))
+			goto err_no_mem;
+	}
 
 	if (!wpa_dbus_dict_close_write(&variant_iter, &dict_iter) ||
 	    !dbus_message_iter_close_container(iter, &variant_iter))
@@ -1711,13 +1908,13 @@ dbus_bool_t wpas_dbus_setter_p2p_group_properties(DBusMessageIter *iter,
 	DBusMessageIter variant_iter, iter_dict;
 	struct wpa_dbus_dict_entry entry = { .type = DBUS_TYPE_STRING };
 	unsigned int i;
-	struct hostapd_data *hapd = wpa_s->ap_iface->bss[0];
+	struct hostapd_data *hapd = NULL;
 
-	if (!hapd) {
-		dbus_set_error_const(error, DBUS_ERROR_FAILED,
-				     "internal error");
+	if (wpas_get_p2p_role(wpa_s) == WPAS_P2P_ROLE_GO &&
+	    wpa_s->ap_iface != NULL)
+		hapd = wpa_s->ap_iface->bss[0];
+	else
 		return FALSE;
-	}
 
 	dbus_message_iter_recurse(iter, &variant_iter);
 	if (!wpa_dbus_dict_open_read(&variant_iter, &iter_dict, error))

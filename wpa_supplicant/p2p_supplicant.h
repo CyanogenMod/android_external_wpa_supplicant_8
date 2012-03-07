@@ -2,14 +2,8 @@
  * wpa_supplicant - P2P
  * Copyright (c) 2009-2010, Atheros Communications
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef P2P_SUPPLICANT_H
@@ -32,7 +26,7 @@ void wpas_p2p_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 void wpas_p2p_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 					  unsigned int freq);
 #ifdef ANDROID_P2P
-void wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s,
+int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s,
                                           int freq);
 #endif
 int wpas_p2p_group_remove(struct wpa_supplicant *wpa_s, const char *ifname);
@@ -56,7 +50,8 @@ int wpas_p2p_scan_result_text(const u8 *ies, size_t ies_len, char *buf,
 enum p2p_discovery_type;
 int wpas_p2p_find(struct wpa_supplicant *wpa_s, unsigned int timeout,
 		  enum p2p_discovery_type type,
-		  unsigned int num_req_dev_types, const u8 *req_dev_types);
+		  unsigned int num_req_dev_types, const u8 *req_dev_types,
+		  const u8 *dev_id);
 void wpas_p2p_stop_find(struct wpa_supplicant *wpa_s);
 int wpas_p2p_listen(struct wpa_supplicant *wpa_s, unsigned int timeout);
 int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
@@ -136,7 +131,8 @@ int wpas_p2p_in_progress(struct wpa_supplicant *wpa_s);
 void wpas_p2p_network_removed(struct wpa_supplicant *wpa_s,
 			      struct wpa_ssid *ssid);
 struct wpa_ssid * wpas_p2p_get_persistent(struct wpa_supplicant *wpa_s,
-					  const u8 *addr);
+					  const u8 *addr, const u8 *ssid,
+					  size_t ssid_len);
 void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 				       const u8 *addr);
 

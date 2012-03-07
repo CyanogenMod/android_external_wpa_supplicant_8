@@ -2,14 +2,8 @@
  * WPA Supplicant / main() function for UNIX like OSes and MinGW
  * Copyright (c) 2003-2007, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -69,7 +63,7 @@ static void usage(void)
 #endif /* CONFIG_DEBUG_SYSLOG */
 	printf("  -t = include timestamp in debug messages\n"
 	       "  -h = show this help text\n"
-	       "  -L = show license (GPL and BSD)\n"
+	       "  -L = show license (BSD)\n"
 	       "  -o = override driver parameter for new interfaces\n"
 	       "  -O = override ctrl_interface parameter for new interfaces\n"
 	       "  -p = driver parameters\n"

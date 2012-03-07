@@ -2,14 +2,8 @@
  * EAP peer state machines (RFC 4137)
  * Copyright (c) 2004-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  *
  * This file implements the Peer State Machine as defined in RFC 4137. The used
  * states and state transitions match mostly with the RFC. However, there are
@@ -878,6 +872,69 @@ static void eap_sm_processIdentity(struct eap_sm *sm, const struct wpabuf *req)
 
 
 #ifdef PCSC_FUNCS
+
+/*
+ * Rules for figuring out MNC length based on IMSI for SIM cards that do not
+ * include MNC length field.
+ */
+static int mnc_len_from_imsi(const char *imsi)
+{
+	char mcc_str[4];
+	unsigned int mcc;
+
+	os_memcpy(mcc_str, imsi, 3);
+	mcc_str[3] = '\0';
+	mcc = atoi(mcc_str);
+
+	if (mcc == 244)
+		return 2; /* Networks in Finland use 2-digit MNC */
+
+	return -1;
+}
+
+
+static int eap_sm_append_3gpp_realm(struct eap_sm *sm, char *imsi,
+				    size_t max_len, size_t *imsi_len)
+{
+	int mnc_len;
+	char *pos, mnc[4];
+
+	if (*imsi_len + 36 > max_len) {
+		wpa_printf(MSG_WARNING, "No room for realm in IMSI buffer");
+		return -1;
+	}
+
+	/* MNC (2 or 3 digits) */
+	mnc_len = scard_get_mnc_len(sm->scard_ctx);
+	if (mnc_len < 0)
+		mnc_len = mnc_len_from_imsi(imsi);
+	if (mnc_len < 0) {
+		wpa_printf(MSG_INFO, "Failed to get MNC length from (U)SIM "
+			   "assuming 3");
+		mnc_len = 3;
+	}
+
+	if (mnc_len == 2) {
+		mnc[0] = '0';
+		mnc[1] = imsi[3];
+		mnc[2] = imsi[4];
+	} else if (mnc_len == 3) {
+		mnc[0] = imsi[3];
+		mnc[1] = imsi[4];
+		mnc[2] = imsi[5];
+	}
+	mnc[3] = '\0';
+
+	pos = imsi + *imsi_len;
+	pos += os_snprintf(pos, imsi + max_len - pos,
+			   "@wlan.mnc%s.mcc%c%c%c.3gppnetwork.org",
+			   mnc, imsi[0], imsi[1], imsi[2]);
+	*imsi_len = pos - imsi;
+
+	return 0;
+}
+
+
 static int eap_sm_imsi_identity(struct eap_sm *sm,
 				struct eap_peer_config *conf)
 {
@@ -894,6 +951,17 @@ static int eap_sm_imsi_identity(struct eap_sm *sm,
 	}
 
 	wpa_hexdump_ascii(MSG_DEBUG, "IMSI", (u8 *) imsi, imsi_len);
+
+	if (imsi_len < 7) {
+		wpa_printf(MSG_WARNING, "Too short IMSI for SIM identity");
+		return -1;
+	}
+
+	if (eap_sm_append_3gpp_realm(sm, imsi, sizeof(imsi), &imsi_len) < 0) {
+		wpa_printf(MSG_WARNING, "Could not add realm to SIM identity");
+		return -1;
+	}
+	wpa_hexdump_ascii(MSG_DEBUG, "IMSI + realm", (u8 *) imsi, imsi_len);
 
 	for (i = 0; m && (m[i].vendor != EAP_VENDOR_IETF ||
 			  m[i].method != EAP_TYPE_NONE); i++) {
@@ -918,6 +986,7 @@ static int eap_sm_imsi_identity(struct eap_sm *sm,
 
 	return 0;
 }
+
 #endif /* PCSC_FUNCS */
 
 

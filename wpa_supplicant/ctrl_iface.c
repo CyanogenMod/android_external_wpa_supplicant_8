@@ -2,14 +2,8 @@
  * WPA Supplicant / Control interface (shared code for all backends)
  * Copyright (c) 2004-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -2209,6 +2203,7 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 	int ret;
 	char *pos, *end;
 	const u8 *ie, *ie2;
+	struct os_time now;
 
 	if (os_strcmp(cmd, "FIRST") == 0)
 		bss = dl_list_first(&wpa_s->bss, struct wpa_bss, list);
@@ -2226,6 +2221,13 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 				bss = dl_list_entry(next, struct wpa_bss,
 						    list_id);
 		}
+#ifdef CONFIG_P2P
+	} else if (os_strncmp(cmd, "p2p_dev_addr=", 13) == 0) {
+		if (hwaddr_aton(cmd + 13, bssid) == 0)
+			bss = wpa_bss_get_p2p_dev_addr(wpa_s, bssid);
+		else
+			bss = NULL;
+#endif /* CONFIG_P2P */
 	} else if (hwaddr_aton(cmd, bssid) == 0)
 		bss = wpa_bss_get_bssid(wpa_s, bssid);
 	else {
@@ -2244,6 +2246,7 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 	if (bss == NULL)
 		return 0;
 
+	os_get_time(&now);
 	pos = buf;
 	end = buf + buflen;
 	ret = os_snprintf(pos, end - pos,
@@ -2256,11 +2259,13 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 			  "noise=%d\n"
 			  "level=%d\n"
 			  "tsf=%016llu\n"
+			  "age=%d\n"
 			  "ie=",
 			  bss->id,
 			  MAC2STR(bss->bssid), bss->freq, bss->beacon_int,
 			  bss->caps, bss->qual, bss->noise, bss->level,
-			  (unsigned long long) bss->tsf);
+			  (unsigned long long) bss->tsf,
+			  (int) (now.sec - bss->last_update.sec));
 	if (ret < 0 || ret >= end - pos)
 		return pos - buf;
 	pos += ret;
@@ -2467,13 +2472,23 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 {
 	unsigned int timeout = atoi(cmd);
 	enum p2p_discovery_type type = P2P_FIND_START_WITH_FULL;
+	u8 dev_id[ETH_ALEN], *_dev_id = NULL;
+	char *pos;
 
 	if (os_strstr(cmd, "type=social"))
 		type = P2P_FIND_ONLY_SOCIAL;
 	else if (os_strstr(cmd, "type=progressive"))
 		type = P2P_FIND_PROGRESSIVE;
 
-	return wpas_p2p_find(wpa_s, timeout, type, 0, NULL);
+	pos = os_strstr(cmd, "dev_id=");
+	if (pos) {
+		pos += 7;
+		if (hwaddr_aton(pos, dev_id))
+			return -1;
+		_dev_id = dev_id;
+	}
+
+	return wpas_p2p_find(wpa_s, timeout, type, 0, NULL, _dev_id);
 }
 
 
@@ -3059,7 +3074,7 @@ static int p2p_ctrl_peer(struct wpa_supplicant *wpa_s, char *cmd,
 		return pos - buf;
 	pos += res;
 
-	ssid = wpas_p2p_get_persistent(wpa_s, info->p2p_device_addr);
+	ssid = wpas_p2p_get_persistent(wpa_s, info->p2p_device_addr, NULL, 0);
 	if (ssid) {
 		res = os_snprintf(pos, end - pos, "persistent=%d\n", ssid->id);
 		if (res < 0 || res >= end - pos)
@@ -3794,11 +3809,11 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "SIGNAL_POLL", 11) == 0) {
 		reply_len = wpa_supplicant_signal_poll(wpa_s, reply,
 						       reply_size);
-#ifdef ANDROID							   
+#ifdef ANDROID
 	} else if (os_strncmp(buf, "DRIVER ", 7) == 0) {
 		reply_len = wpa_supplicant_driver_cmd(wpa_s, buf + 7, reply,
 						      reply_size);
-#endif							  
+#endif
 	} else if (os_strcmp(buf, "REAUTHENTICATE") == 0) {
 		eapol_sm_request_reauth(wpa_s->eapol);
 	} else {

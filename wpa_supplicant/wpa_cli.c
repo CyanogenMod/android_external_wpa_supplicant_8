@@ -2,14 +2,8 @@
  * WPA Supplicant - command line interface for wpa_supplicant daemon
  * Copyright (c) 2004-2011, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -33,32 +27,15 @@
 
 static const char *wpa_cli_version =
 "wpa_cli v" VERSION_STR "\n"
-"Copyright (c) 2004-2011, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi> and contributors";
 
 
 static const char *wpa_cli_license =
-"This program is free software. You can distribute it and/or modify it\n"
-"under the terms of the GNU General Public License version 2.\n"
-"\n"
-"Alternatively, this software may be distributed under the terms of the\n"
-"BSD license. See README and COPYING for more details.\n";
+"This software may be distributed under the terms of the BSD license.\n"
+"See README for more details.\n";
 
 static const char *wpa_cli_full_license =
-"This program is free software; you can redistribute it and/or modify\n"
-"it under the terms of the GNU General Public License version 2 as\n"
-"published by the Free Software Foundation.\n"
-"\n"
-"This program is distributed in the hope that it will be useful,\n"
-"but WITHOUT ANY WARRANTY; without even the implied warranty of\n"
-"MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n"
-"GNU General Public License for more details.\n"
-"\n"
-"You should have received a copy of the GNU General Public License\n"
-"along with this program; if not, write to the Free Software\n"
-"Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA\n"
-"\n"
-"Alternatively, this software may be distributed under the terms of the\n"
-"BSD license.\n"
+"This software may be distributed under the terms of the BSD license.\n"
 "\n"
 "Redistribution and use in source and binary forms, with or without\n"
 "modification, are permitted provided that the following conditions are\n"
@@ -418,7 +395,11 @@ static void wpa_cli_msg_cb(char *msg, size_t len)
 
 static int _wpa_ctrl_command(struct wpa_ctrl *ctrl, char *cmd, int print)
 {
+#ifdef ANDROID
 	char buf[4096];
+#else		
+	char buf[2048];
+#endif	
 	size_t len;
 	int ret;
 
@@ -1930,7 +1911,10 @@ static int wpa_cli_cmd_p2p_find(struct wpa_ctrl *ctrl, int argc, char *argv[])
 	if (argc == 0)
 		return wpa_ctrl_command(ctrl, "P2P_FIND");
 
-	if (argc > 1)
+	if (argc > 2)
+		res = os_snprintf(cmd, sizeof(cmd), "P2P_FIND %s %s %s",
+				  argv[0], argv[1], argv[2]);
+	else if (argc > 1)
 		res = os_snprintf(cmd, sizeof(cmd), "P2P_FIND %s %s",
 				  argv[0], argv[1]);
 	else
@@ -2676,7 +2660,7 @@ static int wpa_cli_cmd_reauthenticate(struct wpa_ctrl *ctrl, int argc,
 	return wpa_ctrl_command(ctrl, "REAUTHENTICATE");
 }
 
-
+#ifdef ANDROID
 static int wpa_cli_cmd_driver(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	char cmd[256];
@@ -2695,7 +2679,7 @@ static int wpa_cli_cmd_driver(struct wpa_ctrl *ctrl, int argc, char *argv[])
 	printf("%s: %s\n", __func__, cmd);
 	return wpa_ctrl_command(ctrl, cmd);
 }
-
+#endif
 
 enum wpa_cli_cmd_flags {
 	cli_cmd_flag_none		= 0x00,
@@ -3041,9 +3025,11 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "= get signal parameters" },
 	{ "reauthenticate", wpa_cli_cmd_reauthenticate, cli_cmd_flag_none,
 	  "= trigger IEEE 802.1X/EAPOL reauthentication" },
+#ifdef ANDROID
 	{ "driver", wpa_cli_cmd_driver,
 	  cli_cmd_flag_none,
 	  "<command> = driver private commands" },
+#endif
 	{ NULL, NULL, cli_cmd_flag_none, NULL }
 };
 
@@ -3646,7 +3632,11 @@ static char * wpa_cli_get_default_ifname(void)
 #endif /* CONFIG_CTRL_IFACE_UNIX */
 
 #ifdef CONFIG_CTRL_IFACE_NAMED_PIPE
+#ifdef ANDROID
 	char buf[4096], *pos;
+#else
+	char buf[2048], *pos;
+#endif
 	size_t len;
 	struct wpa_ctrl *ctrl;
 	int ret;

@@ -2,14 +2,8 @@
  * hostapd / Configuration definitions and helpers functions
  * Copyright (c) 2003-2009, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef HOSTAPD_CONFIG_H
@@ -308,6 +302,9 @@ struct hostapd_bss_config {
 	u8 uuid[16];
 	char *wps_pin_requests;
 	char *device_name;
+#ifdef ANDROID_P2P
+	char *prioritize;
+#endif
 	char *manufacturer;
 	char *model_name;
 	char *model_number;

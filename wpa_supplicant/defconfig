@@ -165,6 +165,9 @@ CONFIG_EAP_OTP=y
 # EAP-PSK (experimental; this is _not_ needed for WPA-PSK)
 #CONFIG_EAP_PSK=y
 
+# EAP-pwd (secure authentication using only a password)
+#CONFIG_EAP_PWD=y
+
 # EAP-PAX
 #CONFIG_EAP_PAX=y
 
@@ -216,6 +219,9 @@ CONFIG_SMARTCARD=y
 # PC/SC interface for smartcards (USIM, GSM SIM)
 # Enable this if EAP-SIM or EAP-AKA is included
 #CONFIG_PCSC=y
+
+# Support HT overrides (disable HT/HT40, mask MCS rates, etc.)
+#CONFIG_HT_OVERRIDES=y
 
 # Development testing
 #CONFIG_EAPOL_TEST=y
@@ -299,6 +305,9 @@ CONFIG_BACKEND=file
 # eloop_win = Windows events and WaitForMultipleObject() loop
 # eloop_none = Empty template
 #CONFIG_ELOOP=eloop
+
+# Should we use poll instead of select? Select is used by default.
+#CONFIG_ELOOP_POLL=y
 
 # Select layer 2 packet implementation
 # linux = Linux packet socket (default)

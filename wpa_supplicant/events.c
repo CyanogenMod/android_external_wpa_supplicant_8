@@ -1,15 +1,9 @@
 /*
  * WPA Supplicant - Driver event processing
- * Copyright (c) 2003-2011, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -122,10 +116,15 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 		return;
 
 	wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
+#ifdef ANDROID
 	wpa_s->conf->ap_scan = DEFAULT_AP_SCAN;
+#endif
 	bssid_changed = !is_zero_ether_addr(wpa_s->bssid);
 	os_memset(wpa_s->bssid, 0, ETH_ALEN);
 	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
+#ifdef CONFIG_P2P
+	os_memset(wpa_s->go_dev_addr, 0, ETH_ALEN);
+#endif /* CONFIG_P2P */
 	wpa_s->current_bss = NULL;
 	wpa_s->assoc_freq = 0;
 #ifdef CONFIG_IEEE80211R
@@ -955,7 +954,7 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 	if (!current_bss)
 		return 1; /* current BSS not seen in scan results */
 
-#ifndef CONFIG_NO_ROAMING
+#ifdef CONFIG_NO_ROAMING
 	wpa_dbg(wpa_s, MSG_DEBUG, "Considering within-ESS reassociation");
 	wpa_dbg(wpa_s, MSG_DEBUG, "Current BSS: " MACSTR " level=%d",
 		MAC2STR(current_bss->bssid), current_bss->level);
@@ -994,6 +993,7 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 	return 0;
 #endif
 }
+
 
 /* Return < 0 if no scan results could be fetched. */
 #ifdef ANDROID_P2P
@@ -1385,6 +1385,45 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 }
 
 
+static struct wpa_bss * wpa_supplicant_get_new_bss(
+	struct wpa_supplicant *wpa_s, const u8 *bssid)
+{
+	struct wpa_bss *bss = NULL;
+	struct wpa_ssid *ssid = wpa_s->current_ssid;
+
+	if (ssid->ssid_len > 0)
+		bss = wpa_bss_get(wpa_s, bssid, ssid->ssid, ssid->ssid_len);
+	if (!bss)
+		bss = wpa_bss_get_bssid(wpa_s, bssid);
+
+	return bss;
+}
+
+
+static int wpa_supplicant_assoc_update_ie(struct wpa_supplicant *wpa_s)
+{
+	const u8 *bss_wpa = NULL, *bss_rsn = NULL;
+
+	if (!wpa_s->current_bss || !wpa_s->current_ssid)
+		return -1;
+
+	if (!wpa_key_mgmt_wpa_any(wpa_s->current_ssid->key_mgmt))
+		return 0;
+
+	bss_wpa = wpa_bss_get_vendor_ie(wpa_s->current_bss,
+					WPA_IE_VENDOR_TYPE);
+	bss_rsn = wpa_bss_get_ie(wpa_s->current_bss, WLAN_EID_RSN);
+
+	if (wpa_sm_set_ap_wpa_ie(wpa_s->wpa, bss_wpa,
+				 bss_wpa ? 2 + bss_wpa[1] : 0) ||
+	    wpa_sm_set_ap_rsn_ie(wpa_s->wpa, bss_rsn,
+				 bss_rsn ? 2 + bss_rsn[1] : 0))
+		return -1;
+
+	return 0;
+}
+
+
 static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 				       union wpa_event_data *data)
 {
@@ -1430,14 +1469,24 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 		}
 		if (wpa_s->current_ssid) {
 			struct wpa_bss *bss = NULL;
-			struct wpa_ssid *ssid = wpa_s->current_ssid;
-			if (ssid->ssid_len > 0)
-				bss = wpa_bss_get(wpa_s, bssid,
-						  ssid->ssid, ssid->ssid_len);
-			if (!bss)
-				bss = wpa_bss_get_bssid(wpa_s, bssid);
+
+			bss = wpa_supplicant_get_new_bss(wpa_s, bssid);
+			if (!bss) {
+				wpa_supplicant_update_scan_results(wpa_s);
+
+				/* Get the BSS from the new scan results */
+				bss = wpa_supplicant_get_new_bss(wpa_s, bssid);
+			}
+
 			if (bss)
 				wpa_s->current_bss = bss;
+		}
+
+		if (wpa_s->conf->ap_scan == 1 &&
+		    wpa_s->drv_flags & WPA_DRIVER_FLAGS_BSS_SELECTION) {
+			if (wpa_supplicant_assoc_update_ie(wpa_s) < 0)
+				wpa_msg(wpa_s, MSG_WARNING,
+					"WPA/RSN IEs not updated");
 		}
 	}
 
@@ -1572,7 +1621,8 @@ static int disconnect_reason_recoverable(u16 reason_code)
 
 
 static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
-					  u16 reason_code)
+					  u16 reason_code,
+					  int locally_generated)
 {
 	const u8 *bssid;
 	int authenticating;
@@ -1608,6 +1658,7 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 		if (wpa_s->wpa_state == WPA_COMPLETED &&
 		    wpa_s->current_ssid &&
 		    wpa_s->current_ssid->mode == WPAS_MODE_INFRA &&
+		    !locally_generated &&
 		    disconnect_reason_recoverable(reason_code)) {
 			/*
 			 * It looks like the AP has dropped association with
@@ -1618,7 +1669,11 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 			fast_reconnect = wpa_s->current_bss;
 			fast_reconnect_ssid = wpa_s->current_ssid;
 		} else if (wpa_s->wpa_state >= WPA_ASSOCIATING)
+#ifdef ANDROID
 			wpa_supplicant_req_scan(wpa_s, 0, 500000);
+#else
+			wpa_supplicant_req_scan(wpa_s, 0, 100000);
+#endif
 		else
 			wpa_dbg(wpa_s, MSG_DEBUG, "Do not request new "
 				"immediate scan");
@@ -1627,6 +1682,7 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 			"try to re-connect");
 		wpa_s->reassociate = 0;
 		wpa_s->disconnected = 1;
+		wpa_supplicant_cancel_sched_scan(wpa_s);
 	}
 	bssid = wpa_s->bssid;
 	if (is_zero_ether_addr(bssid))
@@ -2020,6 +2076,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	u16 reason_code = 0;
+	int locally_generated = 0;
 
 	if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED &&
 	    event != EVENT_INTERFACE_ENABLED &&
@@ -2061,8 +2118,10 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 	case EVENT_DISASSOC:
 		wpa_dbg(wpa_s, MSG_DEBUG, "Disassociation notification");
 		if (data) {
-			wpa_dbg(wpa_s, MSG_DEBUG, " * reason %u",
-				data->disassoc_info.reason_code);
+			wpa_dbg(wpa_s, MSG_DEBUG, " * reason %u%s",
+				data->disassoc_info.reason_code,
+				data->disassoc_info.locally_generated ?
+				" (locally generated)" : "");
 			if (data->disassoc_info.addr)
 				wpa_dbg(wpa_s, MSG_DEBUG, " * address " MACSTR,
 					MAC2STR(data->disassoc_info.addr));
@@ -2081,6 +2140,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #endif /* CONFIG_AP */
 		if (data) {
 			reason_code = data->disassoc_info.reason_code;
+			locally_generated =
+				data->disassoc_info.locally_generated;
 			wpa_hexdump(MSG_DEBUG, "Disassociation frame IE(s)",
 				    data->disassoc_info.ie,
 				    data->disassoc_info.ie_len);
@@ -2100,8 +2161,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				"Deauthentication notification");
 			if (data) {
 				reason_code = data->deauth_info.reason_code;
-				wpa_dbg(wpa_s, MSG_DEBUG, " * reason %u",
-					data->deauth_info.reason_code);
+				locally_generated =
+					data->deauth_info.locally_generated;
+				wpa_dbg(wpa_s, MSG_DEBUG, " * reason %u%s",
+					data->deauth_info.reason_code,
+					data->deauth_info.locally_generated ?
+					" (locally generated)" : "");
 				if (data->deauth_info.addr) {
 					wpa_dbg(wpa_s, MSG_DEBUG, " * address "
 						MACSTR,
@@ -2133,7 +2198,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			break;
 		}
 #endif /* CONFIG_AP */
-		wpa_supplicant_event_disassoc(wpa_s, reason_code);
+		wpa_supplicant_event_disassoc(wpa_s, reason_code,
+					      locally_generated);
 		break;
 	case EVENT_MICHAEL_MIC_FAILURE:
 		wpa_supplicant_event_michael_mic_failure(wpa_s, data);

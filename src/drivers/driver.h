@@ -1,15 +1,9 @@
 /*
  * Driver interface definition
- * Copyright (c) 2003-2010, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  *
  * This file defines a driver interface used by both %wpa_supplicant and
  * hostapd. The first part of the file defines data structures used in various
@@ -516,6 +510,26 @@ struct wpa_driver_associate_params {
 	 * STA mode: bits 0..3 UAPSD enabled for VO,VI,BK,BE
 	 */
 	int uapsd;
+
+	/**
+	 * fixed_bssid - Whether to force this BSSID in IBSS mode
+	 * 1 = Fix this BSSID and prevent merges.
+	 * 0 = Do not fix BSSID.
+	 */
+	int fixed_bssid;
+
+	/**
+	 * disable_ht - Disable HT (IEEE 802.11n) for this connection
+	 */
+	int disable_ht;
+
+	/**
+	 * HT Capabilities over-rides. Only bits set in the mask will be used,
+	 * and not all values are used by the kernel anyway. Currently, MCS,
+	 * MPDU and MSDU fields are used.
+	 */
+	const u8 *htcaps;       /* struct ieee80211_ht_capabilities * */
+	const u8 *htcaps_mask;  /* struct ieee80211_ht_capabilities * */
 };
 
 enum hide_ssid {
@@ -2496,7 +2510,7 @@ struct wpa_driver_ops {
 			    const u8 *addr, int qos);
 #ifdef ANDROID_P2P
 	/**
-	 * go_switch_channel - Announce channel switch and migrate the GO to a
+	 * switch_channel - Announce channel switch and migrate the GO to a
 	 * given frequency.
 	 * @priv: Private driver interface data
 	 * @freq: frequency in MHz
@@ -2505,7 +2519,7 @@ struct wpa_driver_ops {
 	 * This function is used to move the GO to the legacy STA channel to avoid
 	 * frequency conflict in single channel concurrency.
 	 */
-	int (*go_switch_channel)(void *priv, unsigned int freq);
+	int (*switch_channel)(void *priv, unsigned int freq);
 #endif
 };
 
@@ -3052,6 +3066,11 @@ union wpa_event_data {
 		 * ie_len - Length of ie buffer in octets
 		 */
 		size_t ie_len;
+
+		/**
+		 * locally_generated - Whether the frame was locally generated
+		 */
+		int locally_generated;
 	} disassoc_info;
 
 	/**
@@ -3078,6 +3097,11 @@ union wpa_event_data {
 		 * ie_len - Length of ie buffer in octets
 		 */
 		size_t ie_len;
+
+		/**
+		 * locally_generated - Whether the frame was locally generated
+		 */
+		int locally_generated;
 	} deauth_info;
 
 	/**

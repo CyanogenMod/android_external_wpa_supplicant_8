@@ -2,14 +2,8 @@
  * WPA Supplicant / Configuration parser and common functions
  * Copyright (c) 2003-2008, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -1631,6 +1625,14 @@ static const struct parse_data ssid_fields[] = {
 #ifdef CONFIG_P2P
 	{ FUNC(p2p_client_list) },
 #endif /* CONFIG_P2P */
+#ifdef CONFIG_HT_OVERRIDES
+	{ INT_RANGE(disable_ht, 0, 1) },
+	{ INT_RANGE(disable_ht40, -1, 1) },
+	{ INT_RANGE(disable_max_amsdu, -1, 1) },
+	{ INT_RANGE(ampdu_factor, -1, 3) },
+	{ INT_RANGE(ampdu_density, -1, 7) },
+	{ STR(ht_mcs) },
+#endif /* CONFIG_HT_OVERRIDES */
 };
 
 #ifdef WPA_UNICODE_SSID
@@ -1807,6 +1809,9 @@ void wpa_config_free_ssid(struct wpa_ssid *ssid)
 	os_free(ssid->freq_list);
 	os_free(ssid->bgscan);
 	os_free(ssid->p2p_client_list);
+#ifdef CONFIG_HT_OVERRIDES
+	os_free(ssid->ht_mcs);
+#endif /* CONFIG_HT_OVERRIDES */
 	os_free(ssid);
 }
 
@@ -1862,6 +1867,9 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->home_ca_cert);
 	os_free(config->home_imsi);
 	os_free(config->home_milenage);
+#ifdef ANDROID_P2P
+	os_free(config->prioritize);
+#endif
 	os_free(config);
 }
 
@@ -1994,6 +2002,13 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->eap_workaround = DEFAULT_EAP_WORKAROUND;
 	ssid->eap.fragment_size = DEFAULT_FRAGMENT_SIZE;
 #endif /* IEEE8021X_EAPOL */
+#ifdef CONFIG_HT_OVERRIDES
+	ssid->disable_ht = DEFAULT_DISABLE_HT;
+	ssid->disable_ht40 = DEFAULT_DISABLE_HT40;
+	ssid->disable_max_amsdu = DEFAULT_DISABLE_MAX_AMSDU;
+	ssid->ampdu_factor = DEFAULT_AMPDU_FACTOR;
+	ssid->ampdu_density = DEFAULT_AMPDU_DENSITY;
+#endif /* CONFIG_HT_OVERRIDES */
 }
 
 
@@ -2611,6 +2626,9 @@ static const struct global_parse_data global_fields[] = {
 	{ INT_RANGE(p2p_intra_bss, 0, 1), CFG_CHANGED_P2P_INTRA_BSS },
 	{ INT(p2p_group_idle), 0 },
 #endif /* CONFIG_P2P */
+#ifdef ANDROID_P2P
+	{ STR_RANGE(prioritize, 0, 32), CFG_CHANGED_IFACE_PRIORITY },
+#endif
 	{ FUNC(country), CFG_CHANGED_COUNTRY },
 	{ INT(bss_max_count), 0 },
 	{ INT(bss_expiration_age), 0 },

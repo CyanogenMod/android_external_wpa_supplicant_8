@@ -2,14 +2,8 @@
  * BSS table
  * Copyright (c) 2009-2010, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -538,6 +532,23 @@ struct wpa_bss * wpa_bss_get_bssid(struct wpa_supplicant *wpa_s,
 	}
 	return NULL;
 }
+
+
+#ifdef CONFIG_P2P
+struct wpa_bss * wpa_bss_get_p2p_dev_addr(struct wpa_supplicant *wpa_s,
+					  const u8 *dev_addr)
+{
+	struct wpa_bss *bss;
+	dl_list_for_each_reverse(bss, &wpa_s->bss, struct wpa_bss, list) {
+		u8 addr[ETH_ALEN];
+		if (p2p_parse_dev_addr((const u8 *) (bss + 1), bss->ie_len,
+				       addr) == 0 &&
+		    os_memcmp(addr, dev_addr, ETH_ALEN) == 0)
+			return bss;
+	}
+	return NULL;
+}
+#endif /* CONFIG_P2P */
 
 
 struct wpa_bss * wpa_bss_get_id(struct wpa_supplicant *wpa_s, unsigned int id)
