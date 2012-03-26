@@ -238,13 +238,18 @@ wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
 				int interval)
 {
 	int ret;
-
+#ifndef ANDROID_P2P
 	wpa_supplicant_notify_scanning(wpa_s, 1);
+#endif
 	ret = wpa_drv_sched_scan(wpa_s, params, interval * 1000);
 	if (ret)
 		wpa_supplicant_notify_scanning(wpa_s, 0);
-	else
+	else {
 		wpa_s->sched_scanning = 1;
+#ifdef ANDROID_P2P
+		wpa_supplicant_notify_scanning(wpa_s, 1);
+#endif
+	}
 
 	return ret;
 }
@@ -782,9 +787,11 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 					sizeof(struct wpa_driver_scan_filter));
 
 	prev_state = wpa_s->wpa_state;
+#ifndef ANDROID_P2P
 	if (wpa_s->wpa_state == WPA_DISCONNECTED ||
 	    wpa_s->wpa_state == WPA_INACTIVE)
 		wpa_supplicant_set_state(wpa_s, WPA_SCANNING);
+#endif
 
 	/* Find the starting point from which to continue scanning */
 	ssid = wpa_s->conf->ssid;
@@ -939,7 +946,12 @@ void wpa_supplicant_notify_scanning(struct wpa_supplicant *wpa_s,
 				    int scanning)
 {
 	if (wpa_s->scanning != scanning) {
+#ifdef ANDROID_P2P
+		if(!wpa_s->sched_scanning)
+			wpa_s->scanning = scanning;
+#else
 		wpa_s->scanning = scanning;
+#endif
 		wpas_notify_scanning(wpa_s);
 	}
 }

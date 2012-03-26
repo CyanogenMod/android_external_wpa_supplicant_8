@@ -219,6 +219,9 @@ struct wpa_global {
 	struct dl_list p2p_srv_bonjour; /* struct p2p_srv_bonjour */
 	struct dl_list p2p_srv_upnp; /* struct p2p_srv_upnp */
 	int p2p_disabled;
+#ifdef ANDROID_P2P
+	char conc_priority[5]; /* "sta" or "p2p" */
+#endif
 	int cross_connection;
 };
 
@@ -600,7 +603,7 @@ void wpa_supplicant_clear_status(struct wpa_supplicant *wpa_s);
 void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid);
 int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s);
 #ifdef ANDROID_P2P
-int wpas_is_interface_prioritized(struct wpa_supplicant *wpa_s);
+int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s);
 #endif
 
 /* events.c */

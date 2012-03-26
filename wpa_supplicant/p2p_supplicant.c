@@ -257,6 +257,11 @@ static void wpas_p2p_group_delete(struct wpa_supplicant *wpa_s)
 	case P2P_GROUP_REMOVAL_UNAVAILABLE:
 		reason = " reason=UNAVAILABLE";
 		break;
+#ifdef ANDROID_P2P
+	case P2P_GROUP_REMOVAL_FREQ_CONFLICT:
+		reason = " reason=FREQ_CONFLICT";
+		break;
+#endif
 	default:
 		reason = "";
 		break;
@@ -805,9 +810,6 @@ static void wpas_p2p_clone_config(struct wpa_supplicant *dst,
 
 #define C(n) if (s->n) d->n = os_strdup(s->n)
 	C(device_name);
-#ifdef ANDROID_P2P
-	C(prioritize);
-#endif
 	C(manufacturer);
 	C(model_name);
 	C(model_number);
@@ -4458,10 +4460,13 @@ int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s, int freq)
 			/* If GO cannot be moved or if the conflicting interface is a
 			 * P2P Client, remove the interface depending up on the connection
 			 * priority */
-			if(wpas_is_interface_prioritized(wpa_s)) {
-				/* Newly requested connection has priority over existing 
+			if(!wpas_is_p2p_prioritized(wpa_s)) {
+				/* STA connection has priority over existing 
 				 * P2P connection. So remove the interface */
-				wpas_p2p_disconnect(iface);
+				wpa_printf(MSG_DEBUG, "P2P: Removing P2P connection due to Single channel"
+						"concurrent mode frequency conflict");
+				iface->removal_reason = P2P_GROUP_REMOVAL_FREQ_CONFLICT;
+				wpas_p2p_group_delete(iface);
 			} else {
 				/* Existing connection has the priority. Disable the newly
                  * selected network and let the application know about it.

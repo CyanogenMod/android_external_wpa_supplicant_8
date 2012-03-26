@@ -1420,6 +1420,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_FREQ_CONFLICT
 				" id=%d", ssid->id);
 			os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
+			return;
 		}
 	}
 #endif
@@ -3123,15 +3124,14 @@ int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s)
 }
 
 #ifdef ANDROID_P2P
-int wpas_is_interface_prioritized(struct wpa_supplicant *wpa_s)
+int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s)
 {
-	if(wpa_s->conf->prioritize &&
-		!os_strncmp(wpa_s->conf->prioritize, wpa_s->ifname, sizeof(wpa_s->ifname))) {
-		/* The given interface is prioritized */
-		wpa_printf(MSG_DEBUG, "Given interface (%s) is prioritized" , wpa_s->ifname);
+	if(os_strncmp(wpa_s->global->conc_priority, "p2p", 3) == 0)
 		return 1;
-	}
-	wpa_printf(MSG_DEBUG, "Given interface (%s) is not prioritized" , wpa_s->ifname);
-	return 0;
+	else if(os_strncmp(wpa_s->global->conc_priority, "sta", 3) == 0)
+		return 0;
+
+	/* IF conc_priority is not set, return -1 */
+	return -1;
 }
 #endif
