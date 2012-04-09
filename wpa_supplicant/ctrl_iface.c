@@ -2193,19 +2193,252 @@ static char * anqp_add_hex(char *pos, char *end, const char *title,
 #endif /* CONFIG_INTERWORKING */
 
 
+static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
+			  unsigned long mask, char *buf, size_t buflen)
+{
+	size_t i;
+	int ret;
+	char *pos, *end;
+	const u8 *ie, *ie2;
+	struct os_time now;
+
+	os_get_time(&now);
+	pos = buf;
+	end = buf + buflen;
+
+	if (mask & WPA_BSS_MASK_ID) {
+		ret = os_snprintf(pos, end - pos, "id=%u\n", bss->id);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_BSSID) {
+		ret = os_snprintf(pos, end - pos, "bssid=" MACSTR "\n",
+				  MAC2STR(bss->bssid));
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_FREQ) {
+		ret = os_snprintf(pos, end - pos, "freq=%d\n", bss->freq);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_BEACON_INT) {
+		ret = os_snprintf(pos, end - pos, "beacon_int=%d\n",
+				  bss->beacon_int);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_CAPABILITIES) {
+		ret = os_snprintf(pos, end - pos, "capabilities=0x%04x\n",
+				  bss->caps);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_QUAL) {
+		ret = os_snprintf(pos, end - pos, "qual=%d\n", bss->qual);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_NOISE) {
+		ret = os_snprintf(pos, end - pos, "noise=%d\n", bss->noise);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_LEVEL) {
+		ret = os_snprintf(pos, end - pos, "level=%d\n", bss->level);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_TSF) {
+		ret = os_snprintf(pos, end - pos, "tsf=%016llu\n",
+				  (unsigned long long) bss->tsf);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_AGE) {
+		ret = os_snprintf(pos, end - pos, "age=%d\n",
+				  (int) (now.sec - bss->last_update.sec));
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_IE) {
+		ret = os_snprintf(pos, end - pos, "ie=");
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+
+		ie = (const u8 *) (bss + 1);
+		for (i = 0; i < bss->ie_len; i++) {
+			ret = os_snprintf(pos, end - pos, "%02x", *ie++);
+			if (ret < 0 || ret >= end - pos)
+				return 0;
+			pos += ret;
+		}
+
+		ret = os_snprintf(pos, end - pos, "\n");
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_FLAGS) {
+		ret = os_snprintf(pos, end - pos, "flags=");
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+
+		ie = wpa_bss_get_vendor_ie(bss, WPA_IE_VENDOR_TYPE);
+		if (ie)
+			pos = wpa_supplicant_ie_txt(pos, end, "WPA", ie,
+						    2 + ie[1]);
+		ie2 = wpa_bss_get_ie(bss, WLAN_EID_RSN);
+		if (ie2)
+			pos = wpa_supplicant_ie_txt(pos, end, "WPA2", ie2,
+						    2 + ie2[1]);
+		pos = wpa_supplicant_wps_ie_txt(wpa_s, pos, end, bss);
+		if (!ie && !ie2 && bss->caps & IEEE80211_CAP_PRIVACY) {
+			ret = os_snprintf(pos, end - pos, "[WEP]");
+			if (ret < 0 || ret >= end - pos)
+				return 0;
+			pos += ret;
+		}
+		if (bss->caps & IEEE80211_CAP_IBSS) {
+			ret = os_snprintf(pos, end - pos, "[IBSS]");
+			if (ret < 0 || ret >= end - pos)
+				return 0;
+			pos += ret;
+		}
+		if (bss->caps & IEEE80211_CAP_ESS) {
+			ret = os_snprintf(pos, end - pos, "[ESS]");
+			if (ret < 0 || ret >= end - pos)
+				return 0;
+			pos += ret;
+		}
+		if (wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE)) {
+			ret = os_snprintf(pos, end - pos, "[P2P]");
+			if (ret < 0 || ret >= end - pos)
+				return 0;
+			pos += ret;
+		}
+
+		ret = os_snprintf(pos, end - pos, "\n");
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+	if (mask & WPA_BSS_MASK_SSID) {
+		ret = os_snprintf(pos, end - pos, "ssid=%s\n",
+				  wpa_ssid_txt(bss->ssid, bss->ssid_len));
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+
+#ifdef CONFIG_WPS
+	if (mask & WPA_BSS_MASK_WPS_SCAN) {
+		ie = (const u8 *) (bss + 1);
+		ret = wpas_wps_scan_result_text(ie, bss->ie_len, pos, end);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+#endif /* CONFIG_WPS */
+
+#ifdef CONFIG_P2P
+	if (mask & WPA_BSS_MASK_P2P_SCAN) {
+		ie = (const u8 *) (bss + 1);
+		ret = wpas_p2p_scan_result_text(ie, bss->ie_len, pos, end);
+		if (ret < 0 || ret >= end - pos)
+			return 0;
+		pos += ret;
+	}
+#endif /* CONFIG_P2P */
+
+#ifdef CONFIG_INTERWORKING
+	if (mask & WPA_BSS_MASK_INTERNETW) {
+		pos = anqp_add_hex(pos, end, "anqp_venue_name",
+				   bss->anqp_venue_name);
+		pos = anqp_add_hex(pos, end, "anqp_network_auth_type",
+				   bss->anqp_network_auth_type);
+		pos = anqp_add_hex(pos, end, "anqp_roaming_consortium",
+				   bss->anqp_roaming_consortium);
+		pos = anqp_add_hex(pos, end, "anqp_ip_addr_type_availability",
+				   bss->anqp_ip_addr_type_availability);
+		pos = anqp_add_hex(pos, end, "anqp_nai_realm",
+				   bss->anqp_nai_realm);
+		pos = anqp_add_hex(pos, end, "anqp_3gpp", bss->anqp_3gpp);
+		pos = anqp_add_hex(pos, end, "anqp_domain_name",
+				   bss->anqp_domain_name);
+	}
+#endif /* CONFIG_INTERWORKING */
+
+	return pos - buf;
+}
+
 static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 					 const char *cmd, char *buf,
 					 size_t buflen)
 {
 	u8 bssid[ETH_ALEN];
 	size_t i;
-	struct wpa_bss *bss;
-	int ret;
-	char *pos, *end;
-	const u8 *ie, *ie2;
-	struct os_time now;
+	struct wpa_bss *bss = NULL;
+	struct wpa_bss *bsslast = NULL;
+	struct dl_list *next;
+	int ret = 0;
+	int len;
+	char *ctmp;
+	unsigned long mask = WPA_BSS_MASK_ALL;
 
-	if (os_strcmp(cmd, "FIRST") == 0)
+	if (os_strncmp(cmd, "RANGE=", 6) == 0) {
+		if (os_strncmp(cmd + 6, "ALL", 3) == 0) {
+			bss = dl_list_first(&wpa_s->bss_id, struct wpa_bss,
+			                    list_id);
+			bsslast = dl_list_last(&wpa_s->bss_id, struct wpa_bss,
+					       list_id);
+		} else { /* N1-N2 */
+			if ((ctmp = os_strchr(cmd + 6, '-')) != NULL) {
+				int id1, id2;
+				id1 = atoi(cmd + 6);
+				bss = wpa_bss_get_id(wpa_s, id1);
+				id2 = atoi(ctmp + 1);
+				if (id2 == 0)
+					bsslast = dl_list_last(&wpa_s->bss_id,
+							       struct wpa_bss,
+							       list_id);
+				else
+					bsslast = wpa_bss_get_id(wpa_s, id2);
+			} else {
+				wpa_printf(MSG_ERROR, "Wrong range format");
+				return 0;
+			}
+		}
+		if ((ctmp = os_strstr(cmd, "MASK=")) != NULL) {
+			mask = strtoul(ctmp + 5, NULL, 0x10);
+			if (mask == 0)
+				mask = WPA_BSS_MASK_ALL;
+		}
+	} else if (os_strcmp(cmd, "FIRST") == 0)
 		bss = dl_list_first(&wpa_s->bss, struct wpa_bss, list);
 	else if (os_strncmp(cmd, "ID-", 3) == 0) {
 		i = atoi(cmd + 3);
@@ -2214,7 +2447,7 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 		i = atoi(cmd + 5);
 		bss = wpa_bss_get_id(wpa_s, i);
 		if (bss) {
-			struct dl_list *next = bss->list_id.next;
+			next = bss->list_id.next;
 			if (next == &wpa_s->bss_id)
 				bss = NULL;
 			else
@@ -2246,122 +2479,22 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 	if (bss == NULL)
 		return 0;
 
-	os_get_time(&now);
-	pos = buf;
-	end = buf + buflen;
-	ret = os_snprintf(pos, end - pos,
-			  "id=%u\n"
-			  "bssid=" MACSTR "\n"
-			  "freq=%d\n"
-			  "beacon_int=%d\n"
-			  "capabilities=0x%04x\n"
-			  "qual=%d\n"
-			  "noise=%d\n"
-			  "level=%d\n"
-			  "tsf=%016llu\n"
-			  "age=%d\n"
-			  "ie=",
-			  bss->id,
-			  MAC2STR(bss->bssid), bss->freq, bss->beacon_int,
-			  bss->caps, bss->qual, bss->noise, bss->level,
-			  (unsigned long long) bss->tsf,
-			  (int) (now.sec - bss->last_update.sec));
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
+	if (bsslast == NULL)
+		bsslast = bss;
+	do {
+		len = print_bss_info(wpa_s, bss, mask, buf, buflen);
+		ret += len;
+		buf += len;
+		buflen -= len;
+		if (bss == bsslast)
+			break;
+		next = bss->list_id.next;
+		if (next == &wpa_s->bss_id)
+			break;
+		bss = dl_list_entry(next, struct wpa_bss, list_id);
+	} while (bss && len);
 
-	ie = (const u8 *) (bss + 1);
-	for (i = 0; i < bss->ie_len; i++) {
-		ret = os_snprintf(pos, end - pos, "%02x", *ie++);
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-	}
-
-	ret = os_snprintf(pos, end - pos, "\n");
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-
-	ret = os_snprintf(pos, end - pos, "flags=");
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-
-	ie = wpa_bss_get_vendor_ie(bss, WPA_IE_VENDOR_TYPE);
-	if (ie)
-		pos = wpa_supplicant_ie_txt(pos, end, "WPA", ie, 2 + ie[1]);
-	ie2 = wpa_bss_get_ie(bss, WLAN_EID_RSN);
-	if (ie2)
-		pos = wpa_supplicant_ie_txt(pos, end, "WPA2", ie2, 2 + ie2[1]);
-	pos = wpa_supplicant_wps_ie_txt(wpa_s, pos, end, bss);
-	if (!ie && !ie2 && bss->caps & IEEE80211_CAP_PRIVACY) {
-		ret = os_snprintf(pos, end - pos, "[WEP]");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-	}
-	if (bss->caps & IEEE80211_CAP_IBSS) {
-		ret = os_snprintf(pos, end - pos, "[IBSS]");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-	}
-	if (bss->caps & IEEE80211_CAP_ESS) {
-		ret = os_snprintf(pos, end - pos, "[ESS]");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-	}
-	if (wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE)) {
-		ret = os_snprintf(pos, end - pos, "[P2P]");
-		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
-		pos += ret;
-	}
-
-	ret = os_snprintf(pos, end - pos, "\n");
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-
-	ret = os_snprintf(pos, end - pos, "ssid=%s\n",
-			  wpa_ssid_txt(bss->ssid, bss->ssid_len));
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-
-#ifdef CONFIG_WPS
-	ie = (const u8 *) (bss + 1);
-	ret = wpas_wps_scan_result_text(ie, bss->ie_len, pos, end);
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-#endif /* CONFIG_WPS */
-
-#ifdef CONFIG_P2P
-	ie = (const u8 *) (bss + 1);
-	ret = wpas_p2p_scan_result_text(ie, bss->ie_len, pos, end);
-	if (ret < 0 || ret >= end - pos)
-		return pos - buf;
-	pos += ret;
-#endif /* CONFIG_P2P */
-
-#ifdef CONFIG_INTERWORKING
-	pos = anqp_add_hex(pos, end, "anqp_venue_name", bss->anqp_venue_name);
-	pos = anqp_add_hex(pos, end, "anqp_network_auth_type",
-			   bss->anqp_network_auth_type);
-	pos = anqp_add_hex(pos, end, "anqp_roaming_consortium",
-			   bss->anqp_roaming_consortium);
-	pos = anqp_add_hex(pos, end, "anqp_ip_addr_type_availability",
-			   bss->anqp_ip_addr_type_availability);
-	pos = anqp_add_hex(pos, end, "anqp_nai_realm", bss->anqp_nai_realm);
-	pos = anqp_add_hex(pos, end, "anqp_3gpp", bss->anqp_3gpp);
-	pos = anqp_add_hex(pos, end, "anqp_domain_name",
-			   bss->anqp_domain_name);
-#endif /* CONFIG_INTERWORKING */
-
-	return pos - buf;
+	return ret;
 }
 
 
