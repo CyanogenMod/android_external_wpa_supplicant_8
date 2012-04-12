@@ -841,7 +841,6 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 		      const struct wpabuf *tlvs)
 {
 	struct p2p_sd_query *q;
-	struct p2p_device *dev;
 
 	q = os_zalloc(sizeof(*q));
 	if (q == NULL)
@@ -860,14 +859,6 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 
 	q->next = p2p->sd_queries;
 	p2p->sd_queries = q;
-
-	dl_list_for_each(dev, &p2p->devices, struct p2p_device, list) {
-		if (dst == NULL ||
-			os_memcmp(dev->info.p2p_device_addr, dst, ETH_ALEN) == 0) {
-			dev->flags &= ~P2P_DEV_SD_INFO;
-		}
-	}
-
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Added SD Query %p", q);
 
 	return q;
