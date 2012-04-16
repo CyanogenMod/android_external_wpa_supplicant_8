@@ -1011,9 +1011,11 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 
 #ifdef ANDROID
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_STATE_CHANGE
-		     "id=%d state=%d BSSID=" MACSTR,
+		     "id=%d state=%d BSSID=" MACSTR " SSID=%s",
 		     wpa_s->current_ssid ? wpa_s->current_ssid->id : -1,
-		     wpa_s->wpa_state, MAC2STR(wpa_s->pending_bssid));
+		     wpa_s->wpa_state,
+		     MAC2STR(wpa_s->pending_bssid),
+		     wpa_s->current_ssid ? wpa_s->current_ssid->ssid : "");
 	if (wpa_s->wpa_state == WPA_COMPLETED) {
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
 		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- connection to "
