@@ -1017,7 +1017,11 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_notify_scanning(wpa_s, 0);
 
 #ifdef CONFIG_P2P
+#ifdef ANDROID_P2P
+	if (p2p_search_pending(wpa_s->global->p2p) && !wpa_s->global->p2p_disabled &&
+#else
 	if (wpa_s->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
+#endif
 	    wpa_s->global->p2p != NULL) {
 		wpa_s->p2p_cb_on_scan_complete = 0;
 		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
@@ -1196,18 +1200,26 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (rn2 && os_strcmp(rn, rn2) == 0) {
 			wpa_printf(MSG_DEBUG, "%s: Updating scan results from "
 				   "sibling", ifs->ifname);
-#ifndef ANDROID_P2P
-			_wpa_supplicant_event_scan_results(ifs, data);
+#ifdef ANDROID_P2P
+			if ( (ifs->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) || (ifs->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)) {
+				/* Do not update the scan results from STA interface to p2p interfaces */
+				wpa_printf(MSG_DEBUG, "Not Updating scan results on interface %s from "
+					   "sibling %s", ifs->ifname, wpa_s->ifname);
+				continue;
+			}
+			else {
+				/* P2P_FIND will result in too many SCAN_RESULT_EVENTS within
+				 * no time. Avoid announcing it to application as it may not
+				 * be that useful (since results will be that of only 1,6,11).
+				 * over to any other interface as it
+				 */
+				if(p2p_search_in_progress(wpa_s->global->p2p))
+					_wpa_supplicant_event_scan_results(ifs, data, 1);
+				else
+					_wpa_supplicant_event_scan_results(ifs, data, 0);
+			}
 #else
-			/* P2P_FIND will result in too many SCAN_RESULT_EVENTS within
-			 * no time. Avoid announcing it to application as it may not 
-			 * be that useful (since results will be that of only 1,6,11).
-			 * over to any other interface as it
-			 */
-			if((wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) && p2p_search_in_progress(wpa_s->global->p2p))
-				_wpa_supplicant_event_scan_results(ifs, data, 1);
-			else
-				_wpa_supplicant_event_scan_results(ifs, data, 0);
+			_wpa_supplicant_event_scan_results(ifs, data);
 #endif
 		}
 	}

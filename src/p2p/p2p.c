@@ -42,9 +42,37 @@ static void p2p_scan_timeout(void *eloop_ctx, void *timeout_ctx);
  * P2P_PEER_EXPIRATION_AGE - Number of seconds after which inactive peer
  * entries will be removed
  */
+#ifdef ANDROID_P2P
+#define P2P_PEER_EXPIRATION_AGE 30
+#else
 #define P2P_PEER_EXPIRATION_AGE 300
+#endif
 
 #define P2P_PEER_EXPIRATION_INTERVAL (P2P_PEER_EXPIRATION_AGE / 2)
+
+#ifdef ANDROID_P2P
+int p2p_connection_in_progress(struct p2p_data *p2p)
+{
+	int ret = 0;
+
+	switch (p2p->state) {
+		case P2P_CONNECT:
+		case P2P_CONNECT_LISTEN:
+		case P2P_GO_NEG:
+		case P2P_WAIT_PEER_CONNECT:
+		case P2P_PROVISIONING:
+		case P2P_INVITE:
+		case P2P_INVITE_LISTEN:
+			ret = 1;
+			break;
+
+		default:
+			ret = 0;
+	}
+
+	return ret;
+}
+#endif
 
 static void p2p_expire_peers(struct p2p_data *p2p)
 {
@@ -82,7 +110,14 @@ static void p2p_expire_peers(struct p2p_data *p2p)
 			continue;
 		}
 
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Expiring old peer "
+#ifdef ANDROID_P2P
+		/* If Connection is in progress, don't expire the peer
+		*/
+		if (p2p_connection_in_progress(p2p))
+			continue;
+#endif
+
+		wpa_msg(p2p->cfg->msg_ctx, MSG_ERROR, "P2P: Expiring old peer "
 			"entry " MACSTR, MAC2STR(dev->info.p2p_device_addr));
 		dl_list_del(&dev->list);
 		p2p_device_free(p2p, dev);
@@ -996,6 +1031,18 @@ int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 	return res;
 }
 
+#ifdef ANDROID_P2P
+int p2p_search_pending(struct p2p_data *p2p)
+{
+	if(p2p == NULL)
+		return 0;
+
+	if(p2p->state == P2P_SEARCH_WHEN_READY)
+		return 1;
+
+	return 0;
+}
+#endif
 
 int p2p_other_scan_completed(struct p2p_data *p2p)
 {
@@ -2094,7 +2141,6 @@ int p2p_parse_dev_addr(const u8 *ies, size_t ies_len, u8 *dev_addr)
 {
 	struct wpabuf *p2p_ie;
 	struct p2p_message msg;
-	int ret = -1;
 
 	p2p_ie = ieee802_11_vendor_ie_concat(ies, ies_len,
 					     P2P_IE_VENDOR_TYPE);
@@ -2106,16 +2152,14 @@ int p2p_parse_dev_addr(const u8 *ies, size_t ies_len, u8 *dev_addr)
 		return -1;
 	}
 
-	if (msg.p2p_device_addr) {
-		os_memcpy(dev_addr, msg.p2p_device_addr, ETH_ALEN);
-		ret = 0;
-	} else if (msg.device_id) {
-		os_memcpy(dev_addr, msg.device_id, ETH_ALEN);
-		ret = 0;
+	if (msg.p2p_device_addr == NULL) {
+		wpabuf_free(p2p_ie);
+		return -1;
 	}
 
+	os_memcpy(dev_addr, msg.p2p_device_addr, ETH_ALEN);
 	wpabuf_free(p2p_ie);
-	return ret;
+	return 0;
 }
 
 

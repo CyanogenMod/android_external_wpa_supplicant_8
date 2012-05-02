@@ -220,7 +220,11 @@ struct wpa_global {
 	struct dl_list p2p_srv_upnp; /* struct p2p_srv_upnp */
 	int p2p_disabled;
 #ifdef ANDROID_P2P
-	char conc_priority[5]; /* "sta" or "p2p" */
+	enum wpa_conc_pref {
+		WPA_CONC_PREF_NOT_SET,
+		WPA_CONC_PREF_STA,
+		WPA_CONC_PREF_P2P
+	} conc_pref;
 #endif
 	int cross_connection;
 };

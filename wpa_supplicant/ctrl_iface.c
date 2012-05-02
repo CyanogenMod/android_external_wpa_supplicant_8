@@ -3307,17 +3307,17 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 		return 0;
 	}
 #ifdef ANDROID_P2P
-	if (os_strcmp(cmd, "conc_priority") == 0) {
-		if(os_strncmp(cmd+strlen("conc_priority")+1, "sta", 3) == 0)
-			os_strncpy(wpa_s->global->conc_priority, "sta", 3);
-		else if(os_strncmp(cmd+strlen("conc_priority")+1, "p2p", 3) == 0)
-			os_strncpy(wpa_s->global->conc_priority, "p2p", 3);
+	if (os_strcmp(cmd, "conc_pref") == 0) {
+		if (os_strcmp(param, "sta") == 0)
+			wpa_s->global->conc_pref = WPA_CONC_PREF_STA;
+		else if (os_strcmp(param, "p2p") == 0)
+			wpa_s->global->conc_pref = WPA_CONC_PREF_P2P;
 		else {
-			wpa_printf(MSG_ERROR, " conc_priority arg should be either sta or p2p");
+			wpa_printf(MSG_INFO, "Invalid conc_pref value");
 			return -1;
 		}
-		wpa_printf(MSG_DEBUG, "Single Channel Concurrency: Prioritize %s",
-			   wpa_s->global->conc_priority);
+		wpa_printf(MSG_DEBUG, "Single channel concurrency preference: "
+			"%s", param);
 		return 0;
 	}
 #endif

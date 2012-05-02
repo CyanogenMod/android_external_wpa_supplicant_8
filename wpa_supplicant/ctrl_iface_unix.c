@@ -164,6 +164,35 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 		else
 			reply_len = 2;
 	} else {
+#if defined(CONFIG_P2P) && defined(ANDROID_P2P)
+		char *ifname = NULL, *arg;
+		char cmd[256];
+		/* Skip the command name */
+		arg = os_strchr(buf, ' ');
+		if (arg) {
+			*arg++ = '\0';
+			os_strncpy(cmd, buf, sizeof(cmd));
+			/* Now search for interface= */
+			if (os_strncmp(arg, "interface=", 10) == 0) {
+				ifname = arg + 10;
+				arg = os_strchr(ifname, ' ');
+				if (arg)
+					*arg++ = '\0';
+				wpa_printf(MSG_DEBUG, "Found interface= in the arg %s ifname %s", arg, ifname);
+				for (wpa_s = wpa_s->global->ifaces; wpa_s; wpa_s = wpa_s->next) {
+					if (os_strcmp(wpa_s->ifname, ifname) == 0)
+						break;
+				}
+				if (wpa_s == NULL) {
+					wpa_printf(MSG_ERROR, "P2P: interface=%s does not exist", ifname);
+					wpa_s = eloop_ctx;
+				}
+			}
+			if (arg)
+				os_snprintf(buf, sizeof(buf), "%s %s", cmd, arg);
+		}
+		wpa_printf(MSG_DEBUG, "wpa_s %p cmd %s", wpa_s, buf);
+#endif /* defined CONFIG_P2P && defined ANDROID_P2P */
 		reply = wpa_supplicant_ctrl_iface_process(wpa_s, buf,
 							  &reply_len);
 	}

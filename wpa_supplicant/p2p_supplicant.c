@@ -47,7 +47,6 @@
 #define P2P_MAX_CLIENT_IDLE 10
 #endif /* P2P_MAX_CLIENT_IDLE */
 
-
 static void wpas_p2p_long_listen_timeout(void *eloop_ctx, void *timeout_ctx);
 static struct wpa_supplicant *
 wpas_p2p_get_group_iface(struct wpa_supplicant *wpa_s, int addr_allocated,
@@ -63,6 +62,22 @@ static void wpas_p2p_cross_connect_setup(struct wpa_supplicant *wpa_s);
 static void wpas_p2p_group_idle_timeout(void *eloop_ctx, void *timeout_ctx);
 static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s);
 
+#ifdef ANDROID_P2P
+static int wpas_global_scan_in_progress(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_supplicant *iface = NULL;
+
+	for (iface = wpa_s->global->ifaces; iface; iface = iface->next) {
+		if(iface->scanning  || iface->wpa_state == WPA_SCANNING) {
+			wpa_printf(MSG_DEBUG, "P2P: Scan in progress on %s,"
+			"defer P2P SEARCH", iface->ifname);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+#endif
 
 static void wpas_p2p_scan_res_handler(struct wpa_supplicant *wpa_s,
 				      struct wpa_scan_results *scan_res)
@@ -157,7 +172,11 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 
 	if (ret) {
 		wpa_s->scan_res_handler = NULL;
+#ifdef ANDROID_P2P
+		if (wpa_s->scanning || was_in_p2p_scan || wpas_global_scan_in_progress(wpa_s)) {
+#else
 		if (wpa_s->scanning || was_in_p2p_scan) {
+#endif
 			wpa_s->p2p_cb_on_scan_complete = 1;
 			ret = 1;
 		}

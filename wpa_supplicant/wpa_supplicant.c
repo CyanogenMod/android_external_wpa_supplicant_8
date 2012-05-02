@@ -3126,9 +3126,9 @@ int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s)
 #ifdef ANDROID_P2P
 int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s)
 {
-	if(os_strncmp(wpa_s->global->conc_priority, "p2p", 3) == 0)
+	if (wpa_s->global->conc_pref == WPA_CONC_PREF_P2P)
 		return 1;
-	else if(os_strncmp(wpa_s->global->conc_priority, "sta", 3) == 0)
+	if (wpa_s->global->conc_pref == WPA_CONC_PREF_STA)
 		return 0;
 
 	/* IF conc_priority is not set, return -1 */
