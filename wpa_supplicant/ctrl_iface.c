@@ -1015,7 +1015,8 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		     wpa_s->current_ssid ? wpa_s->current_ssid->id : -1,
 		     wpa_s->wpa_state,
 		     MAC2STR(wpa_s->pending_bssid),
-		     wpa_s->current_ssid ? wpa_ssid_txt(wpa_s->current_ssid->ssid,
+		     wpa_s->current_ssid && wpa_s->current_ssid->ssid ?
+		     wpa_ssid_txt(wpa_s->current_ssid->ssid,
 		     wpa_s->current_ssid->ssid_len) : "");
 	if (wpa_s->wpa_state == WPA_COMPLETED) {
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
