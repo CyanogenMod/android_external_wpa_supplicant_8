@@ -779,6 +779,12 @@ wpa_supplicant_pick_new_network(struct wpa_supplicant *wpa_s)
 	int prio;
 	struct wpa_ssid *ssid;
 
+// Don't try to automatically start a new ad-hoc network if no network
+// is available on Android. It doesn't make sense as it'll fail anyway
+// because nothing will reply to the DHCP request. (It'll also
+// repeatedly fail because the frequency is not set and it'll keep
+// retrying draining battery.)
+#ifndef ANDROID
 	for (prio = 0; prio < wpa_s->conf->num_prio; prio++) {
 		for (ssid = wpa_s->conf->pssid[prio]; ssid; ssid = ssid->pnext)
 		{
@@ -789,6 +795,7 @@ wpa_supplicant_pick_new_network(struct wpa_supplicant *wpa_s)
 				return ssid;
 		}
 	}
+#endif
 	return NULL;
 }
 
