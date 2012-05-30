@@ -312,8 +312,13 @@ static void wps_registrar_remove_pbc_session(struct wps_registrar *reg,
 	pbc = reg->pbc_sessions;
 	while (pbc) {
 		if (os_memcmp(pbc->uuid_e, uuid_e, WPS_UUID_LEN) == 0 ||
+#ifdef ANDROID_P2P
+		    (p2p_dev_addr && !is_zero_ether_addr(pbc->addr) &&
+		     os_memcmp(pbc->addr, p2p_dev_addr, ETH_ALEN) ==
+#else
 		    (p2p_dev_addr && !is_zero_ether_addr(reg->p2p_dev_addr) &&
 		     os_memcmp(reg->p2p_dev_addr, p2p_dev_addr, ETH_ALEN) ==
+#endif
 		     0)) {
 			if (prev)
 				prev->next = pbc->next;

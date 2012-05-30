@@ -60,6 +60,7 @@ int p2p_connection_in_progress(struct p2p_data *p2p)
 		case P2P_CONNECT_LISTEN:
 		case P2P_GO_NEG:
 		case P2P_WAIT_PEER_CONNECT:
+		case P2P_WAIT_PEER_IDLE:
 		case P2P_PROVISIONING:
 		case P2P_INVITE:
 		case P2P_INVITE_LISTEN:
@@ -67,6 +68,7 @@ int p2p_connection_in_progress(struct p2p_data *p2p)
 			break;
 
 		default:
+			wpa_printf(MSG_DEBUG, "p2p_connection_in_progress state %d", p2p->state);
 			ret = 0;
 	}
 
@@ -2283,6 +2285,11 @@ void p2p_flush(struct p2p_data *p2p)
 {
 	struct p2p_device *dev, *prev;
 	p2p_clear_timeout(p2p);
+#ifdef ANDROID_P2P
+	if (p2p->state == P2P_SEARCH)
+		wpa_msg(p2p->cfg->msg_ctx, MSG_INFO,
+						P2P_EVENT_FIND_STOPPED);
+#endif
 	p2p_set_state(p2p, P2P_IDLE);
 	p2p->start_after_scan = P2P_AFTER_SCAN_NOTHING;
 	p2p->go_neg_peer = NULL;
@@ -2683,12 +2690,19 @@ static void p2p_go_neg_req_cb(struct p2p_data *p2p, int success)
 	}
 
 	if (success) {
+#ifndef ANDROID_P2P
 		dev->go_neg_req_sent++;
+#endif
 		if (dev->flags & P2P_DEV_USER_REJECTED) {
 			p2p_set_state(p2p, P2P_IDLE);
 			return;
 		}
 	}
+#ifdef ANDROID_P2P
+	else {
+		dev->go_neg_req_sent--;
+	}
+#endif
 
 	if (!success &&
 	    (dev->info.dev_capab & P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY) &&

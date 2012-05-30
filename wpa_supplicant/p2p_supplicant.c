@@ -44,9 +44,16 @@
  * How many seconds to try to reconnect to the GO when connection in P2P client
  * role has been lost.
  */
+#ifdef ANDROID_P2P
+#define P2P_MAX_CLIENT_IDLE 20
+#else
 #define P2P_MAX_CLIENT_IDLE 10
+#endif /* ANDROID_P2P */
 #endif /* P2P_MAX_CLIENT_IDLE */
 
+#ifdef ANDROID_P2P
+static int wpas_global_scan_in_progress(struct wpa_supplicant *wpa_s);
+#endif
 static void wpas_p2p_long_listen_timeout(void *eloop_ctx, void *timeout_ctx);
 static struct wpa_supplicant *
 wpas_p2p_get_group_iface(struct wpa_supplicant *wpa_s, int addr_allocated,
@@ -3402,8 +3409,10 @@ static void wpas_p2p_idle_update(void *ctx, int idle)
 	if (!wpa_s->ap_iface)
 		return;
 	wpa_printf(MSG_DEBUG, "P2P: GO - group %sidle", idle ? "" : "not ");
-	if (idle)
+	if (idle) {
+		wpa_printf(MSG_DEBUG,"Calling set group idle time out from idle_update");
 		wpas_p2p_set_group_idle_timeout(wpa_s);
+	}
 	else
 		eloop_cancel_timeout(wpas_p2p_group_idle_timeout, wpa_s, NULL);
 }
@@ -3927,8 +3936,8 @@ static void wpas_p2p_group_idle_timeout(void *eloop_ctx, void *timeout_ctx)
 		return;
 	}
 
-	wpa_printf(MSG_DEBUG, "P2P: Group idle timeout reached - terminate "
-		   "group");
+	wpa_printf(MSG_DEBUG, "P2P: Group idle timeout reached - terminate %d"
+		   "group",wpa_s->conf->p2p_group_idle);
 	wpa_s->removal_reason = P2P_GROUP_REMOVAL_IDLE_TIMEOUT;
 	wpas_p2p_group_delete(wpa_s);
 }
@@ -4202,7 +4211,10 @@ void wpas_p2p_notif_disconnected(struct wpa_supplicant *wpa_s)
 	if (!wpa_s->ap_iface &&
 	    !eloop_is_timeout_registered(wpas_p2p_group_idle_timeout,
 					 wpa_s, NULL))
+	{
+		wpa_printf(MSG_DEBUG,"Calling set grouple idle_timeout from notif_disconnected");
 		wpas_p2p_set_group_idle_timeout(wpa_s);
+	}
 }
 
 

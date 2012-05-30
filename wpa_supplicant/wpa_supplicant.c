@@ -581,6 +581,11 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_state_txt(wpa_s->wpa_state),
 		wpa_supplicant_state_txt(state));
 
+#ifdef ANDROID_P2P
+	if(state == WPA_ASSOCIATED || (state <= WPA_INACTIVE))
+		wpa_s->assoc_retries = 0;
+#endif /* ANDROID_P2P */
+
 	if (state != WPA_SCANNING)
 		wpa_supplicant_notify_scanning(wpa_s, 0);
 

@@ -2190,6 +2190,9 @@ static int process_global_event(struct nl_msg *msg, void *arg)
 		if (ifidx == -1 || ifidx == drv->ifindex ||
 		    have_ifidx(drv, ifidx))
 			do_process_drv_event(drv, gnlh->cmd, tb);
+#ifdef ANDROID_P2P
+			break;
+#endif
 	}
 
 	return NL_SKIP;

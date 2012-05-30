@@ -203,6 +203,9 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 	p2p->go_neg_peer = dev;
 	dev->flags |= P2P_DEV_WAIT_GO_NEG_RESPONSE;
 	dev->connect_reqs++;
+#ifdef ANDROID_P2P
+	dev->go_neg_req_sent++;
+#endif
 	if (p2p_send_action(p2p, freq, dev->info.p2p_device_addr,
 			    p2p->cfg->dev_addr, dev->info.p2p_device_addr,
 			    wpabuf_head(req), wpabuf_len(req), 200) < 0) {
