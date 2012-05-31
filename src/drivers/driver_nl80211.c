@@ -2188,11 +2188,12 @@ static int process_global_event(struct nl_msg *msg, void *arg)
 	dl_list_for_each(drv, &global->interfaces,
 			 struct wpa_driver_nl80211_data, list) {
 		if (ifidx == -1 || ifidx == drv->ifindex ||
-		    have_ifidx(drv, ifidx))
+		    have_ifidx(drv, ifidx)) {
 			do_process_drv_event(drv, gnlh->cmd, tb);
 #ifdef ANDROID_P2P
 			break;
 #endif
+		}
 	}
 
 	return NL_SKIP;
