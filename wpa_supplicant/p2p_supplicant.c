@@ -4424,7 +4424,13 @@ void wpas_p2p_network_removed(struct wpa_supplicant *wpa_s,
 				 wpa_s->parent, NULL) > 0) {
 		wpa_printf(MSG_DEBUG, "P2P: Canceled group formation due to "
 			   "P2P group network getting removed");
+#ifdef ANDROID_P2P
+		/* Give time for any Pending WPS Frame exchange */
+		eloop_register_timeout(5, 0, wpas_p2p_group_formation_timeout,
+			wpa_s->parent, NULL);
+#else
 		wpas_p2p_group_formation_timeout(wpa_s->parent, NULL);
+#endif
 	}
 }
 
