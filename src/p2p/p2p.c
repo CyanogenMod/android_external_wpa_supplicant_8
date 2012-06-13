@@ -121,6 +121,11 @@ static void p2p_expire_peers(struct p2p_data *p2p)
 
 		wpa_msg(p2p->cfg->msg_ctx, MSG_ERROR, "P2P: Expiring old peer "
 			"entry " MACSTR, MAC2STR(dev->info.p2p_device_addr));
+#ifdef ANDROID_P2P
+		/* SD_FAIR_POLICY: Update the current sd_dev_list pointer to next device */
+		if(&dev->list == p2p->sd_dev_list)
+			p2p->sd_dev_list = dev->list.next;
+#endif
 		dl_list_del(&dev->list);
 		p2p_device_free(p2p, dev);
 	}
@@ -413,6 +418,11 @@ static struct p2p_device * p2p_create_device(struct p2p_data *p2p,
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Remove oldest peer entry to make room for a new "
 			"peer");
+#ifdef ANDROID_P2P
+		/* SD_FAIR_POLICY: Update the current sd_dev_list pointer to next device */
+		if(&oldest->list == p2p->sd_dev_list)
+			p2p->sd_dev_list = oldest->list.next;
+#endif
 		dl_list_del(&oldest->list);
 		p2p_device_free(p2p, oldest);
 	}
@@ -572,7 +582,6 @@ static void p2p_copy_wps_info(struct p2p_device *dev, int probe_req,
 		dev->ext_listen_interval =
 			WPA_GET_LE16(msg->ext_listen_timing + 2);
 	}
-
 	if (!probe_req) {
 		dev->info.config_methods = msg->config_methods ?
 			msg->config_methods : msg->wps_config_methods;
@@ -897,7 +906,15 @@ static int p2p_run_after_scan(struct p2p_data *p2p)
 				      p2p->after_scan_tx->wait_time);
 		os_free(p2p->after_scan_tx);
 		p2p->after_scan_tx = NULL;
+#ifdef ANDROID_P2P
+		/* For SD frames, there is a scenario, where we can receive a SD request frame during p2p_scan.
+		 * At that moment, we will send the SD response from this context. After sending the SD response,
+		 * we need to continue p2p_find. But if we return 1 from here, p2p_find is going to be stopped.
+		 */
+		return 0;
+#else
 		return 1;
+#endif
 	}
 
 	op = p2p->start_after_scan;
@@ -2239,8 +2256,16 @@ struct p2p_data * p2p_init(const struct p2p_config *cfg)
 		p2p->cfg->model_number = os_strdup(cfg->model_number);
 	if (cfg->serial_number)
 		p2p->cfg->serial_number = os_strdup(cfg->serial_number);
-
+#ifdef ANDROID_P2P
+	/* 100ms listen time is too less to receive the response frames in some scenarios
+	 * increasing min listen time to 200ms.
+	 */
+	p2p->min_disc_int = 2;
+	/* SD_FAIR_POLICY: Initializing the SD current serviced pointer to NULL */
+	p2p->sd_dev_list = NULL;
+#else
 	p2p->min_disc_int = 1;
+#endif
 	p2p->max_disc_int = 3;
 
 	os_get_random(&p2p->next_tie_breaker, 1);
@@ -2299,6 +2324,10 @@ void p2p_flush(struct p2p_data *p2p)
 		dl_list_del(&dev->list);
 		p2p_device_free(p2p, dev);
 	}
+#ifdef ANDROID_P2P
+	/* SD_FAIR_POLICY: Initializing the SD current serviced pointer to NULL */
+	p2p->sd_dev_list = NULL;
+#endif
 	p2p_free_sd_queries(p2p);
 	os_free(p2p->after_scan_tx);
 	p2p->after_scan_tx = NULL;
@@ -2477,8 +2506,37 @@ int p2p_set_country(struct p2p_data *p2p, const char *country)
 void p2p_continue_find(struct p2p_data *p2p)
 {
 	struct p2p_device *dev;
+#ifdef ANDROID_P2P
+	int skip=1;
+#endif
 	p2p_set_state(p2p, P2P_SEARCH);
 	dl_list_for_each(dev, &p2p->devices, struct p2p_device, list) {
+#ifdef ANDROID_P2P
+		/* SD_FAIR_POLICY: We need to give chance to all devices in the device list
+		 * There may be a scenario, where a particular peer device have
+		 * not registered any query response. When we send a SD request to such device,
+		 * no response will be received. And if we continue to get probe responses from that device, 
+		 * and if that device happens to be on top in our device list, 
+		 * we will always continue to send SD requests always to that peer only. 
+		 * We will not be able to send SD requests to other devices in that case. 
+		 * This implementation keeps track of last serviced peer device. 
+		 * And then takes the next one from the device list, in the next iteration.
+		 */
+		if (p2p->sd_dev_list && p2p->sd_dev_list != &p2p->devices) {
+			if(skip) {
+				if ((&dev->list == p2p->sd_dev_list) ) {
+					skip = 0;
+					if (dev->list.next == &p2p->devices)
+						p2p->sd_dev_list = NULL;
+				}
+				continue;
+			}
+		}
+		p2p->sd_dev_list = &dev->list;
+		wpa_printf(MSG_DEBUG, "P2P: ### Servicing %p dev->flags 0x%x SD schedule %s devaddr " MACSTR,
+			p2p->sd_dev_list, dev->flags, dev->flags & P2P_DEV_SD_SCHEDULE ? "TRUE": "FALSE",
+			MAC2STR(dev->info.p2p_device_addr));
+#endif
 		if (dev->flags & P2P_DEV_SD_SCHEDULE) {
 			if (p2p_start_sd(p2p, dev) == 0)
 				return;
