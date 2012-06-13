@@ -223,6 +223,14 @@ struct p2p_data {
 	 */
 	struct dl_list devices;
 
+#ifdef ANDROID_P2P
+	/**
+	 * sd_dev_list - device pointer to be serviced next
+	 * for service discovery
+	 */
+	struct dl_list *sd_dev_list;
+#endif
+
 	/**
 	 * go_neg_peer - Pointer to GO Negotiation peer
 	 */

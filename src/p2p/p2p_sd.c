@@ -406,7 +406,7 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 
 	if (p2p->state != P2P_SD_DURING_FIND || p2p->sd_peer == NULL ||
 	    os_memcmp(sa, p2p->sd_peer->info.p2p_device_addr, ETH_ALEN) != 0) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+		wpa_msg(p2p->cfg->msg_ctx, MSG_ERROR,
 			"P2P: Ignore unexpected GAS Initial Response from "
 			MACSTR, MAC2STR(sa));
 		return;
@@ -841,6 +841,19 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 		      const struct wpabuf *tlvs)
 {
 	struct p2p_sd_query *q;
+#ifdef ANDROID_P2P
+	/* Currently, supplicant doesn't support more than one pending broadcast SD request. 
+	 * So reject if application is registering another one before cancelling the existing one.
+	 */
+	for (q = p2p->sd_queries; q; q = q->next) {
+		if( (q->for_all_peers == 1) && (!dst)) {
+				wpa_printf(MSG_ERROR, "P2P: Already one pending"
+					" Broadcast request. Please cancel the current one"
+					" before adding a new one");
+				return NULL;
+		}
+	}
+#endif
 
 	q = os_zalloc(sizeof(*q));
 	if (q == NULL)
@@ -859,7 +872,7 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 
 	q->next = p2p->sd_queries;
 	p2p->sd_queries = q;
-	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Added SD Query %p", q);
+	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Added SD Query %p for_all_peers %d", q, q->for_all_peers);
 
 	if (dst == NULL) {
 		struct p2p_device *dev;
@@ -880,8 +893,25 @@ void p2p_sd_service_update(struct p2p_data *p2p)
 int p2p_sd_cancel_request(struct p2p_data *p2p, void *req)
 {
 	if (p2p_unlink_sd_query(p2p, req)) {
+#ifdef ANDROID_P2P
+	struct p2p_device *dev;
+	struct p2p_sd_query *q = (struct p2p_sd_query *)req;
+#endif
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Cancel pending SD query %p", req);
+#ifdef ANDROID_P2P
+		/* If the request is a bcast query, then clear the
+		 * P2P_DEV_SD_INFO flag so that when new sd query is registered,
+		 * we will send the SD request frames to peer devices.
+		 */
+		if(q->for_all_peers) {
+			p2p->sd_dev_list = NULL;
+			dl_list_for_each(dev, &p2p->devices,
+							struct p2p_device, list) {
+				dev->flags &= ~P2P_DEV_SD_INFO;
+			}
+		}
+#endif
 		p2p_free_sd_query(req);
 		return 0;
 	}
