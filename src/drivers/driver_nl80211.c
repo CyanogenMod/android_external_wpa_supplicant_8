@@ -338,7 +338,7 @@ static inline int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 }
 #endif /* HOSTAPD */
 #ifdef ANDROID
-extern int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
+static int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 					 size_t buf_len);
 #endif
 
@@ -8845,6 +8845,60 @@ static void wpa_driver_send_hang_msg(struct wpa_driver_nl80211_data *drv)
 	}
 }
 
+#define WPA_PS_ENABLED          0
+#define WPA_PS_DISABLED         1
+
+static int wpa_driver_set_power_save(void *priv, int state)
+{
+        return nl80211_set_power_save(priv, state == WPA_PS_ENABLED);
+}
+
+static int get_power_mode_handler(struct nl_msg *msg, void *arg)
+{
+        struct nlattr *tb[NL80211_ATTR_MAX + 1];
+        struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+        int *state = arg;
+
+        nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+                  genlmsg_attrlen(gnlh, 0), NULL);
+
+        if (!tb[NL80211_ATTR_PS_STATE])
+                return NL_SKIP;
+
+        if (state) {
+                int s = (int) nla_get_u32(tb[NL80211_ATTR_PS_STATE]);
+                wpa_printf(MSG_DEBUG, "nl80211: Get power mode = %d", s);
+                *state = (s == NL80211_PS_ENABLED) ?
+                        WPA_PS_ENABLED : WPA_PS_DISABLED;
+        }
+
+        return NL_SKIP;
+}
+
+static int wpa_driver_get_power_save(void *priv, int *state)
+{
+        struct i802_bss *bss = priv;
+        struct wpa_driver_nl80211_data *drv = bss->drv;
+        struct nl_msg *msg;
+        int ret = -1;
+        enum nl80211_ps_state ps_state;
+
+        msg = nlmsg_alloc();
+        if (!msg)
+                return -1;
+
+        nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_POWER_SAVE);
+
+        NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, bss->ifindex);
+
+        ret = send_and_recv_msgs(drv, msg, get_power_mode_handler, state);
+        msg = NULL;
+        if (ret < 0)
+                wpa_printf(MSG_ERROR, "nl80211: Get power mode fail: %d", ret);
+nla_put_failure:
+        nlmsg_free(msg);
+        return ret;
+}
 
 static int android_priv_cmd(struct i802_bss *bss, const char *cmd)
 {
@@ -8956,8 +9010,76 @@ static int android_pno_stop(struct i802_bss *bss)
 	return android_priv_cmd(bss, "PNOFORCE 0");
 }
 
-#endif /* ANDROID */
+static int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
+                                         size_t buf_len)
+{
+        struct i802_bss *bss = priv;
+        struct wpa_driver_nl80211_data *drv = bss->drv;
+        struct ifreq ifr;
+        android_wifi_priv_cmd priv_cmd;
+        int ret = 0;
 
+        if (os_strcasecmp(cmd, "STOP") == 0) {
+                linux_set_iface_flags(drv->global->ioctl_sock, bss->ifname, 0);
+                wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STOPPED");
+        } else if (os_strcasecmp(cmd, "START") == 0) {
+                linux_set_iface_flags(drv->global->ioctl_sock, bss->ifname, 1);
+                wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STARTED");
+        } else if (os_strcasecmp(cmd, "MACADDR") == 0) {
+                u8 macaddr[ETH_ALEN] = {};
+
+                ret = linux_get_ifhwaddr(drv->global->ioctl_sock, bss->ifname,
+                                         macaddr);
+                if (!ret)
+                        ret = os_snprintf(buf, buf_len,
+                                          "Macaddr = " MACSTR "\n",
+                                          MAC2STR(macaddr));
+        } else if (os_strcasecmp(cmd, "RELOAD") == 0) {
+                wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "HANGED");
+        } else if (os_strncasecmp(cmd, "POWERMODE ", 10) == 0) {
+                int state = atoi(cmd + 10);
+                ret = wpa_driver_set_power_save(priv, state);
+                if (ret < 0)
+                        wpa_driver_send_hang_msg(drv);
+                else
+                        drv_errors = 0;
+        } else if (os_strncasecmp(cmd, "GETPOWER", 8) == 0) {
+                int state = -1;
+                ret = wpa_driver_get_power_save(priv, &state);
+                if (!ret && (state != -1))
+                        ret = os_snprintf(buf, buf_len, "POWERMODE = %d\n",
+                                          state);
+        } else { /* Use private command */
+                memset(&ifr, 0, sizeof(ifr));
+                memset(&priv_cmd, 0, sizeof(priv_cmd));
+                os_memcpy(buf, cmd, strlen(cmd) + 1);
+                os_strncpy(ifr.ifr_name, bss->ifname, IFNAMSIZ);
+
+                priv_cmd.buf = buf;
+                priv_cmd.used_len = buf_len;
+                priv_cmd.total_len = buf_len;
+                ifr.ifr_data = &priv_cmd;
+
+	if ((ret = ioctl(drv->global->ioctl_sock, SIOCDEVPRIVATE + 1, &ifr)) < 0) {
+                        wpa_printf(MSG_DEBUG, "%s: failed to issue private commands\n", __func__);
+                } else {
+                        ret = 0;
+                        if (os_strncasecmp(cmd, "SETBAND", 7) == 0) {
+                                wpa_printf(MSG_DEBUG, "%s: %s ", __func__, cmd);
+                        } else if (os_strcasecmp(cmd, "P2P_DEV_ADDR") == 0) {
+                                wpa_printf(MSG_DEBUG, "%s: P2P: Device address ("MACSTR")",
+                                                __func__, MAC2STR(buf));
+                        } else if (os_strcasecmp(cmd, "P2P_SET_PS") == 0) {
+                                wpa_printf(MSG_DEBUG, "%s: P2P: %s ", __func__, buf);
+                        } else if (os_strcasecmp(cmd, "P2P_SET_NOA") == 0) {
+                                wpa_printf(MSG_DEBUG, "%s: P2P: %s ", __func__, buf);
+                        }
+                }
+        }
+
+        return ret;
+}
+#endif /* ANDROID */
 
 const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.name = "nl80211",
