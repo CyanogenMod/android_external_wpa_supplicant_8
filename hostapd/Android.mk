@@ -28,6 +28,11 @@ ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
 L_CFLAGS += -DANDROID_P2P
 endif
 
+ifeq ($(BOARD_WLAN_DEVICE), qcwcn)
+L_CFLAGS += -DANDROID_QCOM_PATCH
+L_CFLAGS += -DANDROID_P2P
+endif
+
 # To force sizeof(enum) = 4
 ifeq ($(TARGET_ARCH),arm)
 L_CFLAGS += -mabi=aapcs-linux

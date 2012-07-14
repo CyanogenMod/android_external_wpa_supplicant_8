@@ -308,12 +308,17 @@ static int android_pno_stop(struct i802_bss *bss);
 static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				  enum wpa_event_type type,
 				  const u8 *frame, size_t len);
+#ifdef ANDROID_QCOM_PATCH
+static int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
+static int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
+#else
 int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
 int wpa_driver_get_p2p_noa(void *priv, u8 *buf, size_t len);
 int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
 int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
-				  const struct wpabuf *proberesp,
-				  const struct wpabuf *assocresp);
+				 const struct wpabuf *proberesp,
+				 const struct wpabuf *assocresp);
+#endif
 
 #endif
 #ifdef HOSTAPD
@@ -9081,6 +9086,32 @@ static int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf,
 }
 #endif /* ANDROID */
 
+#ifdef ANDROID_QCOM_PATCH
+#ifdef ANDROID_P2P
+static int wpa_driver_set_p2p_noa(void *priv, u8 count, int start,
+				  int duration)
+{
+	char buf[MAX_DRV_CMD_SIZE];
+
+	memset(buf, 0, sizeof(buf));
+	wpa_printf(MSG_DEBUG, "%s: Entry", __func__);
+	os_snprintf(buf, sizeof(buf), "P2P_SET_NOA %d %d %d", count, start,
+		    duration);
+	return wpa_driver_nl80211_driver_cmd(priv, buf, buf, strlen(buf) + 1);
+}
+
+static int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow)
+{
+	char buf[MAX_DRV_CMD_SIZE];
+
+	memset(buf, 0, sizeof(buf));
+	wpa_printf(MSG_DEBUG, "%s: Entry", __func__);
+	snprintf(buf, sizeof(buf), "P2P_SET_PS %d %d %d", legacy_ps, opp_ps, ctwindow);
+	return wpa_driver_nl80211_driver_cmd(priv, buf, buf, strlen(buf) + 1);
+}
+#endif /* ANDROID_P2P */
+#endif /* ANDROID_QCOM_PATCH */
+
 const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.name = "nl80211",
 	.desc = "Linux nl80211/cfg80211",
@@ -9158,8 +9189,10 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 #endif /* CONFIG_TDLS */
 #ifdef ANDROID_P2P
 	.set_noa = wpa_driver_set_p2p_noa,
+#ifndef ANDROID_QCOM_PATCH
 	.get_noa = wpa_driver_get_p2p_noa,
 	.set_ap_wps_ie = wpa_driver_set_ap_wps_p2p_ie,
+#endif
 #endif
 #ifdef ANDROID
 	.driver_cmd = wpa_driver_nl80211_driver_cmd,
