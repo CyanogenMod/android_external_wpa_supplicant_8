@@ -2494,5 +2494,7 @@ const struct wpa_driver_ops wpa_driver_wext_ops = {
 #ifdef ANDROID
 	.sched_scan = wext_sched_scan,
 	.stop_sched_scan = wext_stop_sched_scan,
+	.signal_poll = wpa_driver_signal_poll,
+	.driver_cmd = wpa_driver_wext_driver_cmd,
 #endif /* ANDROID */
 };
