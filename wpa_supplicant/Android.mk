@@ -19,9 +19,6 @@ include $(LOCAL_PATH)/android.config
 # To ignore possible wrong network configurations
 L_CFLAGS = -DWPA_IGNORE_CONFIG_ERRORS
 
-# OpenSSL is configured without engines on Android
-L_CFLAGS += -DOPENSSL_NO_ENGINE
-
 L_CFLAGS += -DVERSION_STR_POSTFIX=\"-$(PLATFORM_VERSION)\"
 
 # Set Android log name
