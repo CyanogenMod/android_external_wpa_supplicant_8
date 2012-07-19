@@ -1275,7 +1275,7 @@ static void * test_driver_init(struct hostapd_data *hapd,
 			alen = sizeof(addr_un);
 		}
 		if (bind(drv->test_socket, addr, alen) < 0) {
-			perror("bind(PF_UNIX)");
+			perror("test-driver-init: bind(PF_UNIX)");
 			close(drv->test_socket);
 			if (drv->own_socket_path)
 				unlink(drv->own_socket_path);
@@ -2252,7 +2252,7 @@ static int wpa_driver_test_attach(struct wpa_driver_test_data *drv,
 	os_strlcpy(addr.sun_path, drv->own_socket_path, sizeof(addr.sun_path));
 	if (bind(drv->test_socket, (struct sockaddr *) &addr,
 		 sizeof(addr)) < 0) {
-		perror("bind(PF_UNIX)");
+		perror("test-driver-attach: bind(PF_UNIX)");
 		close(drv->test_socket);
 		unlink(drv->own_socket_path);
 		os_free(drv->own_socket_path);
@@ -2867,7 +2867,8 @@ static int wpa_driver_test_p2p_connect(void *priv, const u8 *peer_addr,
 	if (!drv->p2p)
 		return -1;
 	return p2p_connect(drv->p2p, peer_addr, wps_method, go_intent,
-			   own_interface_addr, force_freq, persistent_group);
+			   own_interface_addr, force_freq, persistent_group,
+			   NULL, 0, 0);
 }
 
 
@@ -2912,7 +2913,7 @@ static int wpa_driver_test_p2p_set_params(void *priv,
 
 static int test_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 			 unsigned int num_req_dev_types,
-			 const u8 *req_dev_types, const u8 *dev_id)
+			 const u8 *req_dev_types, const u8 *dev_id, u16 pw_id)
 {
 	struct wpa_driver_test_data *drv = ctx;
 	struct wpa_driver_scan_params params;
@@ -2933,8 +2934,8 @@ static int test_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 
 #if 0 /* TODO: WPS IE */
 	wpa_s->wps->dev.p2p = 1;
-	wps_ie = wps_build_probe_req_ie(0, &wpa_s->wps->dev, wpa_s->wps->uuid,
-					WPS_REQ_ENROLLEE);
+	wps_ie = wps_build_probe_req_ie(pw_id, &wpa_s->wps->dev,
+					wpa_s->wps->uuid, WPS_REQ_ENROLLEE);
 #else
 	wps_ie = wpabuf_alloc(1);
 #endif
@@ -2960,11 +2961,6 @@ static int test_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 		params.freqs = social_channels;
 		break;
 	case P2P_SCAN_FULL:
-		break;
-	case P2P_SCAN_SPECIFIC:
-		social_channels[0] = freq;
-		social_channels[1] = 0;
-		params.freqs = social_channels;
 		break;
 	case P2P_SCAN_SOCIAL_PLUS_ONE:
 		social_channels[3] = freq;

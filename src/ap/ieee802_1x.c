@@ -416,6 +416,7 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 	struct radius_msg *msg;
 	char buf[128];
 	struct eapol_state_machine *sm = sta->eapol_sm;
+	struct hostapd_radius_attr *attr;
 
 	if (sm == NULL)
 		return;
@@ -442,7 +443,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	if (hapd->conf->own_ip_addr.af == AF_INET &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_NAS_IP_ADDRESS) &&
+	    hapd->conf->own_ip_addr.af == AF_INET &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IP_ADDRESS,
 				 (u8 *) &hapd->conf->own_ip_addr.u.v4, 4)) {
 		printf("Could not add NAS-IP-Address\n");
@@ -450,7 +453,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 	}
 
 #ifdef CONFIG_IPV6
-	if (hapd->conf->own_ip_addr.af == AF_INET6 &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_NAS_IPV6_ADDRESS) &&
+	    hapd->conf->own_ip_addr.af == AF_INET6 &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IPV6_ADDRESS,
 				 (u8 *) &hapd->conf->own_ip_addr.u.v6, 16)) {
 		printf("Could not add NAS-IPv6-Address\n");
@@ -458,7 +463,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 	}
 #endif /* CONFIG_IPV6 */
 
-	if (hapd->conf->nas_identifier &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_NAS_IDENTIFIER) &&
+	    hapd->conf->nas_identifier &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IDENTIFIER,
 				 (u8 *) hapd->conf->nas_identifier,
 				 os_strlen(hapd->conf->nas_identifier))) {
@@ -466,7 +473,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_NAS_PORT, sta->aid)) {
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_NAS_PORT) &&
+	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_NAS_PORT, sta->aid)) {
 		printf("Could not add NAS-Port\n");
 		goto fail;
 	}
@@ -474,7 +483,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 	os_snprintf(buf, sizeof(buf), RADIUS_802_1X_ADDR_FORMAT ":%s",
 		    MAC2STR(hapd->own_addr), hapd->conf->ssid.ssid);
 	buf[sizeof(buf) - 1] = '\0';
-	if (!radius_msg_add_attr(msg, RADIUS_ATTR_CALLED_STATION_ID,
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_CALLED_STATION_ID) &&
+	    !radius_msg_add_attr(msg, RADIUS_ATTR_CALLED_STATION_ID,
 				 (u8 *) buf, os_strlen(buf))) {
 		printf("Could not add Called-Station-Id\n");
 		goto fail;
@@ -492,12 +503,16 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 	/* TODO: should probably check MTU from driver config; 2304 is max for
 	 * IEEE 802.11, but use 1400 to avoid problems with too large packets
 	 */
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_FRAMED_MTU, 1400)) {
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_FRAMED_MTU) &&
+	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_FRAMED_MTU, 1400)) {
 		printf("Could not add Framed-MTU\n");
 		goto fail;
 	}
 
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_NAS_PORT_TYPE,
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_NAS_PORT_TYPE) &&
+	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_NAS_PORT_TYPE,
 				       RADIUS_NAS_PORT_TYPE_IEEE_802_11)) {
 		printf("Could not add NAS-Port-Type\n");
 		goto fail;
@@ -513,7 +528,9 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 			    radius_mode_txt(hapd));
 		buf[sizeof(buf) - 1] = '\0';
 	}
-	if (!radius_msg_add_attr(msg, RADIUS_ATTR_CONNECT_INFO,
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_auth_req_attr,
+					    RADIUS_ATTR_CONNECT_INFO) &&
+	    !radius_msg_add_attr(msg, RADIUS_ATTR_CONNECT_INFO,
 				 (u8 *) buf, os_strlen(buf))) {
 		printf("Could not add Connect-Info\n");
 		goto fail;
@@ -538,6 +555,36 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 		}
 		if (res > 0) {
 			wpa_printf(MSG_DEBUG, "Copied RADIUS State Attribute");
+		}
+	}
+
+	if (hapd->conf->radius_request_cui) {
+		const u8 *cui;
+		size_t cui_len;
+		/* Add previously learned CUI or nul CUI to request CUI */
+		if (sm->radius_cui) {
+			cui = wpabuf_head(sm->radius_cui);
+			cui_len = wpabuf_len(sm->radius_cui);
+		} else {
+			cui = (const u8 *) "\0";
+			cui_len = 1;
+		}
+		if (!radius_msg_add_attr(msg,
+					 RADIUS_ATTR_CHARGEABLE_USER_IDENTITY,
+					 cui, cui_len)) {
+			wpa_printf(MSG_ERROR, "Could not add CUI");
+			goto fail;
+		}
+	}
+
+	for (attr = hapd->conf->radius_auth_req_attr; attr; attr = attr->next)
+	{
+		if (!radius_msg_add_attr(msg, attr->type,
+					 wpabuf_head(attr->val),
+					 wpabuf_len(attr->val))) {
+			wpa_printf(MSG_ERROR, "Could not add RADIUS "
+				   "attribute");
+			goto fail;
 		}
 	}
 
@@ -861,12 +908,22 @@ void ieee802_1x_new_station(struct hostapd_data *hapd, struct sta_info *sta)
 	if (!force_1x && !hapd->conf->ieee802_1x) {
 		wpa_printf(MSG_DEBUG, "IEEE 802.1X: Ignore STA - "
 			   "802.1X not enabled or forced for WPS");
+		/*
+		 * Clear any possible EAPOL authenticator state to support
+		 * reassociation change from WPS to PSK.
+		 */
+		ieee802_1x_free_station(sta);
 		return;
 	}
 
 	key_mgmt = wpa_auth_sta_key_mgmt(sta->wpa_sm);
 	if (key_mgmt != -1 && wpa_key_mgmt_wpa_psk(key_mgmt)) {
 		wpa_printf(MSG_DEBUG, "IEEE 802.1X: Ignore STA - using PSK");
+		/*
+		 * Clear any possible EAPOL authenticator state to support
+		 * reassociation change from WPA-EAP to PSK.
+		 */
+		ieee802_1x_free_station(sta);
 		return;
 	}
 
@@ -968,6 +1025,7 @@ void ieee802_1x_free_station(struct sta_info *sta)
 #ifndef CONFIG_NO_RADIUS
 	radius_msg_free(sm->last_recv_radius);
 	radius_free_class(&sm->radius_class);
+	wpabuf_free(sm->radius_cui);
 #endif /* CONFIG_NO_RADIUS */
 
 	os_free(sm->identity);
@@ -1189,6 +1247,32 @@ static void ieee802_1x_update_sta_identity(struct hostapd_data *hapd,
 }
 
 
+/* Update CUI based on Chargeable-User-Identity attribute in Access-Accept */
+static void ieee802_1x_update_sta_cui(struct hostapd_data *hapd,
+				      struct sta_info *sta,
+				      struct radius_msg *msg)
+{
+	struct eapol_state_machine *sm = sta->eapol_sm;
+	struct wpabuf *cui;
+	u8 *buf;
+	size_t len;
+
+	if (sm == NULL)
+		return;
+
+	if (radius_msg_get_attr_ptr(msg, RADIUS_ATTR_CHARGEABLE_USER_IDENTITY,
+				    &buf, &len, NULL) < 0)
+		return;
+
+	cui = wpabuf_alloc_copy(buf, len);
+	if (cui == NULL)
+		return;
+
+	wpabuf_free(sm->radius_cui);
+	sm->radius_cui = cui;
+}
+
+
 struct sta_id_search {
 	u8 identifier;
 	struct eapol_state_machine *sm;
@@ -1348,6 +1432,7 @@ ieee802_1x_receive_auth(struct radius_msg *msg, struct radius_msg *req,
 				    shared_secret_len);
 		ieee802_1x_store_radius_class(hapd, sta, msg);
 		ieee802_1x_update_sta_identity(hapd, sta, msg);
+		ieee802_1x_update_sta_cui(hapd, sta, msg);
 		if (sm->eap_if->eapKeyAvailable &&
 		    wpa_auth_pmksa_add(sta->wpa_sm, sm->eapol_key_crypt,
 				       session_timeout_set ?
@@ -1862,6 +1947,14 @@ u8 * ieee802_1x_get_radius_class(struct eapol_state_machine *sm, size_t *len,
 
 	*len = sm->radius_class.attr[idx].len;
 	return sm->radius_class.attr[idx].data;
+}
+
+
+struct wpabuf * ieee802_1x_get_radius_cui(struct eapol_state_machine *sm)
+{
+	if (sm == NULL)
+		return NULL;
+	return sm->radius_cui;
 }
 
 

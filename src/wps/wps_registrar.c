@@ -1,6 +1,6 @@
 /*
  * Wi-Fi Protected Setup - Registrar
- * Copyright (c) 2008-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -25,6 +25,53 @@
 #ifndef CONFIG_WPS_STRICT
 #define WPS_WORKAROUNDS
 #endif /* CONFIG_WPS_STRICT */
+
+#ifdef CONFIG_WPS_NFC
+
+struct wps_nfc_pw_token {
+	struct dl_list list;
+	u8 pubkey_hash[WPS_OOB_PUBKEY_HASH_LEN];
+	u16 pw_id;
+	u8 dev_pw[WPS_OOB_DEVICE_PASSWORD_LEN];
+	size_t dev_pw_len;
+};
+
+
+static void wps_remove_nfc_pw_token(struct wps_nfc_pw_token *token)
+{
+	dl_list_del(&token->list);
+	os_free(token);
+}
+
+
+static void wps_free_nfc_pw_tokens(struct dl_list *tokens, u16 pw_id)
+{
+	struct wps_nfc_pw_token *token, *prev;
+	dl_list_for_each_safe(token, prev, tokens, struct wps_nfc_pw_token,
+			      list) {
+		if (pw_id == 0 || pw_id == token->pw_id)
+			wps_remove_nfc_pw_token(token);
+	}
+}
+
+
+static struct wps_nfc_pw_token * wps_get_nfc_pw_token(struct dl_list *tokens,
+						      u16 pw_id)
+{
+	struct wps_nfc_pw_token *token;
+	dl_list_for_each(token, tokens, struct wps_nfc_pw_token, list) {
+		if (pw_id == token->pw_id)
+			return token;
+	}
+	return NULL;
+}
+
+#else /* CONFIG_WPS_NFC */
+
+#define wps_free_nfc_pw_tokens(t, p) do { } while (0)
+
+#endif /* CONFIG_WPS_NFC */
+
 
 struct wps_uuid_pin {
 	struct dl_list list;
@@ -102,7 +149,8 @@ struct wps_registrar {
 	void (*pin_needed_cb)(void *ctx, const u8 *uuid_e,
 			      const struct wps_device_data *dev);
 	void (*reg_success_cb)(void *ctx, const u8 *mac_addr,
-			       const u8 *uuid_e);
+			       const u8 *uuid_e, const u8 *dev_pw,
+			       size_t dev_pw_len);
 	void (*set_sel_reg_cb)(void *ctx, int sel_reg, u16 dev_passwd_id,
 			       u16 sel_reg_config_methods);
 	void (*enrollee_seen_cb)(void *ctx, const u8 *addr, const u8 *uuid_e,
@@ -112,6 +160,7 @@ struct wps_registrar {
 	void *cb_ctx;
 
 	struct dl_list pins;
+	struct dl_list nfc_pw_tokens;
 	struct wps_pbc_session *pbc_sessions;
 
 	int skip_cred_build;
@@ -484,12 +533,16 @@ static void wps_set_pushbutton(u16 *methods, u16 conf_methods)
 {
 	*methods |= WPS_CONFIG_PUSHBUTTON;
 #ifdef CONFIG_WPS2
-	if (conf_methods & WPS_CONFIG_VIRT_PUSHBUTTON)
+	if ((conf_methods & WPS_CONFIG_VIRT_PUSHBUTTON) ==
+	    WPS_CONFIG_VIRT_PUSHBUTTON)
 		*methods |= WPS_CONFIG_VIRT_PUSHBUTTON;
-	if (conf_methods & WPS_CONFIG_PHY_PUSHBUTTON)
+	if ((conf_methods & WPS_CONFIG_PHY_PUSHBUTTON) ==
+	    WPS_CONFIG_PHY_PUSHBUTTON)
 		*methods |= WPS_CONFIG_PHY_PUSHBUTTON;
-	if (!(*methods & (WPS_CONFIG_VIRT_PUSHBUTTON |
-			  WPS_CONFIG_PHY_PUSHBUTTON))) {
+	if ((*methods & WPS_CONFIG_VIRT_PUSHBUTTON) !=
+	    WPS_CONFIG_VIRT_PUSHBUTTON &&
+	    (*methods & WPS_CONFIG_PHY_PUSHBUTTON) !=
+	    WPS_CONFIG_PHY_PUSHBUTTON) {
 		/*
 		 * Required to include virtual/physical flag, but we were not
 		 * configured with push button type, so have to default to one
@@ -591,6 +644,7 @@ wps_registrar_init(struct wps_context *wps,
 		return NULL;
 
 	dl_list_init(&reg->pins);
+	dl_list_init(&reg->nfc_pw_tokens);
 	reg->wps = wps;
 	reg->new_psk_cb = cfg->new_psk_cb;
 	reg->set_ie_cb = cfg->set_ie_cb;
@@ -634,6 +688,7 @@ void wps_registrar_deinit(struct wps_registrar *reg)
 	eloop_cancel_timeout(wps_registrar_pbc_timeout, reg, NULL);
 	eloop_cancel_timeout(wps_registrar_set_selected_timeout, reg, NULL);
 	wps_free_pins(&reg->pins);
+	wps_free_nfc_pw_tokens(&reg->nfc_pw_tokens, 0);
 	wps_free_pbc_sessions(reg->pbc_sessions);
 	wpabuf_free(reg->extra_cred);
 	wps_free_devices(reg->devices);
@@ -740,14 +795,22 @@ static void wps_registrar_expire_pins(struct wps_registrar *reg)
 /**
  * wps_registrar_invalidate_wildcard_pin - Invalidate a wildcard PIN
  * @reg: Registrar data from wps_registrar_init()
+ * @dev_pw: PIN to search for or %NULL to match any
+ * @dev_pw_len: Length of dev_pw in octets
  * Returns: 0 on success, -1 if not wildcard PIN is enabled
  */
-static int wps_registrar_invalidate_wildcard_pin(struct wps_registrar *reg)
+static int wps_registrar_invalidate_wildcard_pin(struct wps_registrar *reg,
+						 const u8 *dev_pw,
+						 size_t dev_pw_len)
 {
 	struct wps_uuid_pin *pin, *prev;
 
 	dl_list_for_each_safe(pin, prev, &reg->pins, struct wps_uuid_pin, list)
 	{
+		if (dev_pw && pin->pin &&
+		    (dev_pw_len != pin->pin_len ||
+		     os_memcmp(dev_pw, pin->pin, dev_pw_len) != 0))
+			continue; /* different PIN */
 		if (pin->wildcard_uuid) {
 			wpa_hexdump(MSG_DEBUG, "WPS: Invalidated PIN for UUID",
 				    pin->uuid, WPS_UUID_LEN);
@@ -945,7 +1008,8 @@ static void wps_registrar_pin_completed(struct wps_registrar *reg)
 }
 
 
-void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e)
+void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e,
+			    const u8 *dev_pw, size_t dev_pw_len)
 {
 	if (registrar->pbc) {
 		wps_registrar_remove_pbc_session(registrar,
@@ -953,6 +1017,13 @@ void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e)
 		wps_registrar_pbc_completed(registrar);
 	} else {
 		wps_registrar_pin_completed(registrar);
+	}
+
+	if (dev_pw &&
+	    wps_registrar_invalidate_wildcard_pin(registrar, dev_pw,
+						  dev_pw_len) == 0) {
+		wpa_hexdump_key(MSG_DEBUG, "WPS: Invalidated wildcard PIN",
+				dev_pw, dev_pw_len);
 	}
 }
 
@@ -968,7 +1039,7 @@ int wps_registrar_wps_cancel(struct wps_registrar *reg)
 		/* PIN Method */
 		wpa_printf(MSG_DEBUG, "WPS: PIN is set - cancelling it");
 		wps_registrar_pin_completed(reg);
-		wps_registrar_invalidate_wildcard_pin(reg);
+		wps_registrar_invalidate_wildcard_pin(reg, NULL, 0);
 		return 1;
 	}
 	return 0;
@@ -1071,12 +1142,13 @@ static void wps_cb_pin_needed(struct wps_registrar *reg, const u8 *uuid_e,
 
 
 static void wps_cb_reg_success(struct wps_registrar *reg, const u8 *mac_addr,
-			       const u8 *uuid_e)
+			       const u8 *uuid_e, const u8 *dev_pw,
+			       size_t dev_pw_len)
 {
 	if (reg->reg_success_cb == NULL)
 		return;
 
-	reg->reg_success_cb(reg->cb_ctx, mac_addr, uuid_e);
+	reg->reg_success_cb(reg->cb_ctx, mac_addr, uuid_e, dev_pw, dev_pw_len);
 }
 
 
@@ -1238,6 +1310,13 @@ static int wps_get_dev_password(struct wps_data *wps)
 		wpa_printf(MSG_DEBUG, "WPS: Use default PIN for PBC");
 		pin = (const u8 *) "00000000";
 		pin_len = 8;
+#ifdef CONFIG_WPS_NFC
+	} else if (wps->nfc_pw_token) {
+		wpa_printf(MSG_DEBUG, "WPS: Use OOB Device Password from NFC "
+			   "Password Token");
+		pin = wps->nfc_pw_token->dev_pw;
+		pin_len = wps->nfc_pw_token->dev_pw_len;
+#endif /* CONFIG_WPS_NFC */
 	} else {
 		pin = wps_registrar_get_pin(wps->wps->registrar, wps->uuid_e,
 					    &pin_len);
@@ -2424,8 +2503,34 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 		return WPS_CONTINUE;
 	}
 
+#ifdef CONFIG_WPS_NFC
+	if (wps->dev_pw_id >= 0x10) {
+		struct wps_nfc_pw_token *token;
+		const u8 *addr[1];
+		u8 hash[WPS_HASH_LEN];
+
+		token = wps_get_nfc_pw_token(
+			&wps->wps->registrar->nfc_pw_tokens, wps->dev_pw_id);
+		if (token) {
+			wpa_printf(MSG_DEBUG, "WPS: Found matching NFC "
+				   "Password Token");
+			dl_list_del(&token->list);
+			wps->nfc_pw_token = token;
+
+			addr[0] = attr->public_key;
+			sha256_vector(1, addr, &attr->public_key_len, hash);
+			if (os_memcmp(hash, wps->nfc_pw_token->pubkey_hash,
+				      WPS_OOB_PUBKEY_HASH_LEN) != 0) {
+				wpa_printf(MSG_ERROR, "WPS: Public Key hash "
+					   "mismatch");
+				return WPS_FAILURE;
+			}
+		}
+	}
+#endif /* CONFIG_WPS_NFC */
+
 #ifdef CONFIG_WPS_OOB
-	if (wps->dev_pw_id >= 0x10 &&
+	if (wps->dev_pw_id >= 0x10 && wps->nfc_pw_token == NULL &&
 	    wps->dev_pw_id != wps->wps->oob_dev_pw_id) {
 		wpa_printf(MSG_DEBUG, "WPS: OOB Device Password ID "
 			   "%d mismatch", wps->dev_pw_id);
@@ -3055,7 +3160,8 @@ static enum wps_process_res wps_process_wsc_done(struct wps_data *wps,
 		wps->new_psk = NULL;
 	}
 
-	wps_cb_reg_success(wps->wps->registrar, wps->mac_addr_e, wps->uuid_e);
+	wps_cb_reg_success(wps->wps->registrar, wps->mac_addr_e, wps->uuid_e,
+			   wps->dev_password, wps->dev_password_len);
 
 	if (wps->pbc) {
 		wps_registrar_remove_pbc_session(wps->wps->registrar,
@@ -3348,3 +3454,84 @@ int wps_registrar_config_ap(struct wps_registrar *reg,
 
 	return -1;
 }
+
+
+#ifdef CONFIG_WPS_NFC
+
+int wps_registrar_add_nfc_pw_token(struct wps_registrar *reg,
+				   const u8 *pubkey_hash, u16 pw_id,
+				   const u8 *dev_pw, size_t dev_pw_len)
+{
+	struct wps_nfc_pw_token *token;
+
+	if (dev_pw_len > WPS_OOB_DEVICE_PASSWORD_LEN)
+		return -1;
+
+	wps_free_nfc_pw_tokens(&reg->nfc_pw_tokens, pw_id);
+
+	token = os_zalloc(sizeof(*token));
+	if (token == NULL)
+		return -1;
+
+	os_memcpy(token->pubkey_hash, pubkey_hash, WPS_OOB_PUBKEY_HASH_LEN);
+	token->pw_id = pw_id;
+	os_memcpy(token->dev_pw, dev_pw, dev_pw_len);
+	token->dev_pw_len = dev_pw_len;
+
+	dl_list_add(&reg->nfc_pw_tokens, &token->list);
+
+	reg->selected_registrar = 1;
+	reg->pbc = 0;
+	wps_registrar_add_authorized_mac(reg,
+					 (u8 *) "\xff\xff\xff\xff\xff\xff");
+	wps_registrar_selected_registrar_changed(reg);
+	eloop_cancel_timeout(wps_registrar_set_selected_timeout, reg, NULL);
+	eloop_register_timeout(WPS_PBC_WALK_TIME, 0,
+			       wps_registrar_set_selected_timeout,
+			       reg, NULL);
+
+	return 0;
+}
+
+
+int wps_registrar_add_nfc_password_token(struct wps_registrar *reg,
+					 const u8 *oob_dev_pw,
+					 size_t oob_dev_pw_len)
+{
+	const u8 *pos, *hash, *dev_pw;
+	u16 id;
+	size_t dev_pw_len;
+
+	if (oob_dev_pw_len < WPS_OOB_PUBKEY_HASH_LEN + 2 +
+	    WPS_OOB_DEVICE_PASSWORD_MIN_LEN ||
+	    oob_dev_pw_len > WPS_OOB_PUBKEY_HASH_LEN + 2 +
+	    WPS_OOB_DEVICE_PASSWORD_LEN)
+		return -1;
+
+	hash = oob_dev_pw;
+	pos = oob_dev_pw + WPS_OOB_PUBKEY_HASH_LEN;
+	id = WPA_GET_BE16(pos);
+	dev_pw = pos + 2;
+	dev_pw_len = oob_dev_pw + oob_dev_pw_len - dev_pw;
+
+	wpa_printf(MSG_DEBUG, "WPS: Add NFC Password Token for Password ID %u",
+		   id);
+
+	wpa_hexdump(MSG_DEBUG, "WPS: Public Key Hash",
+		    hash, WPS_OOB_PUBKEY_HASH_LEN);
+	wpa_hexdump_key(MSG_DEBUG, "WPS: Device Password", dev_pw, dev_pw_len);
+
+	return wps_registrar_add_nfc_pw_token(reg, hash, id, dev_pw,
+					      dev_pw_len);
+}
+
+
+void wps_registrar_remove_nfc_pw_token(struct wps_registrar *reg,
+				       struct wps_nfc_pw_token *token)
+{
+	wps_registrar_remove_authorized_mac(reg,
+					    (u8 *) "\xff\xff\xff\xff\xff\xff");
+	wps_registrar_selected_registrar_changed(reg);
+}
+
+#endif /* CONFIG_WPS_NFC */

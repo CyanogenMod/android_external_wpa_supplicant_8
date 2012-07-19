@@ -98,7 +98,7 @@ static int p2p_peer_channels(struct p2p_data *p2p, struct p2p_device *dev,
 }
 
 
-static u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method)
+u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method)
 {
 	switch (wps_method) {
 	case WPS_PIN_DISPLAY:
@@ -155,7 +155,9 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 		group_capab |= P2P_GROUP_CAPAB_CROSS_CONN;
 	if (p2p->cfg->p2p_intra_bss)
 		group_capab |= P2P_GROUP_CAPAB_INTRA_BSS_DIST;
-	p2p_buf_add_capability(buf, p2p->dev_capab, group_capab);
+	p2p_buf_add_capability(buf, p2p->dev_capab &
+			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY,
+			       group_capab);
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) |
 			      p2p->next_tie_breaker);
 	p2p->next_tie_breaker = !p2p->next_tie_breaker;
@@ -184,6 +186,23 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 	struct wpabuf *req;
 	int freq;
 
+	if (dev->flags & P2P_DEV_PD_BEFORE_GO_NEG) {
+		u16 config_method;
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+			"P2P: Use PD-before-GO-Neg workaround for " MACSTR,
+			MAC2STR(dev->info.p2p_device_addr));
+		if (dev->wps_method == WPS_PIN_DISPLAY)
+			config_method = WPS_CONFIG_KEYPAD;
+		else if (dev->wps_method == WPS_PIN_KEYPAD)
+			config_method = WPS_CONFIG_DISPLAY;
+		else if (dev->wps_method == WPS_PBC)
+			config_method = WPS_CONFIG_PUSHBUTTON;
+		else
+			return -1;
+		return p2p_prov_disc_req(p2p, dev->info.p2p_device_addr,
+					 config_method, 0, 0);
+	}
+
 	freq = dev->listen_freq > 0 ? dev->listen_freq : dev->oper_freq;
 	if (freq <= 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -203,9 +222,6 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 	p2p->go_neg_peer = dev;
 	dev->flags |= P2P_DEV_WAIT_GO_NEG_RESPONSE;
 	dev->connect_reqs++;
-#ifdef ANDROID_P2P
-	dev->go_neg_req_sent++;
-#endif
 	if (p2p_send_action(p2p, freq, dev->info.p2p_device_addr,
 			    p2p->cfg->dev_addr, dev->info.p2p_device_addr,
 			    wpabuf_head(req), wpabuf_len(req), 200) < 0) {
@@ -213,7 +229,8 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 			"P2P: Failed to send Action frame");
 		/* Use P2P find to recover and retry */
 		p2p_set_timeout(p2p, 0, 0);
-	}
+	} else
+		dev->go_neg_req_sent++;
 
 	wpabuf_free(req);
 
@@ -253,7 +270,9 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 		if (p2p->cfg->p2p_intra_bss)
 			group_capab |= P2P_GROUP_CAPAB_INTRA_BSS_DIST;
 	}
-	p2p_buf_add_capability(buf, p2p->dev_capab, group_capab);
+	p2p_buf_add_capability(buf, p2p->dev_capab &
+			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY,
+			       group_capab);
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) | tie_breaker);
 	p2p_buf_add_config_timeout(buf, 100, 20);
 	if (peer && peer->go_state == REMOTE_GO) {
@@ -299,6 +318,7 @@ static void p2p_reselect_channel(struct p2p_data *p2p,
 	struct p2p_reg_class *cl;
 	int freq;
 	u8 op_reg_class, op_channel;
+	unsigned int i;
 
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Selected operating "
 		"channel (reg_class %u channel %u) not acceptable to the "
@@ -329,6 +349,21 @@ static void p2p_reselect_channel(struct p2p_data *p2p,
 		p2p->op_reg_class = op_reg_class;
 		p2p->op_channel = op_channel;
 		return;
+	}
+
+	/* Select channel with highest preference if the peer supports it */
+	for (i = 0; p2p->cfg->pref_chan && i < p2p->cfg->num_pref_chan; i++) {
+		if (p2p_channels_includes(intersection,
+					  p2p->cfg->pref_chan[i].op_class,
+					  p2p->cfg->pref_chan[i].chan)) {
+			p2p->op_reg_class = p2p->cfg->pref_chan[i].op_class;
+			p2p->op_channel = p2p->cfg->pref_chan[i].chan;
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Pick "
+				"highest preferred chnnel (op_class %u "
+				"channel %u) from intersection",
+				p2p->op_reg_class, p2p->op_channel);
+			return;
+		}
 	}
 
 	/*
@@ -641,6 +676,17 @@ fail:
 	if (status == P2P_SC_SUCCESS) {
 		p2p->pending_action_state = P2P_PENDING_GO_NEG_RESPONSE;
 		dev->flags |= P2P_DEV_WAIT_GO_NEG_CONFIRM;
+		if (os_memcmp(sa, p2p->cfg->dev_addr, ETH_ALEN) < 0) {
+			/*
+			 * Peer has smaller address, so the GO Negotiation
+			 * Response from us is expected to complete
+			 * negotiation. Ignore a GO Negotiation Response from
+			 * the peer if it happens to be received after this
+			 * point due to a race condition in GO Negotiation
+			 * Request transmission and processing.
+			 */
+			dev->flags &= ~P2P_DEV_WAIT_GO_NEG_RESPONSE;
+		}
 	} else
 		p2p->pending_action_state =
 			P2P_PENDING_GO_NEG_RESPONSE_FAILURE;
@@ -688,7 +734,9 @@ static struct wpabuf * p2p_build_go_neg_conf(struct p2p_data *p2p,
 		if (p2p->cfg->p2p_intra_bss)
 			group_capab |= P2P_GROUP_CAPAB_INTRA_BSS_DIST;
 	}
-	p2p_buf_add_capability(buf, p2p->dev_capab, group_capab);
+	p2p_buf_add_capability(buf, p2p->dev_capab &
+			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY,
+			       group_capab);
 	if (go || resp_chan == NULL)
 		p2p_buf_add_operating_channel(buf, p2p->cfg->country,
 					      p2p->op_reg_class,
@@ -992,7 +1040,7 @@ fail:
 	else
 		freq = dev->listen_freq;
 	if (p2p_send_action(p2p, freq, sa, p2p->cfg->dev_addr, sa,
-			    wpabuf_head(conf), wpabuf_len(conf), 200) < 0) {
+			    wpabuf_head(conf), wpabuf_len(conf), 0) < 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Failed to send Action frame");
 		p2p_go_neg_failed(p2p, dev, -1);

@@ -1,6 +1,6 @@
 /*
  * Interworking (IEEE 802.11u)
- * Copyright (c) 2011, Qualcomm Atheros
+ * Copyright (c) 2011-2012, Qualcomm Atheros, Inc.
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -12,15 +12,18 @@
 #include "common/ieee802_11_defs.h"
 #include "common/gas.h"
 #include "common/wpa_ctrl.h"
+#include "utils/pcsc_funcs.h"
 #include "drivers/driver.h"
 #include "eap_common/eap_defs.h"
 #include "eap_peer/eap_methods.h"
 #include "wpa_supplicant_i.h"
 #include "config.h"
+#include "config_ssid.h"
 #include "bss.h"
 #include "scan.h"
 #include "notify.h"
 #include "gas_query.h"
+#include "hs20_supplicant.h"
 #include "interworking.h"
 
 
@@ -37,6 +40,19 @@
 #endif
 
 static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s);
+
+
+static void interworking_reconnect(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING) {
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_supplicant_deauthenticate(wpa_s,
+					      WLAN_REASON_DEAUTH_LEAVING);
+	}
+	wpa_s->disconnected = 0;
+	wpa_s->reassociate = 1;
+	wpa_supplicant_req_scan(wpa_s, 0, 0);
+}
 
 
 static struct wpabuf * anqp_build_req(u16 info_ids[], size_t num_ids,
@@ -99,6 +115,28 @@ static int interworking_anqp_send_req(struct wpa_supplicant *wpa_s,
 
 	wpa_printf(MSG_DEBUG, "Interworking: ANQP Query Request to " MACSTR,
 		   MAC2STR(bss->bssid));
+
+#ifdef CONFIG_HS20
+	if (wpa_bss_get_vendor_ie(bss, HS20_IE_VENDOR_TYPE)) {
+		u8 *len_pos;
+
+		extra = wpabuf_alloc(100);
+		if (!extra)
+			return -1;
+
+		len_pos = gas_anqp_add_element(extra, ANQP_VENDOR_SPECIFIC);
+		wpabuf_put_be24(extra, OUI_WFA);
+		wpabuf_put_u8(extra, HS20_ANQP_OUI_TYPE);
+		wpabuf_put_u8(extra, HS20_STYPE_QUERY_LIST);
+		wpabuf_put_u8(extra, 0); /* Reserved */
+		wpabuf_put_u8(extra, HS20_STYPE_CAPABILITY_LIST);
+		wpabuf_put_u8(extra, HS20_STYPE_OPERATOR_FRIENDLY_NAME);
+		wpabuf_put_u8(extra, HS20_STYPE_WAN_METRICS);
+		wpabuf_put_u8(extra, HS20_STYPE_CONNECTION_CAPABILITY);
+		wpabuf_put_u8(extra, HS20_STYPE_OPERATING_CLASS);
+		gas_anqp_set_element_len(extra, len_pos);
+	}
+#endif /* CONFIG_HS20 */
 
 	buf = anqp_build_req(info_ids, sizeof(info_ids) / sizeof(info_ids[0]),
 			     extra);
@@ -416,20 +454,41 @@ static int nai_realm_cred_username(struct nai_realm_eap *eap)
 }
 
 
-static struct nai_realm_eap * nai_realm_find_eap(struct wpa_supplicant *wpa_s,
+static int nai_realm_cred_cert(struct nai_realm_eap *eap)
+{
+	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL)
+		return 0; /* method not supported */
+
+	if (eap->method != EAP_TYPE_TLS) {
+		/* Only EAP-TLS supported for credential authentication */
+		return 0;
+	}
+
+	return 1;
+}
+
+
+static struct nai_realm_eap * nai_realm_find_eap(struct wpa_cred *cred,
 						 struct nai_realm *realm)
 {
 	u8 e;
 
-	if (wpa_s->conf->home_username == NULL ||
-	    wpa_s->conf->home_username[0] == '\0' ||
-	    wpa_s->conf->home_password == NULL ||
-	    wpa_s->conf->home_password[0] == '\0')
+	if (cred == NULL ||
+	    cred->username == NULL ||
+	    cred->username[0] == '\0' ||
+	    ((cred->password == NULL ||
+	      cred->password[0] == '\0') &&
+	     (cred->private_key == NULL ||
+	      cred->private_key[0] == '\0')))
 		return NULL;
 
 	for (e = 0; e < realm->eap_count; e++) {
 		struct nai_realm_eap *eap = &realm->eap[e];
-		if (nai_realm_cred_username(eap))
+		if (cred->password && cred->password[0] &&
+		    nai_realm_cred_username(eap))
+			return eap;
+		if (cred->private_key && cred->private_key[0] &&
+		    nai_realm_cred_cert(eap))
 			return eap;
 	}
 
@@ -439,21 +498,17 @@ static struct nai_realm_eap * nai_realm_find_eap(struct wpa_supplicant *wpa_s,
 
 #ifdef INTERWORKING_3GPP
 
-static int plmn_id_match(struct wpabuf *anqp, const char *imsi)
+static int plmn_id_match(struct wpabuf *anqp, const char *imsi, int mnc_len)
 {
-	const char *sep;
 	u8 plmn[3];
 	const u8 *pos, *end;
 	u8 udhl;
 
-	sep = os_strchr(imsi, '-');
-	if (sep == NULL || (sep - imsi != 5 && sep - imsi != 6))
-		return 0;
-
 	/* See Annex A of 3GPP TS 24.234 v8.1.0 for description */
 	plmn[0] = (imsi[0] - '0') | ((imsi[1] - '0') << 4);
 	plmn[1] = imsi[2] - '0';
-	if (sep - imsi == 6)
+	/* default to MNC length 3 if unknown */
+	if (mnc_len != 2)
 		plmn[1] |= (imsi[5] - '0') << 4;
 	else
 		plmn[1] |= 0xf0;
@@ -505,10 +560,11 @@ static int plmn_id_match(struct wpabuf *anqp, const char *imsi)
 }
 
 
-static int set_root_nai(struct wpa_ssid *ssid, const char *imsi, char prefix)
+static int build_root_nai(char *nai, size_t nai_len, const char *imsi,
+			  char prefix)
 {
 	const char *sep, *msin;
-	char nai[100], *end, *pos;
+	char *end, *pos;
 	size_t msin_len, plmn_len;
 
 	/*
@@ -532,8 +588,9 @@ static int set_root_nai(struct wpa_ssid *ssid, const char *imsi, char prefix)
 	msin_len = os_strlen(msin);
 
 	pos = nai;
-	end = pos + sizeof(nai);
-	*pos++ = prefix;
+	end = nai + nai_len;
+	if (prefix)
+		*pos++ = prefix;
 	os_memcpy(pos, imsi, plmn_len);
 	pos += plmn_len;
 	os_memcpy(pos, msin, msin_len);
@@ -551,6 +608,15 @@ static int set_root_nai(struct wpa_ssid *ssid, const char *imsi, char prefix)
 	pos += os_snprintf(pos, end - pos, ".mcc%c%c%c.3gppnetwork.org",
 			   imsi[0], imsi[1], imsi[2]);
 
+	return 0;
+}
+
+
+static int set_root_nai(struct wpa_ssid *ssid, const char *imsi, char prefix)
+{
+	char nai[100];
+	if (build_root_nai(nai, sizeof(nai), imsi, prefix) < 0)
+		return -1;
 	return wpa_config_set_quoted(ssid, "identity", nai);
 }
 
@@ -561,8 +627,46 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 				     struct wpa_bss *bss)
 {
 #ifdef INTERWORKING_3GPP
+	struct wpa_cred *cred;
 	struct wpa_ssid *ssid;
 	const u8 *ie;
+
+	if (bss->anqp_3gpp == NULL)
+		return -1;
+
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		char *sep;
+		const char *imsi;
+		int mnc_len;
+
+#ifdef PCSC_FUNCS
+		if (cred->pcsc && wpa_s->conf->pcsc_reader && wpa_s->scard &&
+		    wpa_s->imsi[0]) {
+			imsi = wpa_s->imsi;
+			mnc_len = wpa_s->mnc_len;
+			goto compare;
+		}
+#endif /* PCSC_FUNCS */
+
+		if (cred->imsi == NULL || !cred->imsi[0] ||
+		    cred->milenage == NULL || !cred->milenage[0])
+			continue;
+
+		sep = os_strchr(cred->imsi, '-');
+		if (sep == NULL ||
+		    (sep - cred->imsi != 5 && sep - cred->imsi != 6))
+			continue;
+		mnc_len = sep - cred->imsi - 3;
+		imsi = cred->imsi;
+
+#ifdef PCSC_FUNCS
+	compare:
+#endif /* PCSC_FUNCS */
+		if (plmn_id_match(bss->anqp_3gpp, imsi, mnc_len))
+			break;
+	}
+	if (cred == NULL)
+		return -1;
 
 	ie = wpa_bss_get_ie(bss, WLAN_EID_SSID);
 	if (ie == NULL)
@@ -576,6 +680,7 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 
 	wpas_notify_network_added(wpa_s, ssid);
 	wpa_config_set_network_defaults(ssid);
+	ssid->priority = cred->priority;
 	ssid->temporary = 1;
 	ssid->ssid = os_zalloc(ie[1] + 1);
 	if (ssid->ssid == NULL)
@@ -588,27 +693,32 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "EAP-SIM not supported");
 		goto fail;
 	}
-	if (set_root_nai(ssid, wpa_s->conf->home_imsi, '1') < 0) {
+	if (cred->pcsc && wpa_s->scard && scard_supports_umts(wpa_s->scard))
+		wpa_config_set(ssid, "eap", "AKA", 0);
+	if (!cred->pcsc && set_root_nai(ssid, cred->imsi, '1') < 0) {
 		wpa_printf(MSG_DEBUG, "Failed to set Root NAI");
 		goto fail;
 	}
 
-	if (wpa_s->conf->home_milenage && wpa_s->conf->home_milenage[0]) {
+	if (cred->milenage && cred->milenage[0]) {
 		if (wpa_config_set_quoted(ssid, "password",
-					  wpa_s->conf->home_milenage) < 0)
+					  cred->milenage) < 0)
 			goto fail;
-	} else {
-		/* TODO: PIN */
+	} else if (cred->pcsc) {
 		if (wpa_config_set_quoted(ssid, "pcsc", "") < 0)
+			goto fail;
+		if (wpa_s->conf->pcsc_pin &&
+		    wpa_config_set_quoted(ssid, "pin", wpa_s->conf->pcsc_pin)
+		    < 0)
 			goto fail;
 	}
 
-	if (wpa_s->conf->home_password && wpa_s->conf->home_password[0] &&
-	    wpa_config_set_quoted(ssid, "password", wpa_s->conf->home_password)
-	    < 0)
+	if (cred->password && cred->password[0] &&
+	    wpa_config_set_quoted(ssid, "password", cred->password) < 0)
 		goto fail;
 
-	wpa_supplicant_select_network(wpa_s, ssid);
+	wpa_config_update_prio_list(wpa_s->conf);
+	interworking_reconnect(wpa_s);
 
 	return 0;
 
@@ -622,6 +732,7 @@ fail:
 
 int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
+	struct wpa_cred *cred;
 	struct wpa_ssid *ssid;
 	struct nai_realm *realm;
 	struct nai_realm_eap *eap = NULL;
@@ -629,7 +740,7 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	char buf[100];
 	const u8 *ie;
 
-	if (bss == NULL)
+	if (wpa_s->conf->cred == NULL || bss == NULL)
 		return -1;
 	ie = wpa_bss_get_ie(bss, WLAN_EID_SSID);
 	if (ie == NULL || ie[1] == 0) {
@@ -645,10 +756,14 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 		count = 0;
 	}
 
-	for (i = 0; i < count; i++) {
-		if (!nai_realm_match(&realm[i], wpa_s->conf->home_realm))
-			continue;
-		eap = nai_realm_find_eap(wpa_s, &realm[i]);
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		for (i = 0; i < count; i++) {
+			if (!nai_realm_match(&realm[i], cred->realm))
+				continue;
+			eap = nai_realm_find_eap(cred, &realm[i]);
+			if (eap)
+				break;
+		}
 		if (eap)
 			break;
 	}
@@ -677,6 +792,7 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	}
 	wpas_notify_network_added(wpa_s, ssid);
 	wpa_config_set_network_defaults(ssid);
+	ssid->priority = cred->priority;
 	ssid->temporary = 1;
 	ssid->ssid = os_zalloc(ie[1] + 1);
 	if (ssid->ssid == NULL)
@@ -688,14 +804,56 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 						     eap->method), 0) < 0)
 		goto fail;
 
-	if (wpa_s->conf->home_username && wpa_s->conf->home_username[0] &&
-	    wpa_config_set_quoted(ssid, "identity",
-				  wpa_s->conf->home_username) < 0)
+	if (eap->method == EAP_TYPE_TTLS &&
+	    cred->username && cred->username[0]) {
+		const char *pos;
+		char *anon;
+		/* Use anonymous NAI in Phase 1 */
+		pos = os_strchr(cred->username, '@');
+		if (pos) {
+			size_t buflen = 9 + os_strlen(pos) + 1;
+			anon = os_malloc(buflen);
+			if (anon == NULL)
+				goto fail;
+			os_snprintf(anon, buflen, "anonymous%s", pos);
+		} else if (cred->realm) {
+			size_t buflen = 10 + os_strlen(cred->realm) + 1;
+			anon = os_malloc(buflen);
+			if (anon == NULL)
+				goto fail;
+			os_snprintf(anon, buflen, "anonymous@%s", cred->realm);
+		} else {
+			anon = os_strdup("anonymous");
+			if (anon == NULL)
+				goto fail;
+		}
+		if (wpa_config_set_quoted(ssid, "anonymous_identity", anon) <
+		    0) {
+			os_free(anon);
+			goto fail;
+		}
+		os_free(anon);
+	}
+
+	if (cred->username && cred->username[0] &&
+	    wpa_config_set_quoted(ssid, "identity", cred->username) < 0)
 		goto fail;
 
-	if (wpa_s->conf->home_password && wpa_s->conf->home_password[0] &&
-	    wpa_config_set_quoted(ssid, "password", wpa_s->conf->home_password)
-	    < 0)
+	if (cred->password && cred->password[0] &&
+	    wpa_config_set_quoted(ssid, "password", cred->password) < 0)
+		goto fail;
+
+	if (cred->client_cert && cred->client_cert[0] &&
+	    wpa_config_set_quoted(ssid, "client_cert", cred->client_cert) < 0)
+		goto fail;
+
+	if (cred->private_key && cred->private_key[0] &&
+	    wpa_config_set_quoted(ssid, "private_key", cred->private_key) < 0)
+		goto fail;
+
+	if (cred->private_key_passwd && cred->private_key_passwd[0] &&
+	    wpa_config_set_quoted(ssid, "private_key_passwd",
+				  cred->private_key_passwd) < 0)
 		goto fail;
 
 	switch (eap->method) {
@@ -737,16 +895,18 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 		if (wpa_config_set(ssid, "phase2", buf, 0) < 0)
 			goto fail;
 		break;
+	case EAP_TYPE_TLS:
+		break;
 	}
 
-	if (wpa_s->conf->home_ca_cert && wpa_s->conf->home_ca_cert[0] &&
-	    wpa_config_set_quoted(ssid, "ca_cert", wpa_s->conf->home_ca_cert) <
-	    0)
+	if (cred->ca_cert && cred->ca_cert[0] &&
+	    wpa_config_set_quoted(ssid, "ca_cert", cred->ca_cert) < 0)
 		goto fail;
 
 	nai_realm_free(realm, count);
 
-	wpa_supplicant_select_network(wpa_s, ssid);
+	wpa_config_update_prio_list(wpa_s->conf);
+	interworking_reconnect(wpa_s);
 
 	return 0;
 
@@ -758,41 +918,71 @@ fail:
 }
 
 
-static int interworking_credentials_available_3gpp(
+static struct wpa_cred * interworking_credentials_available_3gpp(
 	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
-	int ret = 0;
+	struct wpa_cred *cred, *selected = NULL;
+	int ret;
 
 #ifdef INTERWORKING_3GPP
 	if (bss->anqp_3gpp == NULL)
-		return ret;
+		return NULL;
 
-	if (wpa_s->conf->home_imsi == NULL || !wpa_s->conf->home_imsi[0] ||
-	    wpa_s->conf->home_milenage == NULL ||
-	    !wpa_s->conf->home_milenage[0])
-		return ret;
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		char *sep;
+		const char *imsi;
+		int mnc_len;
 
-	wpa_printf(MSG_DEBUG, "Interworking: Parsing 3GPP info from " MACSTR,
-		   MAC2STR(bss->bssid));
-	ret = plmn_id_match(bss->anqp_3gpp, wpa_s->conf->home_imsi);
-	wpa_printf(MSG_DEBUG, "PLMN match %sfound", ret ? "" : "not ");
+#ifdef PCSC_FUNCS
+		if (cred->pcsc && wpa_s->conf->pcsc_reader && wpa_s->scard &&
+		    wpa_s->imsi[0]) {
+			imsi = wpa_s->imsi;
+			mnc_len = wpa_s->mnc_len;
+			goto compare;
+		}
+#endif /* PCSC_FUNCS */
+
+		if (cred->imsi == NULL || !cred->imsi[0] ||
+		    cred->milenage == NULL || !cred->milenage[0])
+			continue;
+
+		sep = os_strchr(cred->imsi, '-');
+		if (sep == NULL ||
+		    (sep - cred->imsi != 5 && sep - cred->imsi != 6))
+			continue;
+		mnc_len = sep - cred->imsi - 3;
+		imsi = cred->imsi;
+
+#ifdef PCSC_FUNCS
+	compare:
+#endif /* PCSC_FUNCS */
+		wpa_printf(MSG_DEBUG, "Interworking: Parsing 3GPP info from "
+			   MACSTR, MAC2STR(bss->bssid));
+		ret = plmn_id_match(bss->anqp_3gpp, imsi, mnc_len);
+		wpa_printf(MSG_DEBUG, "PLMN match %sfound", ret ? "" : "not ");
+		if (ret) {
+			if (selected == NULL ||
+			    selected->priority < cred->priority)
+				selected = cred;
+		}
+	}
 #endif /* INTERWORKING_3GPP */
-	return ret;
+	return selected;
 }
 
 
-static int interworking_credentials_available_realm(
+static struct wpa_cred * interworking_credentials_available_realm(
 	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
+	struct wpa_cred *cred, *selected = NULL;
 	struct nai_realm *realm;
 	u16 count, i;
-	int found = 0;
 
 	if (bss->anqp_nai_realm == NULL)
-		return 0;
+		return NULL;
 
-	if (wpa_s->conf->home_realm == NULL)
-		return 0;
+	if (wpa_s->conf->cred == NULL)
+		return NULL;
 
 	wpa_printf(MSG_DEBUG, "Interworking: Parsing NAI Realm list from "
 		   MACSTR, MAC2STR(bss->bssid));
@@ -800,50 +990,198 @@ static int interworking_credentials_available_realm(
 	if (realm == NULL) {
 		wpa_printf(MSG_DEBUG, "Interworking: Could not parse NAI "
 			   "Realm list from " MACSTR, MAC2STR(bss->bssid));
-		return 0;
+		return NULL;
 	}
 
-	for (i = 0; i < count; i++) {
-		if (!nai_realm_match(&realm[i], wpa_s->conf->home_realm))
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		if (cred->realm == NULL)
 			continue;
-		if (nai_realm_find_eap(wpa_s, &realm[i])) {
-			found++;
-			break;
+
+		for (i = 0; i < count; i++) {
+			if (!nai_realm_match(&realm[i], cred->realm))
+				continue;
+			if (nai_realm_find_eap(cred, &realm[i])) {
+				if (selected == NULL ||
+				    selected->priority < cred->priority)
+					selected = cred;
+				break;
+			}
 		}
 	}
 
 	nai_realm_free(realm, count);
 
-	return found;
+	return selected;
 }
 
 
-static int interworking_credentials_available(struct wpa_supplicant *wpa_s,
-					      struct wpa_bss *bss)
+static struct wpa_cred * interworking_credentials_available(
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
-	return interworking_credentials_available_realm(wpa_s, bss) ||
-		interworking_credentials_available_3gpp(wpa_s, bss);
+	struct wpa_cred *cred, *cred2;
+
+	cred = interworking_credentials_available_realm(wpa_s, bss);
+	cred2 = interworking_credentials_available_3gpp(wpa_s, bss);
+	if (cred && cred2 && cred2->priority >= cred->priority)
+		cred = cred2;
+	if (!cred)
+		cred = cred2;
+
+	return cred;
+}
+
+
+static int domain_name_list_contains(struct wpabuf *domain_names,
+				     const char *domain)
+{
+	const u8 *pos, *end;
+	size_t len;
+
+	len = os_strlen(domain);
+	pos = wpabuf_head(domain_names);
+	end = pos + wpabuf_len(domain_names);
+
+	while (pos + 1 < end) {
+		if (pos + 1 + pos[0] > end)
+			break;
+
+		wpa_hexdump_ascii(MSG_DEBUG, "Interworking: AP domain name",
+				  pos + 1, pos[0]);
+		if (pos[0] == len &&
+		    os_strncasecmp(domain, (const char *) (pos + 1), len) == 0)
+			return 1;
+
+		pos += 1 + pos[0];
+	}
+
+	return 0;
+}
+
+
+static int interworking_home_sp(struct wpa_supplicant *wpa_s,
+				struct wpabuf *domain_names)
+{
+	struct wpa_cred *cred;
+#ifdef INTERWORKING_3GPP
+	char nai[100], *realm;
+#endif /* INTERWORKING_3GPP */
+
+	if (domain_names == NULL || wpa_s->conf->cred == NULL)
+		return -1;
+
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+#ifdef INTERWORKING_3GPP
+		if (cred->imsi &&
+		    build_root_nai(nai, sizeof(nai), cred->imsi, 0) == 0) {
+			realm = os_strchr(nai, '@');
+			if (realm)
+				realm++;
+			wpa_printf(MSG_DEBUG, "Interworking: Search for match "
+				   "with SIM/USIM domain %s", realm);
+			if (realm &&
+			    domain_name_list_contains(domain_names, realm))
+				return 1;
+		}
+#endif /* INTERWORKING_3GPP */
+
+		if (cred->domain == NULL)
+			continue;
+
+		wpa_printf(MSG_DEBUG, "Interworking: Search for match with "
+			   "home SP FQDN %s", cred->domain);
+		if (domain_name_list_contains(domain_names, cred->domain))
+			return 1;
+	}
+
+	return 0;
+}
+
+
+static int interworking_find_network_match(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_bss *bss;
+	struct wpa_ssid *ssid;
+
+	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
+		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+			if (wpas_network_disabled(wpa_s, ssid) ||
+			    ssid->mode != WPAS_MODE_INFRA)
+				continue;
+			if (ssid->ssid_len != bss->ssid_len ||
+			    os_memcmp(ssid->ssid, bss->ssid, ssid->ssid_len) !=
+			    0)
+				continue;
+			/*
+			 * TODO: Consider more accurate matching of security
+			 * configuration similarly to what is done in events.c
+			 */
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 
 static void interworking_select_network(struct wpa_supplicant *wpa_s)
 {
-	struct wpa_bss *bss, *selected = NULL;
+	struct wpa_bss *bss, *selected = NULL, *selected_home = NULL;
+	int selected_prio = -999999, selected_home_prio = -999999;
 	unsigned int count = 0;
+	const char *type;
+	int res;
+	struct wpa_cred *cred;
 
 	wpa_s->network_select = 0;
 
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
-		if (!interworking_credentials_available(wpa_s, bss))
+		cred = interworking_credentials_available(wpa_s, bss);
+		if (!cred)
 			continue;
 		count++;
-		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_AP MACSTR,
-			MAC2STR(bss->bssid));
-		if (selected == NULL && wpa_s->auto_select)
-			selected = bss;
+		res = interworking_home_sp(wpa_s, bss->anqp_domain_name);
+		if (res > 0)
+			type = "home";
+		else if (res == 0)
+			type = "roaming";
+		else
+			type = "unknown";
+		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_AP MACSTR " type=%s",
+			MAC2STR(bss->bssid), type);
+		if (wpa_s->auto_select) {
+			if (selected == NULL ||
+			    cred->priority > selected_prio) {
+				selected = bss;
+				selected_prio = cred->priority;
+			}
+			if (res > 0 &&
+			    (selected_home == NULL ||
+			     cred->priority > selected_home_prio)) {
+				selected_home = bss;
+				selected_home_prio = cred->priority;
+			}
+		}
+	}
+
+	if (selected_home && selected_home != selected &&
+	    selected_home_prio >= selected_prio) {
+		/* Prefer network operated by the Home SP */
+		selected = selected_home;
 	}
 
 	if (count == 0) {
+		/*
+		 * No matching network was found based on configured
+		 * credentials. Check whether any of the enabled network blocks
+		 * have matching APs.
+		 */
+		if (interworking_find_network_match(wpa_s)) {
+			wpa_printf(MSG_DEBUG, "Interworking: Possible BSS "
+				   "match for enabled network configurations");
+			interworking_reconnect(wpa_s);
+			return;
+		}
+
 		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_NO_MATCH "No network "
 			"with matching credentials found");
 	}
@@ -964,6 +1302,9 @@ static void interworking_parse_rx_anqp_resp(struct wpa_supplicant *wpa_s,
 {
 	const u8 *pos = data;
 	struct wpa_bss *bss = wpa_bss_get_bssid(wpa_s, sa);
+#ifdef CONFIG_HS20
+	u8 type;
+#endif /* CONFIG_HS20 */
 
 	switch (info_id) {
 	case ANQP_CAPABILITY_LIST:
@@ -1047,6 +1388,28 @@ static void interworking_parse_rx_anqp_resp(struct wpa_supplicant *wpa_s,
 			return;
 
 		switch (WPA_GET_BE24(pos)) {
+#ifdef CONFIG_HS20
+		case OUI_WFA:
+			pos += 3;
+			slen -= 3;
+
+			if (slen < 1)
+				return;
+			type = *pos++;
+			slen--;
+
+			switch (type) {
+			case HS20_ANQP_OUI_TYPE:
+				hs20_parse_rx_hs20_anqp_resp(wpa_s, sa, pos,
+							     slen);
+				break;
+			default:
+				wpa_printf(MSG_DEBUG, "HS20: Unsupported ANQP "
+					   "vendor type %u", type);
+				break;
+			}
+			break;
+#endif /* CONFIG_HS20 */
 		default:
 			wpa_printf(MSG_DEBUG, "Interworking: Unsupported "
 				   "vendor-specific ANQP OUI %06x",

@@ -1,6 +1,6 @@
 /*
  * HLR/AuC testing gateway for hostapd EAP-SIM/AKA database/authenticator
- * Copyright (c) 2005-2007, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2005-2007, 2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -34,7 +34,11 @@
  * text file in IMSI:Kc:SRES:RAND format, IMSI in ASCII, other fields as hex
  * strings. This is used to simulate an HLR/AuC. As such, it is not very useful
  * for real life authentication, but it is useful both as an example
- * implementation and for EAP-SIM testing.
+ * implementation and for EAP-SIM/AKA/AKA' testing.
+ *
+ * SQN generation follows the not time-based Profile 2 described in
+ * 3GPP TS 33.102 Annex C.3.2. The length of IND is 5 bits by default, but this
+ * can be changed with a command line options if needed.
  */
 
 #include "includes.h"
@@ -47,6 +51,10 @@
 static const char *default_socket_path = "/tmp/hlr_auc_gw.sock";
 static const char *socket_path;
 static int serv_sock = -1;
+static char *milenage_file = NULL;
+static int update_milenage = 0;
+static int sqn_changes = 0;
+static int ind_len = 5;
 
 /* GSM triplets */
 struct gsm_triplet {
@@ -96,7 +104,7 @@ static int open_socket(const char *path)
 	addr.sun_family = AF_UNIX;
 	os_strlcpy(addr.sun_path, path, sizeof(addr.sun_path));
 	if (bind(s, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		perror("bind(PF_UNIX)");
+		perror("hlr-auc-gw: bind(PF_UNIX)");
 		close(s);
 		return -1;
 	}
@@ -210,7 +218,7 @@ static int read_gsm_triplets(const char *fname)
 		gsm_db = g;
 		g = NULL;
 	}
-	free(g);
+	os_free(g);
 
 	fclose(f);
 
@@ -360,11 +368,85 @@ static int read_milenage(const char *fname)
 		milenage_db = m;
 		m = NULL;
 	}
-	free(m);
+	os_free(m);
 
 	fclose(f);
 
 	return ret;
+}
+
+
+static void update_milenage_file(const char *fname)
+{
+	FILE *f, *f2;
+	char buf[500], *pos;
+	char *end = buf + sizeof(buf);
+	struct milenage_parameters *m;
+	size_t imsi_len;
+
+	f = fopen(fname, "r");
+	if (f == NULL) {
+		printf("Could not open Milenage data file '%s'\n", fname);
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "%s.new", fname);
+	f2 = fopen(buf, "w");
+	if (f2 == NULL) {
+		printf("Could not write Milenage data file '%s'\n", buf);
+		fclose(f);
+		return;
+	}
+
+	while (fgets(buf, sizeof(buf), f)) {
+		/* IMSI Ki OPc AMF SQN */
+		buf[sizeof(buf) - 1] = '\0';
+
+		pos = strchr(buf, ' ');
+		if (buf[0] == '#' || pos == NULL || pos - buf >= 20)
+			goto no_update;
+
+		imsi_len = pos - buf;
+
+		for (m = milenage_db; m; m = m->next) {
+			if (strncmp(buf, m->imsi, imsi_len) == 0 &&
+			    m->imsi[imsi_len] == '\0')
+				break;
+		}
+
+		if (!m)
+			goto no_update;
+
+		pos = buf;
+		pos += snprintf(pos, end - pos, "%s ", m->imsi);
+		pos += wpa_snprintf_hex(pos, end - pos, m->ki, 16);
+		*pos++ = ' ';
+		pos += wpa_snprintf_hex(pos, end - pos, m->opc, 16);
+		*pos++ = ' ';
+		pos += wpa_snprintf_hex(pos, end - pos, m->amf, 2);
+		*pos++ = ' ';
+		pos += wpa_snprintf_hex(pos, end - pos, m->sqn, 6);
+		*pos++ = '\n';
+
+	no_update:
+		fprintf(f2, "%s", buf);
+	}
+
+	fclose(f2);
+	fclose(f);
+
+	snprintf(buf, sizeof(buf), "%s.bak", fname);
+	if (rename(fname, buf) < 0) {
+		perror("rename");
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "%s.new", fname);
+	if (rename(buf, fname) < 0) {
+		perror("rename");
+		return;
+	}
+
 }
 
 
@@ -460,6 +542,28 @@ send:
 }
 
 
+static void inc_sqn(u8 *sqn)
+{
+	u64 val, seq, ind;
+
+	/*
+	 * SQN = SEQ | IND = SEQ1 | SEQ2 | IND
+	 *
+	 * The mechanism used here is not time-based, so SEQ2 is void and
+	 * SQN = SEQ1 | IND. The length of IND is ind_len bits and the length
+	 * of SEQ1 is 48 - ind_len bits.
+	 */
+
+	/* Increment both SEQ and IND by one */
+	val = ((u64) WPA_GET_BE32(sqn) << 16) | ((u64) WPA_GET_BE16(sqn + 4));
+	seq = (val >> ind_len) + 1;
+	ind = (val + 1) & ((1 << ind_len) - 1);
+	val = (seq << ind_len) | ind;
+	WPA_PUT_BE32(sqn, val >> 16);
+	WPA_PUT_BE16(sqn + 4, val & 0xffff);
+}
+
+
 static void aka_req_auth(int s, struct sockaddr_un *from, socklen_t fromlen,
 			 char *imsi)
 {
@@ -479,7 +583,8 @@ static void aka_req_auth(int s, struct sockaddr_un *from, socklen_t fromlen,
 		if (random_get_bytes(_rand, EAP_AKA_RAND_LEN) < 0)
 			return;
 		res_len = EAP_AKA_RES_MAX_LEN;
-		inc_byte_array(m->sqn, 6);
+		inc_sqn(m->sqn);
+		sqn_changes = 1;
 		printf("AKA: Milenage with SQN=%02x%02x%02x%02x%02x%02x\n",
 		       m->sqn[0], m->sqn[1], m->sqn[2],
 		       m->sqn[3], m->sqn[4], m->sqn[5]);
@@ -563,6 +668,7 @@ static void aka_auts(int s, struct sockaddr_un *from, socklen_t fromlen,
 		printf("AKA-AUTS: Re-synchronized: "
 		       "SQN=%02x%02x%02x%02x%02x%02x\n",
 		       sqn[0], sqn[1], sqn[2], sqn[3], sqn[4], sqn[5]);
+		sqn_changes = 1;
 	}
 }
 
@@ -609,18 +715,21 @@ static void cleanup(void)
 	struct gsm_triplet *g, *gprev;
 	struct milenage_parameters *m, *prev;
 
+	if (update_milenage && milenage_file && sqn_changes)
+		update_milenage_file(milenage_file);
+
 	g = gsm_db;
 	while (g) {
 		gprev = g;
 		g = g->next;
-		free(gprev);
+		os_free(gprev);
 	}
 
 	m = milenage_db;
 	while (m) {
 		prev = m;
 		m = m->next;
-		free(prev);
+		os_free(prev);
 	}
 
 	close(serv_sock);
@@ -639,18 +748,21 @@ static void usage(void)
 {
 	printf("HLR/AuC testing gateway for hostapd EAP-SIM/AKA "
 	       "database/authenticator\n"
-	       "Copyright (c) 2005-2007, Jouni Malinen <j@w1.fi>\n"
+	       "Copyright (c) 2005-2007, 2012, Jouni Malinen <j@w1.fi>\n"
 	       "\n"
 	       "usage:\n"
-	       "hlr_auc_gw [-h] [-s<socket path>] [-g<triplet file>] "
-	       "[-m<milenage file>]\n"
+	       "hlr_auc_gw [-hu] [-s<socket path>] [-g<triplet file>] "
+	       "[-m<milenage file>] \\\n"
+	       "        [-i<IND len in bits>]\n"
 	       "\n"
 	       "options:\n"
 	       "  -h = show this usage help\n"
+	       "  -u = update SQN in Milenage file on exit\n"
 	       "  -s<socket path> = path for UNIX domain socket\n"
 	       "                    (default: %s)\n"
 	       "  -g<triplet file> = path for GSM authentication triplets\n"
-	       "  -m<milenage file> = path for Milenage keys\n",
+	       "  -m<milenage file> = path for Milenage keys\n"
+	       "  -i<IND len in bits> = IND length for SQN (default: 5)\n",
 	       default_socket_path);
 }
 
@@ -658,13 +770,15 @@ static void usage(void)
 int main(int argc, char *argv[])
 {
 	int c;
-	char *milenage_file = NULL;
 	char *gsm_triplet_file = NULL;
+
+	if (os_program_init())
+		return -1;
 
 	socket_path = default_socket_path;
 
 	for (;;) {
-		c = getopt(argc, argv, "g:hm:s:");
+		c = getopt(argc, argv, "g:hi:m:s:u");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -674,11 +788,21 @@ int main(int argc, char *argv[])
 		case 'h':
 			usage();
 			return 0;
+		case 'i':
+			ind_len = atoi(optarg);
+			if (ind_len < 0 || ind_len > 32) {
+				printf("Invalid IND length\n");
+				return -1;
+			}
+			break;
 		case 'm':
 			milenage_file = optarg;
 			break;
 		case 's':
 			socket_path = optarg;
+			break;
+		case 'u':
+			update_milenage = 1;
 			break;
 		default:
 			usage();
@@ -704,6 +828,8 @@ int main(int argc, char *argv[])
 
 	for (;;)
 		process(serv_sock);
+
+	os_program_deinit();
 
 	return 0;
 }

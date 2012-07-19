@@ -100,6 +100,16 @@ struct hostapd_hw_modes {
 	 */
 	u8 a_mpdu_params;
 
+	/**
+	 * vht_capab - VHT (IEEE 802.11ac) capabilities
+	 */
+	u32 vht_capab;
+
+	/**
+	 * vht_mcs_set - VHT MCS (IEEE 802.11ac) rate parameters
+	 */
+	u8 vht_mcs_set[8];
+
 	unsigned int flags; /* HOSTAPD_MODE_FLAG_* */
 };
 
@@ -331,6 +341,13 @@ struct wpa_driver_associate_params {
 	 * reported in the scan results)
 	 */
 	int freq;
+
+	/**
+	 * bg_scan_period - Background scan period in seconds, 0 to disable
+	 * background scan, or -1 to indicate no change to default driver
+	 * configuration
+	 */
+	int bg_scan_period;
 
 	/**
 	 * wpa_ie - WPA information element for (Re)Association Request
@@ -707,6 +724,13 @@ struct wpa_driver_ap_params {
 	 * enabled.
 	 */
 	u8 access_network_type;
+
+	/**
+	 * ap_max_inactivity - Timeout in seconds to detect STA's inactivity
+	 *
+	 * This is used by driver which advertises this capability.
+	 */
+	int ap_max_inactivity;
 };
 
 /**
@@ -726,6 +750,7 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_CAPA_ENC_WEP104	0x00000002
 #define WPA_DRIVER_CAPA_ENC_TKIP	0x00000004
 #define WPA_DRIVER_CAPA_ENC_CCMP	0x00000008
+#define WPA_DRIVER_CAPA_ENC_WEP128	0x00000010
 	unsigned int enc;
 
 #define WPA_DRIVER_AUTH_OPEN		0x00000001
@@ -790,6 +815,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_PROBE_RESP_OFFLOAD		0x00200000
 /* Driver supports U-APSD in AP mode */
 #define WPA_DRIVER_FLAGS_AP_UAPSD			0x00400000
+/* Driver supports inactivity timer in AP mode */
+#define WPA_DRIVER_FLAGS_INACTIVITY_TIMER		0x00800000
 	unsigned int flags;
 
 	int max_scan_ssids;
@@ -2003,6 +2030,16 @@ struct wpa_driver_ops {
 	int (*deinit_ap)(void *priv);
 
 	/**
+	 * deinit_p2p_cli - Deinitialize P2P client mode
+	 * @priv: Private driver interface data
+	 * Returns: 0 on success, -1 on failure (or if not supported)
+	 *
+	 * This optional function can be used to disable P2P client mode. It
+	 * can be used to change the interface type back to station mode.
+	 */
+	int (*deinit_p2p_cli)(void *priv);
+
+	/**
 	 * suspend - Notification on system suspend/hibernate event
 	 * @priv: Private driver interface data
 	 */
@@ -2508,19 +2545,30 @@ struct wpa_driver_ops {
 	 */
 	void (*poll_client)(void *priv, const u8 *own_addr,
 			    const u8 *addr, int qos);
-#ifdef ANDROID_P2P
+
 	/**
-	 * switch_channel - Announce channel switch and migrate the GO to a
-	 * given frequency.
+	 * radio_disable - Disable/enable radio
 	 * @priv: Private driver interface data
-	 * @freq: frequency in MHz
+	 * @disabled: 1=disable 0=enable radio
 	 * Returns: 0 on success, -1 on failure
 	 *
-	 * This function is used to move the GO to the legacy STA channel to avoid
-	 * frequency conflict in single channel concurrency.
+	 * This optional command is for testing purposes. It can be used to
+	 * disable the radio on a testbed device to simulate out-of-radio-range
+	 * conditions.
+	 */
+	int (*radio_disable)(void *priv, int disabled);
+
+	/**
+	 * switch_channel - Announce channel switch and migrate the GO to the
+	 * given frequency
+	 * @priv: Private driver interface data
+	 * @freq: Frequency in MHz
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function is used to move the GO to the legacy STA channel to
+	 * avoid frequency conflict in single channel concurrency.
 	 */
 	int (*switch_channel)(void *priv, unsigned int freq);
-#endif
 };
 
 
@@ -2951,7 +2999,14 @@ enum wpa_event_type {
 	/**
 	 * EVENT_EAPOL_TX_STATUS - notify of EAPOL TX status
 	 */
-	EVENT_EAPOL_TX_STATUS
+	EVENT_EAPOL_TX_STATUS,
+
+	/**
+	 * EVENT_CH_SWITCH - AP or GO decided to switch channels
+	 *
+	 * Described in wpa_event_data.ch_switch
+	 * */
+	EVENT_CH_SWITCH
 };
 
 
@@ -3267,7 +3322,7 @@ union wpa_event_data {
 		const u8 *frame;
 		size_t frame_len;
 		u32 datarate;
-		u32 ssi_signal;
+		int ssi_signal; /* dBm */
 	} rx_mgmt;
 
 	/**
@@ -3385,6 +3440,11 @@ union wpa_event_data {
 		 * ie_len - Length of ie buffer in octets
 		 */
 		size_t ie_len;
+
+		/**
+		 * signal - signal strength in dBm (or 0 if not available)
+		 */
+		int ssi_signal;
 	} rx_probe_req;
 
 	/**
@@ -3541,6 +3601,18 @@ union wpa_event_data {
 		int data_len;
 		int ack;
 	} eapol_tx_status;
+
+	/**
+	 * struct ch_switch
+	 * @freq: Frequency of new channel in MHz
+	 * @ht_enabled: Whether this is an HT channel
+	 * @ch_offset: Secondary channel offset
+	 */
+	struct ch_switch {
+		int freq;
+		int ht_enabled;
+		int ch_offset;
+	} ch_switch;
 };
 
 /**

@@ -184,6 +184,7 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 				wpa_s = eloop_ctx;
 			}
 			os_memmove(ifname, ifend, strlen(ifend) + 1);
+			wpa_printf(MSG_DEBUG, "wpa_s %p cmd %s", wpa_s, buf);
 		}
 #endif /* defined CONFIG_P2P && defined ANDROID_P2P */
 		reply = wpa_supplicant_ctrl_iface_process(wpa_s, buf,
@@ -397,7 +398,7 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 			}
 			if (bind(priv->sock, (struct sockaddr *) &addr,
 				 sizeof(addr)) < 0) {
-				perror("bind(PF_UNIX)");
+				perror("supp-ctrl-iface-init: bind(PF_UNIX)");
 				goto fail;
 			}
 			wpa_printf(MSG_DEBUG, "Successfully replaced leftover "
@@ -689,7 +690,8 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 	os_strlcpy(addr.sun_path, global->params.ctrl_interface,
 		   sizeof(addr.sun_path));
 	if (bind(priv->sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		perror("bind(PF_UNIX)");
+		perror("supp-global-ctrl-iface-init (will try fixup): "
+		       "bind(PF_UNIX)");
 		if (connect(priv->sock, (struct sockaddr *) &addr,
 			    sizeof(addr)) < 0) {
 			wpa_printf(MSG_DEBUG, "ctrl_iface exists, but does not"
@@ -704,7 +706,7 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 			}
 			if (bind(priv->sock, (struct sockaddr *) &addr,
 				 sizeof(addr)) < 0) {
-				perror("bind(PF_UNIX)");
+				perror("supp-glb-iface-init: bind(PF_UNIX)");
 				goto fail;
 			}
 			wpa_printf(MSG_DEBUG, "Successfully replaced leftover "

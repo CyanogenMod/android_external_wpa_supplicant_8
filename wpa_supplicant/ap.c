@@ -81,14 +81,23 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	 */
 	if (wpa_s->hw.modes) {
 		struct hostapd_hw_modes *mode = NULL;
-		int i;
+		int i, no_ht = 0;
 		for (i = 0; i < wpa_s->hw.num_modes; i++) {
 			if (wpa_s->hw.modes[i].mode == conf->hw_mode) {
 				mode = &wpa_s->hw.modes[i];
 				break;
 			}
 		}
-		if (mode && mode->ht_capab) {
+
+#ifdef CONFIG_HT_OVERRIDES
+		if (ssid->disable_ht) {
+			conf->ieee80211n = 0;
+			conf->ht_capab = 0;
+			no_ht = 1;
+		}
+#endif /* CONFIG_HT_OVERRIDES */
+
+		if (!no_ht && mode && mode->ht_capab) {
 			conf->ieee80211n = 1;
 
 			/*
@@ -145,6 +154,8 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	bss->ssid.ssid_len = ssid->ssid_len;
 	bss->ssid.ssid_set = 1;
 
+	bss->ignore_broadcast_ssid = ssid->ignore_broadcast_ssid;
+
 	if (ssid->auth_alg)
 		bss->auth_algs = ssid->auth_alg;
 
@@ -178,6 +189,12 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		wep->idx = ssid->wep_tx_keyidx;
 		wep->keys_set = 1;
 	}
+
+	if (ssid->ap_max_inactivity)
+		bss->ap_max_inactivity = ssid->ap_max_inactivity;
+
+	if (ssid->dtim_period)
+		bss->dtim_period = ssid->dtim_period;
 
 	/* Select group cipher based on the enabled pairwise cipher suites */
 	pairwise = 0;
@@ -238,7 +255,10 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 			      * configuration */
 #endif /* CONFIG_WPS2 */
 	bss->eap_server = 1;
-	bss->wps_state = 2;
+
+	if (!ssid->ignore_broadcast_ssid)
+		bss->wps_state = 2;
+
 	bss->ap_setup_locked = 2;
 	if (wpa_s->conf->config_methods)
 		bss->config_methods = os_strdup(wpa_s->conf->config_methods);
@@ -261,6 +281,7 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	else
 		os_memcpy(bss->uuid, wpa_s->conf->uuid, WPS_UUID_LEN);
 	os_memcpy(bss->os_version, wpa_s->conf->os_version, 4);
+	bss->pbc_in_m1 = wpa_s->conf->pbc_in_m1;
 no_wps:
 #endif /* CONFIG_WPS */
 
@@ -349,11 +370,13 @@ static int ap_vendor_action_rx(void *ctx, const u8 *buf, size_t len, int freq)
 
 
 static int ap_probe_req_rx(void *ctx, const u8 *sa, const u8 *da,
-			   const u8 *bssid, const u8 *ie, size_t ie_len)
+			   const u8 *bssid, const u8 *ie, size_t ie_len,
+			   int ssi_signal)
 {
 #ifdef CONFIG_P2P
 	struct wpa_supplicant *wpa_s = ctx;
-	return wpas_p2p_probe_req_rx(wpa_s, sa, da, bssid, ie, ie_len);
+	return wpas_p2p_probe_req_rx(wpa_s, sa, da, bssid, ie, ie_len,
+				     ssi_signal);
 #else /* CONFIG_P2P */
 	return 0;
 #endif /* CONFIG_P2P */
@@ -520,9 +543,8 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		hapd_iface->bss[i]->sta_authorized_cb_ctx = wpa_s;
 #ifdef CONFIG_P2P
 		hapd_iface->bss[i]->p2p = wpa_s->global->p2p;
-		hapd_iface->bss[i]->p2p_group = wpas_p2p_group_init(
-			wpa_s, ssid->p2p_persistent_group,
-			ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION);
+		hapd_iface->bss[i]->p2p_group = wpas_p2p_group_init(wpa_s,
+								    ssid);
 #endif /* CONFIG_P2P */
 		hapd_iface->bss[i]->setup_complete_cb = wpas_ap_configured_cb;
 		hapd_iface->bss[i]->setup_complete_cb_ctx = wpa_s;
@@ -651,21 +673,6 @@ int wpa_supplicant_ap_wps_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 }
 
 
-static int wpa_supplicant_ap_wps_sta_cancel(struct hostapd_data *hapd,
-					    struct sta_info *sta, void *ctx)
-{
-	if (sta && (sta->flags & WLAN_STA_WPS)) {
-		ap_sta_deauthenticate(hapd, sta,
-				      WLAN_REASON_PREV_AUTH_NOT_VALID);
-		wpa_printf(MSG_DEBUG, "WPS: %s: Deauth sta=" MACSTR,
-			   __func__, MAC2STR(sta->addr));
-		return 1;
-	}
-
-	return 0;
-}
-
-
 int wpa_supplicant_ap_wps_cancel(struct wpa_supplicant *wpa_s)
 {
 	struct wps_registrar *reg;
@@ -677,7 +684,7 @@ int wpa_supplicant_ap_wps_cancel(struct wpa_supplicant *wpa_s)
 	reg = wpa_s->ap_iface->bss[0]->wps->registrar;
 	reg_sel = wps_registrar_wps_cancel(reg);
 	wps_sta = ap_for_each_sta(wpa_s->ap_iface->bss[0],
-				  wpa_supplicant_ap_wps_sta_cancel, NULL);
+				  ap_sta_wps_cancel, NULL);
 
 	if (!reg_sel && !wps_sta) {
 		wpa_printf(MSG_DEBUG, "No WPS operation in progress at this "
@@ -870,6 +877,26 @@ int ap_ctrl_iface_sta_next(struct wpa_supplicant *wpa_s, const char *txtaddr,
 }
 
 
+int ap_ctrl_iface_sta_disassociate(struct wpa_supplicant *wpa_s,
+				   const char *txtaddr)
+{
+	if (wpa_s->ap_iface == NULL)
+		return -1;
+	return hostapd_ctrl_iface_disassociate(wpa_s->ap_iface->bss[0],
+					       txtaddr);
+}
+
+
+int ap_ctrl_iface_sta_deauthenticate(struct wpa_supplicant *wpa_s,
+				     const char *txtaddr)
+{
+	if (wpa_s->ap_iface == NULL)
+		return -1;
+	return hostapd_ctrl_iface_deauthenticate(wpa_s->ap_iface->bss[0],
+						 txtaddr);
+}
+
+
 int ap_ctrl_iface_wpa_get_status(struct wpa_supplicant *wpa_s, char *buf,
 				 size_t buflen, int verbose)
 {
@@ -927,6 +954,17 @@ int wpa_supplicant_ap_update_beacon(struct wpa_supplicant *wpa_s)
 	hostapd_set_ap_wps_ie(hapd);
 
 	return 0;
+}
+
+
+void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
+		       int offset)
+{
+	if (!wpa_s->ap_iface)
+		return;
+
+	wpa_s->assoc_freq = freq;
+	hostapd_event_ch_switch(wpa_s->ap_iface->bss[0], freq, ht, offset);
 }
 
 

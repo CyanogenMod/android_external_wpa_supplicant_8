@@ -110,6 +110,7 @@ CONFIG_NO_ACCOUNTING=y
 else
 OBJS += ../src/radius/radius.o
 OBJS += ../src/radius/radius_client.o
+OBJS += ../src/radius/radius_das.o
 endif
 
 ifdef CONFIG_NO_ACCOUNTING
@@ -166,6 +167,14 @@ endif
 
 ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
+endif
+
+ifdef CONFIG_WNM
+CFLAGS += -DCONFIG_WNM
+endif
+
+ifdef CONFIG_IEEE80211AC
+CFLAGS += -DCONFIG_IEEE80211AC
 endif
 
 include ../src/drivers/drivers.mak
@@ -752,6 +761,10 @@ ifdef CONFIG_IEEE80211N
 OBJS += ../src/ap/ieee802_11_ht.o
 endif
 
+ifdef CONFIG_IEEE80211AC
+OBJS += ../src/ap/ieee802_11_vht.o
+endif
+
 ifdef CONFIG_P2P_MANAGER
 CFLAGS += -DCONFIG_P2P_MANAGER
 OBJS += ../src/ap/p2p_hostapd.o
@@ -759,6 +772,8 @@ endif
 
 ifdef CONFIG_INTERWORKING
 CFLAGS += -DCONFIG_INTERWORKING
+OBJS += ../src/common/gas.o
+OBJS += ../src/ap/gas_serv.o
 endif
 
 OBJS += ../src/drivers/driver_common.o

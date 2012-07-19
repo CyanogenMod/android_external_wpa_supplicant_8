@@ -26,6 +26,7 @@
 #include "wps_hostapd.h"
 #include "ap_drv_ops.h"
 #include "ap_config.h"
+#include "hw_features.h"
 
 
 int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
@@ -78,10 +79,19 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 	sta = ap_get_sta(hapd, addr);
 	if (sta) {
 		accounting_sta_stop(hapd, sta);
+
+		/*
+		 * Make sure that the previously registered inactivity timer
+		 * will not remove the STA immediately.
+		 */
+		sta->timeout_next = STA_NULLFUNC;
 	} else {
 		sta = ap_sta_add(hapd, addr);
-		if (sta == NULL)
+		if (sta == NULL) {
+			hostapd_drv_sta_disassoc(hapd, addr,
+						 WLAN_REASON_DISASSOC_AP_BUSY);
 			return -1;
+		}
 	}
 	sta->flags &= ~(WLAN_STA_WPS | WLAN_STA_MAYBE_WPS | WLAN_STA_WPS2);
 
@@ -264,8 +274,36 @@ void hostapd_event_sta_low_ack(struct hostapd_data *hapd, const u8 *addr)
 }
 
 
+void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
+			     int offset)
+{
+#ifdef NEED_AP_MLME
+	int channel;
+
+	hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
+		       HOSTAPD_LEVEL_INFO, "driver had channel switch: "
+		       "freq=%d, ht=%d, offset=%d", freq, ht, offset);
+
+	hapd->iface->freq = freq;
+
+	channel = hostapd_hw_get_channel(hapd, freq);
+	if (!channel) {
+		hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_WARNING, "driver switched to "
+			       "bad channel!");
+		return;
+	}
+
+	hapd->iconf->channel = channel;
+	hapd->iconf->ieee80211n = ht;
+	hapd->iconf->secondary_channel = offset;
+#endif /* NEED_AP_MLME */
+}
+
+
 int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
-			 const u8 *bssid, const u8 *ie, size_t ie_len)
+			 const u8 *bssid, const u8 *ie, size_t ie_len,
+			 int ssi_signal)
 {
 	size_t i;
 	int ret = 0;
@@ -276,7 +314,8 @@ int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
 	random_add_randomness(sa, ETH_ALEN);
 	for (i = 0; hapd->probereq_cb && i < hapd->num_probereq_cb; i++) {
 		if (hapd->probereq_cb[i].cb(hapd->probereq_cb[i].ctx,
-					    sa, da, bssid, ie, ie_len) > 0) {
+					    sa, da, bssid, ie, ie_len,
+					    ssi_signal) > 0) {
 			ret = 1;
 			break;
 		}
@@ -541,7 +580,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				     data->rx_probe_req.da,
 				     data->rx_probe_req.bssid,
 				     data->rx_probe_req.ie,
-				     data->rx_probe_req.ie_len);
+				     data->rx_probe_req.ie_len,
+				     data->rx_probe_req.ssi_signal);
 		break;
 	case EVENT_NEW_STA:
 		hostapd_event_new_sta(hapd, data->new_sta.addr);
@@ -578,6 +618,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		hostapd_rx_action(hapd, &data->rx_action);
 		break;
 #endif /* NEED_AP_MLME */
+	case EVENT_CH_SWITCH:
+		if (!data)
+			break;
+		hostapd_event_ch_switch(hapd, data->ch_switch.freq,
+					data->ch_switch.ht_enabled,
+					data->ch_switch.ch_offset);
+		break;
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown event %d", event);
 		break;

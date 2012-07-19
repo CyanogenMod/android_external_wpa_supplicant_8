@@ -21,6 +21,7 @@
 #include "eap_server/tncs.h"
 #include "ap/hostapd.h"
 #include "ap/ap_config.h"
+#include "ap/ap_drv_ops.h"
 #include "config_file.h"
 #include "eap_register.h"
 #include "dump_state.h"
@@ -40,29 +41,6 @@ struct hapd_global {
 };
 
 static struct hapd_global global;
-
-
-struct hapd_interfaces {
-	size_t count;
-	struct hostapd_iface **iface;
-};
-
-
-static int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
-				      int (*cb)(struct hostapd_iface *iface,
-						void *ctx), void *ctx)
-{
-	size_t i;
-	int ret;
-
-	for (i = 0; i < interfaces->count; i++) {
-		ret = cb(interfaces->iface[i], ctx);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
 
 
 #ifndef CONFIG_NO_HOSTAPD_LOGGER
@@ -315,7 +293,7 @@ static void hostapd_interface_deinit_free(struct hostapd_iface *iface)
 	driver = iface->bss[0]->driver;
 	drv_priv = iface->bss[0]->drv_priv;
 	hostapd_interface_deinit(iface);
-	if (driver && driver->hapd_deinit)
+	if (driver && driver->hapd_deinit && drv_priv)
 		driver->hapd_deinit(drv_priv);
 	hostapd_interface_free(iface);
 }
@@ -339,10 +317,13 @@ hostapd_interface_init(struct hapd_interfaces *interfaces,
 			iface->bss[0]->conf->logger_stdout_level--;
 	}
 
-	if (hostapd_driver_init(iface) ||
-	    hostapd_setup_interface(iface)) {
-		hostapd_interface_deinit_free(iface);
-		return NULL;
+	if (iface->conf->bss[0].iface[0] != 0 ||
+	    hostapd_drv_none(iface->bss[0])) {
+		if (hostapd_driver_init(iface) ||
+			hostapd_setup_interface(iface)) {
+			hostapd_interface_deinit_free(iface);
+			return NULL;
+		}
 	}
 
 	return iface;

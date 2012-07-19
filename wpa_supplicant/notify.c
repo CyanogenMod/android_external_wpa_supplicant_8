@@ -82,7 +82,7 @@ void wpas_notify_state_changed(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_P2P
 	if (new_state == WPA_COMPLETED)
 		wpas_p2p_notif_connected(wpa_s);
-	else if (new_state < WPA_ASSOCIATED)
+	else if (old_state >= WPA_ASSOCIATED && new_state < WPA_ASSOCIATED)
 		wpas_p2p_notif_disconnected(wpa_s);
 #endif /* CONFIG_P2P */
 
@@ -98,6 +98,12 @@ void wpas_notify_state_changed(struct wpa_supplicant *wpa_s,
 		     wpa_ssid_txt(wpa_s->current_ssid->ssid,
 		     wpa_s->current_ssid->ssid_len): "");
 #endif /* ANDROID */
+}
+
+
+void wpas_notify_disconnect_reason(struct wpa_supplicant *wpa_s)
+{
+	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_DISCONNECT_REASON);
 }
 
 
@@ -605,4 +611,21 @@ void wpas_notify_certification(struct wpa_supplicant *wpa_s, int depth,
 						 cert_hash, cert);
 	/* notify the new DBus API */
 	wpas_dbus_signal_certification(wpa_s, depth, subject, cert_hash, cert);
+}
+
+
+void wpas_notify_preq(struct wpa_supplicant *wpa_s,
+		      const u8 *addr, const u8 *dst, const u8 *bssid,
+		      const u8 *ie, size_t ie_len, u32 ssi_signal)
+{
+#ifdef CONFIG_AP
+	wpas_dbus_signal_preq(wpa_s, addr, dst, bssid, ie, ie_len, ssi_signal);
+#endif /* CONFIG_AP */
+}
+
+
+void wpas_notify_eap_status(struct wpa_supplicant *wpa_s, const char *status,
+			    const char *parameter)
+{
+	wpas_dbus_signal_eap_status(wpa_s, status, parameter);
 }

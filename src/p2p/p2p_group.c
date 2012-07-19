@@ -135,11 +135,10 @@ static void p2p_client_info(struct wpabuf *ie, struct p2p_group_member *m)
 static void p2p_group_add_common_ies(struct p2p_group *group,
 				     struct wpabuf *ie)
 {
-	u8 dev_capab = 0, group_capab = 0;
+	u8 dev_capab = group->p2p->dev_capab, group_capab = 0;
 
 	/* P2P Capability */
-	dev_capab |= P2P_DEV_CAPAB_SERVICE_DISCOVERY;
-	dev_capab |= P2P_DEV_CAPAB_INVITATION_PROCEDURE;
+	dev_capab &= ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY;
 	group_capab |= P2P_GROUP_CAPAB_GROUP_OWNER;
 	if (group->cfg->persistent_group) {
 		group_capab |= P2P_GROUP_CAPAB_PERSISTENT_GROUP;
@@ -730,4 +729,16 @@ int p2p_group_is_client_connected(struct p2p_group *group, const u8 *dev_addr)
 	}
 
 	return 0;
+}
+
+
+int p2p_group_is_group_id_match(struct p2p_group *group, const u8 *group_id,
+				size_t group_id_len)
+{
+	if (group_id_len != ETH_ALEN + group->cfg->ssid_len)
+		return 0;
+	if (os_memcmp(group_id, group->p2p->cfg->dev_addr, ETH_ALEN) != 0)
+		return 0;
+	return os_memcmp(group_id + ETH_ALEN, group->cfg->ssid,
+			 group->cfg->ssid_len) == 0;
 }

@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant - command line interface for wpa_supplicant daemon
- * Copyright (c) 2004-2011, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -20,6 +20,7 @@
 #include "utils/edit.h"
 #include "utils/list.h"
 #include "common/version.h"
+#include "common/ieee802_11_defs.h"
 #ifdef ANDROID
 #include <cutils/properties.h>
 #endif /* ANDROID */
@@ -873,6 +874,78 @@ static int wpa_cli_cmd_wps_oob(struct wpa_ctrl *ctrl, int argc, char *argv[])
 #endif /* CONFIG_WPS_OOB */
 
 
+#ifdef CONFIG_WPS_NFC
+
+static int wpa_cli_cmd_wps_nfc(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc >= 1)
+		res = os_snprintf(cmd, sizeof(cmd), "WPS_NFC %s",
+				  argv[0]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd), "WPS_NFC");
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long WPS_NFC command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_wps_nfc_token(struct wpa_ctrl *ctrl, int argc,
+				     char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc != 1) {
+		printf("Invalid WPS_NFC_TOKEN command: need one argument:\n"
+		       "format: WPS or NDEF\n");
+		return -1;
+	}
+	if (argc >= 1)
+		res = os_snprintf(cmd, sizeof(cmd), "WPS_NFC_TOKEN %s",
+				  argv[0]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd), "WPS_NFC_TOKEN");
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long WPS_NFC_TOKEN command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_wps_nfc_tag_read(struct wpa_ctrl *ctrl, int argc,
+					char *argv[])
+{
+	int ret;
+	char *buf;
+	size_t buflen;
+
+	if (argc != 1) {
+		printf("Invalid 'wps_nfc_tag_read' command - one argument "
+		       "is required.\n");
+		return -1;
+	}
+
+	buflen = 18 + os_strlen(argv[0]);
+	buf = os_malloc(buflen);
+	if (buf == NULL)
+		return -1;
+	os_snprintf(buf, buflen, "WPS_NFC_TAG_READ %s", argv[0]);
+
+	ret = wpa_ctrl_command(ctrl, buf);
+	os_free(buf);
+
+	return ret;
+}
+
+#endif /* CONFIG_WPS_NFC */
+
+
 static int wpa_cli_cmd_wps_reg(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	char cmd[256];
@@ -1126,6 +1199,32 @@ static int wpa_cli_cmd_wps_er_config(struct wpa_ctrl *ctrl, int argc,
 	}
 	return wpa_ctrl_command(ctrl, cmd);
 }
+
+
+#ifdef CONFIG_WPS_NFC
+static int wpa_cli_cmd_wps_er_nfc_config_token(struct wpa_ctrl *ctrl, int argc,
+					       char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc != 2) {
+		printf("Invalid WPS_ER_NFC_CONFIG_TOKEN command: need two "
+		       "arguments:\n"
+		       "- WPS/NDEF: token format\n"
+		       "- UUID: specify which AP to use\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "WPS_ER_NFC_CONFIG_TOKEN %s %s",
+			  argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long WPS_ER_NFC_CONFIG_TOKEN command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+#endif /* CONFIG_WPS_NFC */
 
 
 static int wpa_cli_cmd_ibss_rsn(struct wpa_ctrl *ctrl, int argc, char *argv[])
@@ -1490,7 +1589,12 @@ static int wpa_cli_cmd_enable_network(struct wpa_ctrl *ctrl, int argc,
 		return -1;
 	}
 
-	res = os_snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %s", argv[0]);
+	if (argc > 1)
+		res = os_snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %s %s",
+				  argv[0], argv[1]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %s",
+				  argv[0]);
 	if (res < 0 || (size_t) res >= sizeof(cmd))
 		return -1;
 	cmd[sizeof(cmd) - 1] = '\0';
@@ -1623,6 +1727,61 @@ static int wpa_cli_cmd_get_network(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_list_creds(struct wpa_ctrl *ctrl, int argc,
+				  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "LIST_CREDS");
+}
+
+
+static int wpa_cli_cmd_add_cred(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "ADD_CRED");
+}
+
+
+static int wpa_cli_cmd_remove_cred(struct wpa_ctrl *ctrl, int argc,
+				   char *argv[])
+{
+	char cmd[32];
+	int res;
+
+	if (argc < 1) {
+		printf("Invalid REMOVE_CRED command: needs one argument "
+		       "(cred id)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "REMOVE_CRED %s", argv[0]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_set_cred(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc != 3) {
+		printf("Invalid SET_CRED command: needs three arguments\n"
+		       "(cred id, variable name, and value)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "SET_CRED %s %s %s",
+			  argv[0], argv[1], argv[2]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long SET_CRED command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
 static int wpa_cli_cmd_disconnect(struct wpa_ctrl *ctrl, int argc,
 				  char *argv[])
 {
@@ -1668,8 +1827,9 @@ static int wpa_cli_cmd_bss(struct wpa_ctrl *ctrl, int argc, char *argv[])
 		return -1;
 	}
 
-	res = os_snprintf(cmd, sizeof(cmd), "BSS %s\t%s\t%s", argv[0],
-			  argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "");
+	res = os_snprintf(cmd, sizeof(cmd), "BSS %s%s%s%s%s", argv[0],
+			  argc > 1 ? " " : "", argc > 1 ? argv[1] : "",
+			  argc > 2 ? " " : "", argc > 2 ? argv[2] : "");
 
 	if (res < 0 || (size_t) res >= sizeof(cmd))
 		return -1;
@@ -1848,7 +2008,7 @@ static int wpa_ctrl_command_sta(struct wpa_ctrl *ctrl, char *cmd,
 		return -1;
 	}
 	len = sizeof(buf) - 1;
-	ret = wpa_ctrl_request(ctrl, cmd, strlen(cmd), buf, &len,
+	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len,
 			       wpa_cli_msg_cb);
 	if (ret == -2) {
 		printf("'%s' command timed out.\n", cmd);
@@ -1859,7 +2019,7 @@ static int wpa_ctrl_command_sta(struct wpa_ctrl *ctrl, char *cmd,
 	}
 
 	buf[len] = '\0';
-	if (memcmp(buf, "FAIL", 4) == 0)
+	if (os_memcmp(buf, "FAIL", 4) == 0)
 		return -1;
 	printf("%s", buf);
 
@@ -1883,6 +2043,42 @@ static int wpa_cli_cmd_all_sta(struct wpa_ctrl *ctrl, int argc, char *argv[])
 	} while (wpa_ctrl_command_sta(ctrl, cmd, addr, sizeof(addr)) == 0);
 
 	return -1;
+}
+
+
+static int wpa_cli_cmd_deauthenticate(struct wpa_ctrl *ctrl, int argc,
+				      char *argv[])
+{
+	char buf[64];
+	if (argc < 1) {
+		printf("Invalid 'deauthenticate' command - exactly one "
+		       "argument, STA address, is required.\n");
+		return -1;
+	}
+	if (argc > 1)
+		os_snprintf(buf, sizeof(buf), "DEAUTHENTICATE %s %s",
+			    argv[0], argv[1]);
+	else
+		os_snprintf(buf, sizeof(buf), "DEAUTHENTICATE %s", argv[0]);
+	return wpa_ctrl_command(ctrl, buf);
+}
+
+
+static int wpa_cli_cmd_disassociate(struct wpa_ctrl *ctrl, int argc,
+				    char *argv[])
+{
+	char buf[64];
+	if (argc < 1) {
+		printf("Invalid 'disassociate' command - exactly one "
+		       "argument, STA address, is required.\n");
+		return -1;
+	}
+	if (argc > 1)
+		os_snprintf(buf, sizeof(buf), "DISASSOCIATE %s %s",
+			    argv[0], argv[1]);
+	else
+		os_snprintf(buf, sizeof(buf), "DISASSOCIATE %s", argv[0]);
+	return wpa_ctrl_command(ctrl, buf);
 }
 #endif /* CONFIG_AP */
 
@@ -1968,7 +2164,14 @@ static int wpa_cli_cmd_p2p_connect(struct wpa_ctrl *ctrl, int argc,
 		       "arguments (address and pbc/PIN)\n");
 		return -1;
 	}
-
+#ifdef ANDROID_P2P
+	if (argc > 5)
+		res = os_snprintf(cmd, sizeof(cmd),
+				  "P2P_CONNECT %s %s %s %s %s %s",
+				  argv[0], argv[1], argv[2], argv[3],
+				  argv[4], argv[5]);
+	else
+#endif
 	if (argc > 4)
 		res = os_snprintf(cmd, sizeof(cmd),
 				  "P2P_CONNECT %s %s %s %s %s",
@@ -2357,7 +2560,7 @@ static int wpa_ctrl_command_p2p_peer(struct wpa_ctrl *ctrl, char *cmd,
 	if (ctrl_conn == NULL)
 		return -1;
 	len = sizeof(buf) - 1;
-	ret = wpa_ctrl_request(ctrl, cmd, strlen(cmd), buf, &len,
+	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len,
 			       wpa_cli_msg_cb);
 	if (ret == -2) {
 		printf("'%s' command timed out.\n", cmd);
@@ -2368,7 +2571,7 @@ static int wpa_ctrl_command_p2p_peer(struct wpa_ctrl *ctrl, char *cmd,
 	}
 
 	buf[len] = '\0';
-	if (memcmp(buf, "FAIL", 4) == 0)
+	if (os_memcmp(buf, "FAIL", 4) == 0)
 		return -1;
 
 	pos = buf;
@@ -2588,6 +2791,60 @@ static int wpa_cli_cmd_anqp_get(struct wpa_ctrl *ctrl, int argc, char *argv[])
 #endif /* CONFIG_INTERWORKING */
 
 
+#ifdef CONFIG_HS20
+
+static int wpa_cli_cmd_hs20_anqp_get(struct wpa_ctrl *ctrl, int argc,
+				     char *argv[])
+{
+	char cmd[100];
+	int res;
+
+	if (argc != 2) {
+		printf("Invalid HS20_ANQP_GET command: needs two arguments "
+		       "(addr and subtype list)\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "HS20_ANQP_GET %s %s",
+			  argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd))
+		return -1;
+	cmd[sizeof(cmd) - 1] = '\0';
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_get_nai_home_realm_list(struct wpa_ctrl *ctrl, int argc,
+					       char *argv[])
+{
+	char cmd[512];
+	int res;
+
+	if (argc == 0) {
+		printf("Command needs one or two arguments (dst mac addr and "
+		       "optional home realm)\n");
+		return -1;
+	}
+
+	if (argc == 1)
+		res = os_snprintf(cmd, sizeof(cmd),
+				  "HS20_GET_NAI_HOME_REALM_LIST %s",
+				  argv[0]);
+	else
+		res = os_snprintf(cmd, sizeof(cmd),
+				  "HS20_GET_NAI_HOME_REALM_LIST %s %s",
+				  argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long command.\n");
+		return -1;
+	}
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+#endif /* CONFIG_HS20 */
+
+
 static int wpa_cli_cmd_sta_autoconnect(struct wpa_ctrl *ctrl, int argc,
 				       char *argv[])
 {
@@ -2683,6 +2940,29 @@ static int wpa_cli_cmd_reauthenticate(struct wpa_ctrl *ctrl, int argc,
 {
 	return wpa_ctrl_command(ctrl, "REAUTHENTICATE");
 }
+
+
+#ifdef CONFIG_AUTOSCAN
+
+static int wpa_cli_cmd_autoscan(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	if (argc == 0)
+		return wpa_ctrl_command(ctrl, "AUTOSCAN ");
+
+	res = os_snprintf(cmd, sizeof(cmd), "AUTOSCAN %s", argv[0]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long AUTOSCAN command.\n");
+		return -1;
+	}
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+#endif /* CONFIG_AUTOSCAN */
+
 
 #ifdef ANDROID
 static int wpa_cli_cmd_driver(struct wpa_ctrl *ctrl, int argc, char *argv[])
@@ -2827,6 +3107,18 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "get_network", wpa_cli_cmd_get_network,
 	  cli_cmd_flag_none,
 	  "<network id> <variable> = get network variables" },
+	{ "list_creds", wpa_cli_cmd_list_creds,
+	  cli_cmd_flag_none,
+	  "= list configured credentials" },
+	{ "add_cred", wpa_cli_cmd_add_cred,
+	  cli_cmd_flag_none,
+	  "= add a credential" },
+	{ "remove_cred", wpa_cli_cmd_remove_cred,
+	  cli_cmd_flag_none,
+	  "<cred id> = remove a credential" },
+	{ "set_cred", wpa_cli_cmd_set_cred,
+	  cli_cmd_flag_sensitive,
+	  "<cred id> <variable> <value> = set credential variables" },
 	{ "save_config", wpa_cli_cmd_save_config,
 	  cli_cmd_flag_none,
 	  "= save the current configuration" },
@@ -2903,6 +3195,17 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  cli_cmd_flag_sensitive,
 	  "<DEV_TYPE> <PATH> <METHOD> [DEV_NAME] = start WPS OOB" },
 #endif /* CONFIG_WPS_OOB */
+#ifdef CONFIG_WPS_NFC
+	{ "wps_nfc", wpa_cli_cmd_wps_nfc,
+	  cli_cmd_flag_none,
+	  "[BSSID] = start Wi-Fi Protected Setup: NFC" },
+	{ "wps_nfc_token", wpa_cli_cmd_wps_nfc_token,
+	  cli_cmd_flag_none,
+	  "<WPS|NDEF> = create password token" },
+	{ "wps_nfc_tag_read", wpa_cli_cmd_wps_nfc_tag_read,
+	  cli_cmd_flag_sensitive,
+	  "<hexdump of payload> = report read NFC tag with WPS data" },
+#endif /* CONFIG_WPS_NFC */
 	{ "wps_reg", wpa_cli_cmd_wps_reg,
 	  cli_cmd_flag_sensitive,
 	  "<BSSID> <AP PIN> = start WPS Registrar to configure an AP" },
@@ -2930,6 +3233,11 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "wps_er_config", wpa_cli_cmd_wps_er_config,
 	  cli_cmd_flag_sensitive,
 	  "<UUID> <PIN> <SSID> <auth> <encr> <key> = configure AP" },
+#ifdef CONFIG_WPS_NFC
+	{ "wps_er_nfc_config_token", wpa_cli_cmd_wps_er_nfc_config_token,
+	  cli_cmd_flag_none,
+	  "<WPS/NDEF> <UUID> = build NFC configuration token" },
+#endif /* CONFIG_WPS_NFC */
 	{ "ibss_rsn", wpa_cli_cmd_ibss_rsn,
 	  cli_cmd_flag_none,
 	  "<addr> = request RSN authentication with <addr> in IBSS" },
@@ -2940,6 +3248,12 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "all_sta", wpa_cli_cmd_all_sta,
 	  cli_cmd_flag_none,
 	  "= get information about all associated stations (AP)" },
+	{ "deauthenticate", wpa_cli_cmd_deauthenticate,
+	  cli_cmd_flag_none,
+	  "<addr> = deauthenticate a station" },
+	{ "disassociate", wpa_cli_cmd_disassociate,
+	  cli_cmd_flag_none,
+	  "<addr> = disassociate a station" },
 #endif /* CONFIG_AP */
 	{ "suspend", wpa_cli_cmd_suspend, cli_cmd_flag_none,
 	  "= notification of suspend/hibernate" },
@@ -3034,6 +3348,14 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "anqp_get", wpa_cli_cmd_anqp_get, cli_cmd_flag_none,
 	  "<addr> <info id>[,<info id>]... = request ANQP information" },
 #endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_HS20
+	{ "hs20_anqp_get", wpa_cli_cmd_hs20_anqp_get, cli_cmd_flag_none,
+	  "<addr> <subtype>[,<subtype>]... = request HS 2.0 ANQP information"
+	},
+	{ "nai_home_realm_list", wpa_cli_cmd_get_nai_home_realm_list,
+	  cli_cmd_flag_none,
+	  "<addr> <home realm> = get HS20 nai home realm list" },
+#endif /* CONFIG_HS20 */
 	{ "sta_autoconnect", wpa_cli_cmd_sta_autoconnect, cli_cmd_flag_none,
 	  "<0/1> = disable/enable automatic reconnection" },
 	{ "tdls_discover", wpa_cli_cmd_tdls_discover,
@@ -3050,6 +3372,10 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "= get signal parameters" },
 	{ "reauthenticate", wpa_cli_cmd_reauthenticate, cli_cmd_flag_none,
 	  "= trigger IEEE 802.1X/EAPOL reauthentication" },
+#ifdef CONFIG_AUTOSCAN
+	{ "autoscan", wpa_cli_cmd_autoscan, cli_cmd_flag_none,
+	  "[params] = Set or unset (if none) autoscan parameters" },
+#endif /* CONFIG_AUTOSCAN */
 #ifdef ANDROID
 	{ "driver", wpa_cli_cmd_driver,
 	  cli_cmd_flag_none,
@@ -3758,8 +4084,9 @@ int main(int argc, char *argv[])
 		ctrl_conn = wpa_ctrl_open(global);
 #endif /* CONFIG_CTRL_IFACE_NAMED_PIPE */
 		if (ctrl_conn == NULL) {
-			perror("Failed to connect to wpa_supplicant - "
-			       "wpa_ctrl_open");
+			fprintf(stderr, "Failed to connect to wpa_supplicant "
+				"global interface: %s  error: %s\n",
+				global, strerror(errno));
 			return -1;
 		}
 	}
@@ -3781,8 +4108,8 @@ int main(int argc, char *argv[])
 			}
 
 			if (!warning_displayed) {
-				printf("Could not connect to wpa_supplicant - "
-				       "re-trying\n");
+				printf("Could not connect to wpa_supplicant: "
+				       "%s - re-trying\n", ctrl_ifname);
 				warning_displayed = 1;
 			}
 			os_sleep(1, 0);
@@ -3791,8 +4118,9 @@ int main(int argc, char *argv[])
 	} else {
 		if (!global &&
 		    wpa_cli_open_connection(ctrl_ifname, 0) < 0) {
-			perror("Failed to connect to wpa_supplicant - "
-			       "wpa_ctrl_open");
+			fprintf(stderr, "Failed to connect to non-global "
+				"ctrl_ifname: %s  error: %s\n",
+				ctrl_ifname, strerror(errno));
 			return -1;
 		}
 

@@ -1,6 +1,6 @@
 /*
  * wpa_supplicant / WPS integration
- * Copyright (c) 2008-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -59,9 +59,15 @@ int wpas_wps_er_set_config(struct wpa_supplicant *wpa_s, const char *uuid,
 			   int id);
 int wpas_wps_er_config(struct wpa_supplicant *wpa_s, const char *uuid,
 		       const char *pin, struct wps_new_ap_settings *settings);
+struct wpabuf * wpas_wps_er_nfc_config_token(struct wpa_supplicant *wpa_s,
+					     int ndef, const char *uuid);
 int wpas_wps_terminate_pending(struct wpa_supplicant *wpa_s);
 int wpas_wps_in_progress(struct wpa_supplicant *wpa_s);
 void wpas_wps_update_config(struct wpa_supplicant *wpa_s);
+struct wpabuf * wpas_wps_nfc_token(struct wpa_supplicant *wpa_s, int ndef);
+int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *bssid);
+int wpas_wps_nfc_tag_read(struct wpa_supplicant *wpa_s,
+			  const struct wpabuf *data);
 
 #else /* CONFIG_WPS */
 

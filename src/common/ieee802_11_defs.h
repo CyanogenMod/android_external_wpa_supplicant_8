@@ -228,12 +228,25 @@
 #define WLAN_EID_20_40_BSS_INTOLERANT 73
 #define WLAN_EID_OVERLAPPING_BSS_SCAN_PARAMS 74
 #define WLAN_EID_MMIE 76
+#define WLAN_EID_BSS_MAX_IDLE_PERIOD 90
+#define WLAN_EID_TFS_REQ 91
+#define WLAN_EID_TFS_RESP 92
+#define WLAN_EID_WNMSLEEP 93
 #define WLAN_EID_TIME_ZONE 98
 #define WLAN_EID_LINK_ID 101
 #define WLAN_EID_INTERWORKING 107
 #define WLAN_EID_ADV_PROTO 108
 #define WLAN_EID_ROAMING_CONSORTIUM 111
 #define WLAN_EID_EXT_CAPAB 127
+#define WLAN_EID_VHT_CAP 191
+#define WLAN_EID_VHT_OPERATION 192
+#define WLAN_EID_VHT_EXTENDED_BSS_LOAD 193
+#define WLAN_EID_VHT_WIDE_BW_CHSWITCH  194
+#define WLAN_EID_VHT_TRANSMIT_POWER_ENVELOPE 195
+#define WLAN_EID_VHT_CHANNEL_SWITCH_WRAPPER 196
+#define WLAN_EID_VHT_AID 197
+#define WLAN_EID_VHT_QUIET_CHANNEL 198
+#define WLAN_EID_VHT_OPERATING_MODE_NOTIFICATION 199
 #define WLAN_EID_VENDOR_SPECIFIC 221
 
 
@@ -254,6 +267,7 @@
 #define WLAN_ACTION_VENDOR_SPECIFIC 127
 
 /* Public action codes */
+#define WLAN_PA_20_40_BSS_COEX 0
 #define WLAN_PA_VENDOR_SPECIFIC 9
 #define WLAN_PA_GAS_INITIAL_REQ 10
 #define WLAN_PA_GAS_INITIAL_RESP 11
@@ -487,6 +501,17 @@ struct ieee80211_mgmt {
 				} STRUCT_PACKED sa_query_resp;
 				struct {
 					u8 action;
+					u8 dialogtoken;
+					u8 variable[0];
+				} STRUCT_PACKED wnm_sleep_req;
+				struct {
+					u8 action;
+					u8 dialogtoken;
+					le16 keydata_len;
+					u8 variable[0];
+				} STRUCT_PACKED wnm_sleep_resp;
+				struct {
+					u8 action;
 					u8 variable[0];
 				} STRUCT_PACKED public_action;
 				struct {
@@ -532,6 +557,19 @@ struct ieee80211_ht_operation {
 	le16 operation_mode;
 	le16 stbc_param;
 	u8 basic_set[16];
+} STRUCT_PACKED;
+
+
+struct ieee80211_vht_capabilities {
+	le32 vht_capabilities_info;
+	u8 vht_supported_mcs_set[8];
+} STRUCT_PACKED;
+
+struct ieee80211_vht_operation {
+	u8 vht_op_info_chwidth;
+	u8 vht_op_info_chan_center_freq_seg0_idx;
+	u8 vht_op_info_chan_center_freq_seg1_idx;
+	le16 vht_basic_mcs_set;
 } STRUCT_PACKED;
 
 #ifdef _MSC_VER
@@ -630,12 +668,40 @@ struct ieee80211_ht_operation {
 
 #define BSS_MEMBERSHIP_SELECTOR_HT_PHY 127
 
+/* VHT Defines */
+#define VHT_CAP_MAX_MPDU_LENGTH_7991                ((u32) BIT(0))
+#define VHT_CAP_MAX_MPDU_LENGTH_11454               ((u32) BIT(1))
+#define VHT_CAP_SUPP_CHAN_WIDTH_160MHZ              ((u32) BIT(2))
+#define VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ     ((u32) BIT(3))
+#define VHT_CAP_RXLDPC                              ((u32) BIT(4))
+#define VHT_CAP_SHORT_GI_80                         ((u32) BIT(5))
+#define VHT_CAP_SHORT_GI_160                        ((u32) BIT(6))
+#define VHT_CAP_TXSTBC                              ((u32) BIT(7))
+#define VHT_CAP_RXSTBC_1                            ((u32) BIT(8))
+#define VHT_CAP_RXSTBC_2                            ((u32) BIT(9))
+#define VHT_CAP_RXSTBC_3                            ((u32) BIT(8) | BIT(9))
+#define VHT_CAP_RXSTBC_4                            ((u32) BIT(10))
+#define VHT_CAP_SU_BEAMFORMER_CAPABLE               ((u32) BIT(11))
+#define VHT_CAP_SU_BEAMFORMEE_CAPABLE               ((u32) BIT(12))
+#define VHT_CAP_BEAMFORMER_ANTENNAS_MAX             ((u32) BIT(13) | BIT(14))
+#define VHT_CAP_SOUNDING_DIMENTION_MAX              ((u32) BIT(16) | BIT(17))
+#define VHT_CAP_MU_BEAMFORMER_CAPABLE               ((u32) BIT(19))
+#define VHT_CAP_MU_BEAMFORMEE_CAPABLE               ((u32) BIT(20))
+#define VHT_CAP_VHT_TXOP_PS                         ((u32) BIT(21))
+#define VHT_CAP_HTC_VHT                             ((u32) BIT(22))
+#define VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT          ((u32) BIT(23))
+#define VHT_CAP_VHT_LINK_ADAPTATION_VHT_UNSOL_MFB   ((u32) BIT(27))
+#define VHT_CAP_VHT_LINK_ADAPTATION_VHT_MRQ_MFB     ((u32) BIT(26) | BIT(27))
+#define VHT_CAP_RX_ANTENNA_PATTERN                  ((u32) BIT(28))
+#define VHT_CAP_TX_ANTENNA_PATTERN                  ((u32) BIT(29))
+
 #define OUI_MICROSOFT 0x0050f2 /* Microsoft (also used in Wi-Fi specs)
 				* 00:50:F2 */
 #define WPA_IE_VENDOR_TYPE 0x0050f201
 #define WPS_IE_VENDOR_TYPE 0x0050f204
 #define OUI_WFA 0x506f9a
 #define P2P_IE_VENDOR_TYPE 0x506f9a09
+#define HS20_IE_VENDOR_TYPE 0x506f9a10
 
 #define WMM_OUI_TYPE 2
 #define WMM_OUI_SUBTYPE_INFORMATION_ELEMENT 0
@@ -748,6 +814,16 @@ enum {
 	WMM_AC_VO = 3 /* Voice */
 };
 
+
+#define HS20_INDICATION_OUI_TYPE 16
+#define HS20_ANQP_OUI_TYPE 17
+#define HS20_STYPE_QUERY_LIST 1
+#define HS20_STYPE_CAPABILITY_LIST 2
+#define HS20_STYPE_OPERATOR_FRIENDLY_NAME 3
+#define HS20_STYPE_WAN_METRICS 4
+#define HS20_STYPE_CONNECTION_CAPABILITY 5
+#define HS20_STYPE_NAI_HOME_REALM_QUERY 6
+#define HS20_STYPE_OPERATING_CLASS 7
 
 /* Wi-Fi Direct (P2P) */
 
@@ -914,5 +990,49 @@ enum wnm_action {
 #define WNM_BSS_TM_REQ_DISASSOC_IMMINENT BIT(2)
 #define WNM_BSS_TM_REQ_BSS_TERMINATION_INCLUDED BIT(3)
 #define WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT BIT(4)
+
+/* IEEE Std 802.11-2012, 8.4.2.62 20/40 BSS Coexistence element */
+#define WLAN_20_40_BSS_COEX_INFO_REQ            BIT(0)
+#define WLAN_20_40_BSS_COEX_40MHZ_INTOL         BIT(1)
+#define WLAN_20_40_BSS_COEX_20MHZ_WIDTH_REQ     BIT(2)
+#define WLAN_20_40_BSS_COEX_OBSS_EXEMPT_REQ     BIT(3)
+#define WLAN_20_40_BSS_COEX_OBSS_EXEMPT_GRNT    BIT(4)
+
+struct ieee80211_2040_bss_coex_ie {
+	u8 element_id;
+	u8 length;
+	u8 coex_param;
+} STRUCT_PACKED;
+
+struct ieee80211_2040_intol_chan_report {
+	u8 element_id;
+	u8 length;
+	u8 op_class;
+	u8 variable[0];	/* Channel List */
+} STRUCT_PACKED;
+
+/* IEEE 802.11v - WNM-Sleep Mode element */
+struct wnm_sleep_element {
+	u8 eid;     /* WLAN_EID_WNMSLEEP */
+	u8 len;
+	u8 action_type; /* WLAN_WNM_SLEEP_ENTER/EXIT */
+	u8 status;
+	le16 intval;
+} STRUCT_PACKED;
+
+enum wnm_sleep_mode_response_status {
+	WNM_STATUS_SLEEP_ACCEPT = 0,
+	WNM_STATUS_SLEEP_EXIT_ACCEPT_GTK_UPDATE = 1,
+	WNM_STATUS_DENIED_ACTION = 2,
+	WNM_STATUS_DENIED_TMP = 3,
+	WNM_STATUS_DENIED_KEY = 4,
+	WNM_STATUS_DENIED_OTHER_WNM_SERVICE = 5
+};
+
+/* WNM-Sleep Mode subelement IDs */
+enum wnm_sleep_mode_subelement_id {
+	WNM_SLEEP_SUBELEM_GTK = 0,
+	WNM_SLEEP_SUBELEM_IGTK = 1
+};
 
 #endif /* IEEE802_11_DEFS_H */

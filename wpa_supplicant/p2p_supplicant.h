@@ -19,8 +19,9 @@ void wpas_p2p_deinit(struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit_global(struct wpa_global *global);
 int wpas_p2p_connect(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		     const char *pin, enum p2p_wps_method wps_method,
-		     int persistent_group, int join, int auth, int go_intent,
-		     int freq);
+		     int persistent_group, int auto_join, int join,
+		     int auth, int go_intent, int freq, int persistent_id,
+		     int pd);
 void wpas_p2p_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 				   unsigned int freq, unsigned int duration);
 void wpas_p2p_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
@@ -36,12 +37,17 @@ int wpas_p2p_group_add_persistent(struct wpa_supplicant *wpa_s,
 				  struct wpa_ssid *ssid, int addr_allocated,
 				  int freq);
 struct p2p_group * wpas_p2p_group_init(struct wpa_supplicant *wpa_s,
-				       int persistent_group,
-				       int group_formation);
+				       struct wpa_ssid *ssid);
 void wpas_p2p_wps_success(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 			  int registrar);
+enum wpas_p2p_prov_disc_use {
+	WPAS_P2P_PD_FOR_GO_NEG,
+	WPAS_P2P_PD_FOR_JOIN,
+	WPAS_P2P_PD_AUTO
+};
 int wpas_p2p_prov_disc(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
-		       const char *config_method, int join);
+		       const char *config_method,
+		       enum wpas_p2p_prov_disc_use use);
 void wpas_send_action_tx_status(struct wpa_supplicant *wpa_s, const u8 *dst,
 				const u8 *data, size_t data_len,
 				enum p2p_send_action_result result);
@@ -58,7 +64,8 @@ int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 			  u8 *buf, size_t len, int p2p_group);
 int wpas_p2p_probe_req_rx(struct wpa_supplicant *wpa_s, const u8 *addr,
 			  const u8 *dst, const u8 *bssid,
-			  const u8 *ie, size_t ie_len);
+			  const u8 *ie, size_t ie_len,
+			  int ssi_signal);
 void wpas_p2p_rx_action(struct wpa_supplicant *wpa_s, const u8 *da,
 			const u8 *sa, const u8 *bssid,
 			u8 category, const u8 *data, size_t len, int freq);
@@ -108,9 +115,11 @@ int wpas_p2p_presence_req(struct wpa_supplicant *wpa_s, u32 duration1,
 int wpas_p2p_ext_listen(struct wpa_supplicant *wpa_s, unsigned int period,
 			unsigned int interval);
 void wpas_p2p_deauth_notif(struct wpa_supplicant *wpa_s, const u8 *bssid,
-			   u16 reason_code, const u8 *ie, size_t ie_len);
+			   u16 reason_code, const u8 *ie, size_t ie_len,
+			   int locally_generated);
 void wpas_p2p_disassoc_notif(struct wpa_supplicant *wpa_s, const u8 *bssid,
-			     u16 reason_code, const u8 *ie, size_t ie_len);
+			     u16 reason_code, const u8 *ie, size_t ie_len,
+			     int locally_generated);
 void wpas_p2p_update_config(struct wpa_supplicant *wpa_s);
 int wpas_p2p_set_noa(struct wpa_supplicant *wpa_s, u8 count, int start,
 		     int duration);
@@ -135,5 +144,6 @@ struct wpa_ssid * wpas_p2p_get_persistent(struct wpa_supplicant *wpa_s,
 					  size_t ssid_len);
 void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 				       const u8 *addr);
+int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s);
 
 #endif /* P2P_SUPPLICANT_H */

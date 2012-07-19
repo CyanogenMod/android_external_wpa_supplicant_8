@@ -227,6 +227,12 @@ CFLAGS += -DCONFIG_P2P_STRICT
 endif
 endif
 
+ifdef CONFIG_HS20
+OBJS += hs20_supplicant.o
+CFLAGS += -DCONFIG_HS20
+CONFIG_INTERWORKING=y
+endif
+
 ifdef CONFIG_INTERWORKING
 OBJS += interworking.o
 CFLAGS += -DCONFIG_INTERWORKING
@@ -716,6 +722,10 @@ ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
 endif
 
+ifdef CONFIG_WNM
+CFLAGS += -DCONFIG_WNM
+endif
+
 ifdef NEED_AP_MLME
 OBJS += ../src/ap/wmm.o
 OBJS += ../src/ap/ap_list.o
@@ -727,6 +737,9 @@ ifdef CONFIG_WPS
 CFLAGS += -DEAP_SERVER_WSC
 OBJS += ../src/ap/wps_hostapd.o
 OBJS += ../src/eap_server/eap_server_wsc.o
+endif
+ifdef CONFIG_INTERWORKING
+OBJS += ../src/ap/gas_serv.o
 endif
 endif
 
@@ -1270,6 +1283,10 @@ CFLAGS += -DLOG_HOSTAPD="$(CONFIG_DEBUG_SYSLOG_FACILITY)"
 endif
 endif
 
+ifdef CONFIG_DEBUG_LINUX_TRACING
+CFLAGS += -DCONFIG_DEBUG_LINUX_TRACING
+endif
+
 ifdef CONFIG_DEBUG_FILE
 CFLAGS += -DCONFIG_DEBUG_FILE
 endif
@@ -1304,6 +1321,23 @@ CFLAGS += -DCONFIG_BGSCAN
 OBJS += bgscan.o
 endif
 
+ifdef CONFIG_AUTOSCAN_EXPONENTIAL
+CFLAGS += -DCONFIG_AUTOSCAN_EXPONENTIAL
+OBJS += autoscan_exponential.o
+NEED_AUTOSCAN=y
+endif
+
+ifdef CONFIG_AUTOSCAN_PERIODIC
+CFLAGS += -DCONFIG_AUTOSCAN_PERIODIC
+OBJS += autoscan_periodic.o
+NEED_AUTOSCAN=y
+endif
+
+ifdef NEED_AUTOSCAN
+CFLAGS += -DCONFIG_AUTOSCAN
+OBJS += autoscan.o
+endif
+
 ifdef NEED_GAS
 OBJS += ../src/common/gas.o
 OBJS += gas_query.o
@@ -1332,6 +1366,10 @@ ifndef CONFIG_AP
 OBJS_t += ../src/utils/ip_addr.o
 endif
 OBJS_t2 := $(OBJS) $(OBJS_l2) preauth_test.o
+
+OBJS_nfc := $(OBJS) $(OBJS_l2) nfc_pw_token.o
+OBJS_nfc += $(OBJS_d) ../src/drivers/drivers.o
+
 OBJS += $(CONFIG_MAIN).o
 
 ifdef CONFIG_PRIVSEP
@@ -1440,6 +1478,10 @@ test_wpa: $(OBJS_wpa) $(OBJS_h)
 	$(Q)$(LDO) $(LDFLAGS) -o test_wpa $(OBJS_wpa) $(LIBS)
 	@$(E) "  LD " $@
 
+nfc_pw_token: $(OBJS_nfc)
+	$(Q)$(LDO) $(LDFLAGS) -o nfc_pw_token $(OBJS_nfc) $(LIBS)
+	@$(E) "  LD " $@
+
 win_if_list: win_if_list.c
 	$(Q)$(LDO) $(LDFLAGS) -o $@ win_if_list.c $(CFLAGS) $(LIBS_w)
 	@$(E) "  LD " $@
@@ -1522,5 +1564,6 @@ clean:
 	$(MAKE) -C dbus clean
 	rm -f core *~ *.o *.d eap_*.so $(ALL) $(WINALL) eapol_test preauth_test
 	rm -f wpa_priv
+	rm -f nfc_pw_token
 
 -include $(OBJS:%.o=%.d)

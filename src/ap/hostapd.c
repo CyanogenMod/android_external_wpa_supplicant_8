@@ -1,6 +1,6 @@
 /*
  * hostapd / Initialization and configuration
- * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -12,6 +12,7 @@
 #include "utils/eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "radius/radius_client.h"
+#include "radius/radius_das.h"
 #include "drivers/driver.h"
 #include "hostapd.h"
 #include "authsrv.h"
@@ -30,13 +31,31 @@
 #include "ap_drv_ops.h"
 #include "ap_config.h"
 #include "p2p_hostapd.h"
+#include "gas_serv.h"
 
 
-static int hostapd_flush_old_stations(struct hostapd_data *hapd);
+static int hostapd_flush_old_stations(struct hostapd_data *hapd, u16 reason);
 static int hostapd_setup_encryption(char *iface, struct hostapd_data *hapd);
 static int hostapd_broadcast_wep_clear(struct hostapd_data *hapd);
 
 extern int wpa_debug_level;
+
+
+int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
+			       int (*cb)(struct hostapd_iface *iface,
+					 void *ctx), void *ctx)
+{
+	size_t i;
+	int ret;
+
+	for (i = 0; i < interfaces->count; i++) {
+		ret = cb(interfaces->iface[i], ctx);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
 
 
 static void hostapd_reload_bss(struct hostapd_data *hapd)
@@ -105,7 +124,8 @@ int hostapd_reload_config(struct hostapd_iface *iface)
 	 * allow them to use the BSS anymore.
 	 */
 	for (j = 0; j < iface->num_bss; j++) {
-		hostapd_flush_old_stations(iface->bss[j]);
+		hostapd_flush_old_stations(iface->bss[j],
+					   WLAN_REASON_PREV_AUTH_NOT_VALID);
 		hostapd_broadcast_wep_clear(iface->bss[j]);
 
 #ifndef CONFIG_NO_RADIUS
@@ -210,21 +230,9 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 	return errors;
 }
 
-/**
- * hostapd_cleanup - Per-BSS cleanup (deinitialization)
- * @hapd: Pointer to BSS data
- *
- * This function is used to free all per-BSS data structures and resources.
- * This gets called in a loop for each BSS between calls to
- * hostapd_cleanup_iface_pre() and hostapd_cleanup_iface() when an interface
- * is deinitialized. Most of the modules that are initialized in
- * hostapd_setup_bss() are deinitialized here.
- */
-static void hostapd_cleanup(struct hostapd_data *hapd)
-{
-	if (hapd->iface->ctrl_iface_deinit)
-		hapd->iface->ctrl_iface_deinit(hapd);
 
+static void hostapd_free_hapd_data(struct hostapd_data *hapd)
+{
 	iapp_deinit(hapd->iapp);
 	hapd->iapp = NULL;
 	accounting_deinit(hapd);
@@ -234,6 +242,8 @@ static void hostapd_cleanup(struct hostapd_data *hapd)
 #ifndef CONFIG_NO_RADIUS
 	radius_client_deinit(hapd->radius);
 	hapd->radius = NULL;
+	radius_das_deinit(hapd->radius_das);
+	hapd->radius_das = NULL;
 #endif /* CONFIG_NO_RADIUS */
 
 	hostapd_deinit_wps(hapd);
@@ -257,6 +267,28 @@ static void hostapd_cleanup(struct hostapd_data *hapd)
 #endif /* CONFIG_P2P */
 
 	wpabuf_free(hapd->time_adv);
+
+#ifdef CONFIG_INTERWORKING
+	gas_serv_deinit(hapd);
+#endif /* CONFIG_INTERWORKING */
+}
+
+
+/**
+ * hostapd_cleanup - Per-BSS cleanup (deinitialization)
+ * @hapd: Pointer to BSS data
+ *
+ * This function is used to free all per-BSS data structures and resources.
+ * This gets called in a loop for each BSS between calls to
+ * hostapd_cleanup_iface_pre() and hostapd_cleanup_iface() when an interface
+ * is deinitialized. Most of the modules that are initialized in
+ * hostapd_setup_bss() are deinitialized here.
+ */
+static void hostapd_cleanup(struct hostapd_data *hapd)
+{
+	if (hapd->iface->ctrl_iface_deinit)
+		hapd->iface->ctrl_iface_deinit(hapd);
+	hostapd_free_hapd_data(hapd);
 }
 
 
@@ -272,6 +304,18 @@ static void hostapd_cleanup_iface_pre(struct hostapd_iface *iface)
 }
 
 
+static void hostapd_cleanup_iface_partial(struct hostapd_iface *iface)
+{
+	hostapd_free_hw_features(iface->hw_features, iface->num_hw_features);
+	iface->hw_features = NULL;
+	os_free(iface->current_rates);
+	iface->current_rates = NULL;
+	os_free(iface->basic_rates);
+	iface->basic_rates = NULL;
+	ap_list_deinit(iface);
+}
+
+
 /**
  * hostapd_cleanup_iface - Complete per-interface cleanup
  * @iface: Pointer to interface data
@@ -281,19 +325,22 @@ static void hostapd_cleanup_iface_pre(struct hostapd_iface *iface)
  */
 static void hostapd_cleanup_iface(struct hostapd_iface *iface)
 {
-	hostapd_free_hw_features(iface->hw_features, iface->num_hw_features);
-	iface->hw_features = NULL;
-	os_free(iface->current_rates);
-	iface->current_rates = NULL;
-	os_free(iface->basic_rates);
-	iface->basic_rates = NULL;
-	ap_list_deinit(iface);
+	hostapd_cleanup_iface_partial(iface);
 	hostapd_config_free(iface->conf);
 	iface->conf = NULL;
 
 	os_free(iface->config_fname);
 	os_free(iface->bss);
 	os_free(iface);
+}
+
+
+static void hostapd_clear_wep(struct hostapd_data *hapd)
+{
+	if (hapd->drv_priv) {
+		hostapd_set_privacy(hapd, 0);
+		hostapd_broadcast_wep_clear(hapd);
+	}
 }
 
 
@@ -333,7 +380,7 @@ static int hostapd_setup_encryption(char *iface, struct hostapd_data *hapd)
 }
 
 
-static int hostapd_flush_old_stations(struct hostapd_data *hapd)
+static int hostapd_flush_old_stations(struct hostapd_data *hapd, u16 reason)
 {
 	int ret = 0;
 	u8 addr[ETH_ALEN];
@@ -349,7 +396,7 @@ static int hostapd_flush_old_stations(struct hostapd_data *hapd)
 	}
 	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "Deauthenticate all stations");
 	os_memset(addr, 0xff, ETH_ALEN);
-	hostapd_drv_sta_deauth(hapd, addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
+	hostapd_drv_sta_deauth(hapd, addr, reason);
 	hostapd_free_stas(hapd);
 
 	return ret;
@@ -464,6 +511,86 @@ static int mac_in_conf(struct hostapd_config *conf, const void *a)
 }
 
 
+#ifndef CONFIG_NO_RADIUS
+
+static int hostapd_das_nas_mismatch(struct hostapd_data *hapd,
+				    struct radius_das_attrs *attr)
+{
+	/* TODO */
+	return 0;
+}
+
+
+static struct sta_info * hostapd_das_find_sta(struct hostapd_data *hapd,
+					      struct radius_das_attrs *attr)
+{
+	struct sta_info *sta = NULL;
+	char buf[128];
+
+	if (attr->sta_addr)
+		sta = ap_get_sta(hapd, attr->sta_addr);
+
+	if (sta == NULL && attr->acct_session_id &&
+	    attr->acct_session_id_len == 17) {
+		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			os_snprintf(buf, sizeof(buf), "%08X-%08X",
+				    sta->acct_session_id_hi,
+				    sta->acct_session_id_lo);
+			if (os_memcmp(attr->acct_session_id, buf, 17) == 0)
+				break;
+		}
+	}
+
+	if (sta == NULL && attr->cui) {
+		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			struct wpabuf *cui;
+			cui = ieee802_1x_get_radius_cui(sta->eapol_sm);
+			if (cui && wpabuf_len(cui) == attr->cui_len &&
+			    os_memcmp(wpabuf_head(cui), attr->cui,
+				      attr->cui_len) == 0)
+				break;
+		}
+	}
+
+	if (sta == NULL && attr->user_name) {
+		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			u8 *identity;
+			size_t identity_len;
+			identity = ieee802_1x_get_identity(sta->eapol_sm,
+							   &identity_len);
+			if (identity &&
+			    identity_len == attr->user_name_len &&
+			    os_memcmp(identity, attr->user_name, identity_len)
+			    == 0)
+				break;
+		}
+	}
+
+	return sta;
+}
+
+
+static enum radius_das_res
+hostapd_das_disconnect(void *ctx, struct radius_das_attrs *attr)
+{
+	struct hostapd_data *hapd = ctx;
+	struct sta_info *sta;
+
+	if (hostapd_das_nas_mismatch(hapd, attr))
+		return RADIUS_DAS_NAS_MISMATCH;
+
+	sta = hostapd_das_find_sta(hapd, attr);
+	if (sta == NULL)
+		return RADIUS_DAS_SESSION_NOT_FOUND;
+
+	hostapd_drv_sta_deauth(hapd, sta->addr,
+			       WLAN_REASON_PREV_AUTH_NOT_VALID);
+	ap_sta_deauthenticate(hapd, sta, WLAN_REASON_PREV_AUTH_NOT_VALID);
+
+	return RADIUS_DAS_SUCCESS;
+}
+
+#endif /* CONFIG_NO_RADIUS */
 
 
 /**
@@ -519,7 +646,7 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	if (conf->wmm_enabled < 0)
 		conf->wmm_enabled = hapd->iconf->ieee80211n;
 
-	hostapd_flush_old_stations(hapd);
+	hostapd_flush_old_stations(hapd, WLAN_REASON_PREV_AUTH_NOT_VALID);
 	hostapd_set_privacy(hapd, 0);
 
 	hostapd_broadcast_wep_clear(hapd);
@@ -583,6 +710,27 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 		wpa_printf(MSG_ERROR, "RADIUS client initialization failed.");
 		return -1;
 	}
+
+	if (hapd->conf->radius_das_port) {
+		struct radius_das_conf das_conf;
+		os_memset(&das_conf, 0, sizeof(das_conf));
+		das_conf.port = hapd->conf->radius_das_port;
+		das_conf.shared_secret = hapd->conf->radius_das_shared_secret;
+		das_conf.shared_secret_len =
+			hapd->conf->radius_das_shared_secret_len;
+		das_conf.client_addr = &hapd->conf->radius_das_client_addr;
+		das_conf.time_window = hapd->conf->radius_das_time_window;
+		das_conf.require_event_timestamp =
+			hapd->conf->radius_das_require_event_timestamp;
+		das_conf.ctx = hapd;
+		das_conf.disconnect = hostapd_das_disconnect;
+		hapd->radius_das = radius_das_init(&das_conf);
+		if (hapd->radius_das == NULL) {
+			wpa_printf(MSG_ERROR, "RADIUS DAS initialization "
+				   "failed.");
+			return -1;
+		}
+	}
 #endif /* CONFIG_NO_RADIUS */
 
 	if (hostapd_acl_init(hapd)) {
@@ -614,6 +762,13 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 			   "failed.");
 		return -1;
 	}
+
+#ifdef CONFIG_INTERWORKING
+	if (gas_serv_init(hapd)) {
+		wpa_printf(MSG_ERROR, "GAS server initialization failed");
+		return -1;
+	}
+#endif /* CONFIG_INTERWORKING */
 
 	if (hapd->iface->ctrl_iface_init &&
 	    hapd->iface->ctrl_iface_init(hapd)) {
@@ -857,6 +1012,7 @@ hostapd_alloc_bss_data(struct hostapd_iface *hapd_iface,
 	hapd->conf = bss;
 	hapd->iface = hapd_iface;
 	hapd->driver = hapd->iconf->driver;
+	hapd->ctrl_sock = -1;
 
 	return hapd;
 }
@@ -873,7 +1029,8 @@ void hostapd_interface_deinit(struct hostapd_iface *iface)
 	for (j = 0; j < iface->num_bss; j++) {
 		struct hostapd_data *hapd = iface->bss[j];
 		hostapd_free_stas(hapd);
-		hostapd_flush_old_stations(hapd);
+		hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
+		hostapd_clear_wep(hapd);
 		hostapd_cleanup(hapd);
 	}
 }
@@ -937,4 +1094,12 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 			wpa_auth_sm_event(sta->wpa_sm, WPA_REAUTH);
 	} else
 		wpa_auth_sta_associated(hapd->wpa_auth, sta->wpa_sm);
+
+	wpa_printf(MSG_DEBUG, "%s: reschedule ap_handle_timer timeout "
+		   "for " MACSTR " (%d seconds - ap_max_inactivity)",
+		   __func__, MAC2STR(sta->addr),
+		   hapd->conf->ap_max_inactivity);
+	eloop_cancel_timeout(ap_handle_timer, hapd, sta);
+	eloop_register_timeout(hapd->conf->ap_max_inactivity, 0,
+			       ap_handle_timer, hapd, sta);
 }

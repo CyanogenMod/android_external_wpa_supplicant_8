@@ -25,6 +25,7 @@
 		       WPA_CIPHER_WEP104 | WPA_CIPHER_WEP40)
 #define DEFAULT_FRAGMENT_SIZE 1398
 
+#define DEFAULT_BG_SCAN_PERIOD -1
 #define DEFAULT_DISABLE_HT 0
 #define DEFAULT_DISABLE_HT40 0
 #define DEFAULT_DISABLE_MAX_AMSDU -1 /* no change */
@@ -155,6 +156,12 @@ struct wpa_ssid {
 	 * WPA_KEY_MGMT_*
 	 */
 	int key_mgmt;
+
+	/**
+	 * bg_scan_period - Background scan period in seconds, 0 to disable, or
+	 * -1 to indicate no change to default driver configuration
+	 */
+	int bg_scan_period;
 
 	/**
 	 * proto - Bitfield of allowed protocols, WPA_PROTO_*
@@ -377,6 +384,20 @@ struct wpa_ssid {
 	char *bgscan;
 
 	/**
+	 * ignore_broadcast_ssid - Hide SSID in AP mode
+	 *
+	 * Send empty SSID in beacons and ignore probe request frames that do
+	 * not specify full SSID, i.e., require stations to know SSID.
+	 * default: disabled (0)
+	 * 1 = send empty (length=0) SSID in beacon and ignore probe request
+	 * for broadcast SSID
+	 * 2 = clear SSID (ASCII 0), but keep the original length (this may be
+	 * required with some clients that do not support empty SSID) and
+	 * ignore probe requests for broadcast SSID
+	 */
+	int ignore_broadcast_ssid;
+
+	/**
 	 * freq_list - Array of allowed frequencies or %NULL for all
 	 *
 	 * This is an optional zero-terminated array of frequencies in
@@ -476,6 +497,20 @@ struct wpa_ssid {
 	 */
 	char *ht_mcs;
 #endif /* CONFIG_HT_OVERRIDES */
+
+	/**
+	 * ap_max_inactivity - Timeout in seconds to detect STA's inactivity
+	 *
+	 * This timeout value is used in AP mode to clean up inactive stations.
+	 * By default: 300 seconds.
+	 */
+	int ap_max_inactivity;
+
+	/**
+	 * dtim_period - DTIM period in Beacon intervals
+	 * By default: 2
+	 */
+	int dtim_period;
 };
 
 #endif /* CONFIG_SSID_H */

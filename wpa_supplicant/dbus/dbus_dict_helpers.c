@@ -2,14 +2,8 @@
  * WPA Supplicant / dbus-based control interface
  * Copyright (c) 2006, Dan Williams <dcbw@redhat.com> and Red Hat, Inc.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "includes.h"
@@ -1104,5 +1098,5 @@ void wpa_dbus_dict_entry_clear(struct wpa_dbus_dict_entry *entry)
 		break;
 	}
 
-	memset(entry, 0, sizeof(struct wpa_dbus_dict_entry));
+	os_memset(entry, 0, sizeof(struct wpa_dbus_dict_entry));
 }

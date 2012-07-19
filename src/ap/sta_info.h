@@ -27,6 +27,7 @@
 #define WLAN_STA_WDS BIT(14)
 #define WLAN_STA_ASSOC_REQ_OK BIT(15)
 #define WLAN_STA_WPS2 BIT(16)
+#define WLAN_STA_GAS BIT(17)
 #define WLAN_STA_PENDING_DISASSOC_CB BIT(29)
 #define WLAN_STA_PENDING_DEAUTH_CB BIT(30)
 #define WLAN_STA_NONERP BIT(31)
@@ -107,6 +108,12 @@ struct sta_info {
 	struct os_time sa_query_start;
 #endif /* CONFIG_IEEE80211W */
 
+#ifdef CONFIG_INTERWORKING
+#define GAS_DIALOG_MAX 8 /* Max concurrent dialog number */
+	struct gas_dialog_info *gas_dialog;
+	u8 gas_dialog_next;
+#endif /* CONFIG_INTERWORKING */
+
 	struct wpabuf *wps_ie; /* WPS IE from (Re)Association Request */
 	struct wpabuf *p2p_ie; /* P2P IE from (Re)Association Request */
 };
@@ -137,7 +144,6 @@ int ap_for_each_sta(struct hostapd_data *hapd,
 struct sta_info * ap_get_sta(struct hostapd_data *hapd, const u8 *sta);
 void ap_sta_hash_add(struct hostapd_data *hapd, struct sta_info *sta);
 void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta);
-void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta);
 void hostapd_free_stas(struct hostapd_data *hapd);
 void ap_handle_timer(void *eloop_ctx, void *timeout_ctx);
 void ap_sta_session_timeout(struct hostapd_data *hapd, struct sta_info *sta,
@@ -149,6 +155,10 @@ void ap_sta_disassociate(struct hostapd_data *hapd, struct sta_info *sta,
 			 u16 reason);
 void ap_sta_deauthenticate(struct hostapd_data *hapd, struct sta_info *sta,
 			   u16 reason);
+#ifdef CONFIG_WPS
+int ap_sta_wps_cancel(struct hostapd_data *hapd,
+		      struct sta_info *sta, void *ctx);
+#endif /* CONFIG_WPS */
 int ap_sta_bind_vlan(struct hostapd_data *hapd, struct sta_info *sta,
 		     int old_vlanid);
 void ap_sta_start_sa_query(struct hostapd_data *hapd, struct sta_info *sta);

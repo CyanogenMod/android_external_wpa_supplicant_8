@@ -1,6 +1,6 @@
 /*
  * hostapd / Configuration definitions and helpers functions
- * Copyright (c) 2003-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -116,6 +116,12 @@ struct hostapd_eap_user {
 	int ttls_auth; /* EAP_TTLS_AUTH_* bitfield */
 };
 
+struct hostapd_radius_attr {
+	u8 type;
+	struct wpabuf *val;
+	struct hostapd_radius_attr *next;
+};
+
 
 #define NUM_TX_QUEUES 4
 
@@ -140,6 +146,12 @@ struct hostapd_wmm_ac_params {
 struct hostapd_roaming_consortium {
 	u8 len;
 	u8 oi[MAX_ROAMING_CONSORTIUM_LEN];
+};
+
+struct hostapd_venue_name {
+	u8 lang[3];
+	u8 name_len;
+	u8 name[252];
 };
 
 /**
@@ -171,6 +183,15 @@ struct hostapd_bss_config {
 	char *nas_identifier;
 	struct hostapd_radius_servers *radius;
 	int acct_interim_interval;
+	int radius_request_cui;
+	struct hostapd_radius_attr *radius_auth_req_attr;
+	struct hostapd_radius_attr *radius_acct_req_attr;
+	int radius_das_port;
+	unsigned int radius_das_time_window;
+	int radius_das_require_event_timestamp;
+	struct hostapd_ip_addr radius_das_client_addr;
+	u8 *radius_das_shared_secret;
+	size_t radius_das_shared_secret_len;
 
 	struct hostapd_ssid ssid;
 
@@ -326,6 +347,10 @@ struct hostapd_bss_config {
 	char *model_url;
 	char *upc;
 	struct wpabuf *wps_vendor_ext[MAX_WPS_VENDOR_EXTENSIONS];
+	int wps_nfc_dev_pw_id;
+	struct wpabuf *wps_nfc_dh_pubkey;
+	struct wpabuf *wps_nfc_dh_privkey;
+	struct wpabuf *wps_nfc_dev_pw;
 #endif /* CONFIG_WPS */
 	int pbc_in_m1;
 
@@ -343,6 +368,7 @@ struct hostapd_bss_config {
 #define TDLS_PROHIBIT_CHAN_SWITCH BIT(1)
 	int tdls;
 	int disable_11n;
+	int disable_11ac;
 
 	/* IEEE 802.11v */
 	int time_advertisement;
@@ -363,6 +389,13 @@ struct hostapd_bss_config {
 	/* IEEE 802.11u - Roaming Consortium list */
 	unsigned int roaming_consortium_count;
 	struct hostapd_roaming_consortium *roaming_consortium;
+
+	/* IEEE 802.11u - Venue Name duples */
+	unsigned int venue_name_count;
+	struct hostapd_venue_name *venue_name;
+
+	u16 gas_comeback_delay;
+	int gas_frag_limit;
 
 	u8 wps_rf_bands; /* RF bands for WPS (WPS_RF_*) */
 
@@ -423,6 +456,9 @@ struct hostapd_config {
 	int ieee80211n;
 	int secondary_channel;
 	int require_ht;
+	u32 vht_capab;
+	int ieee80211ac;
+	u8 vht_oper_chwidth;
 };
 
 
@@ -444,5 +480,7 @@ const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 const struct hostapd_eap_user *
 hostapd_get_eap_user(const struct hostapd_bss_config *conf, const u8 *identity,
 		     size_t identity_len, int phase2);
+struct hostapd_radius_attr *
+hostapd_config_get_radius_attr(struct hostapd_radius_attr *attr, u8 type);
 
 #endif /* HOSTAPD_CONFIG_H */

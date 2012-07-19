@@ -54,7 +54,8 @@ static struct wpabuf * p2p_build_prov_disc_req(struct p2p_data *p2p,
 	p2p_buf_add_public_action_hdr(buf, P2P_PROV_DISC_REQ, dialog_token);
 
 	len = p2p_buf_add_ie_hdr(buf);
-	p2p_buf_add_capability(buf, p2p->dev_capab, 0);
+	p2p_buf_add_capability(buf, p2p->dev_capab &
+			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY, 0);
 	p2p_buf_add_device_info(buf, p2p, NULL);
 	if (go) {
 		p2p_buf_add_group_id(buf, go->info.p2p_device_addr,
@@ -110,7 +111,8 @@ void p2p_process_prov_disc_req(struct p2p_data *p2p, const u8 *sa,
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Provision Discovery Request from "
 			"unknown peer " MACSTR, MAC2STR(sa));
-		if (p2p_add_device(p2p, sa, rx_freq, 0, data + 1, len - 1)) {
+		if (p2p_add_device(p2p, sa, rx_freq, 0, data + 1, len - 1, 0))
+		{
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			        "P2P: Provision Discovery Request add device "
 				"failed " MACSTR, MAC2STR(sa));
@@ -123,6 +125,21 @@ void p2p_process_prov_disc_req(struct p2p_data *p2p, const u8 *sa,
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Unsupported "
 			"Config Methods in Provision Discovery Request");
 		goto out;
+	}
+
+	if (msg.group_id) {
+		size_t i;
+		for (i = 0; i < p2p->num_groups; i++) {
+			if (p2p_group_is_group_id_match(p2p->groups[i],
+							msg.group_id,
+							msg.group_id_len))
+				break;
+		}
+		if (i == p2p->num_groups) {
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: PD "
+				"request for unknown P2P Group ID - reject");
+			goto out;
+		}
 	}
 
 	if (dev)
@@ -198,6 +215,7 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 	struct p2p_message msg;
 	struct p2p_device *dev;
 	u16 report_config_methods = 0;
+	int success = 0;
 
 	if (p2p_parse(data, len, &msg))
 		return;
@@ -266,11 +284,21 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 	dev->wps_prov_info = msg.wps_config_methods;
 
 	p2p_parse_free(&msg);
+	success = 1;
 
 out:
 	dev->req_config_methods = 0;
 	p2p->cfg->send_action_done(p2p->cfg->cb_ctx);
-	if (p2p->cfg->prov_disc_resp)
+	if (dev->flags & P2P_DEV_PD_BEFORE_GO_NEG) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+			"P2P: Start GO Neg after the PD-before-GO-Neg "
+			"workaround with " MACSTR,
+			MAC2STR(dev->info.p2p_device_addr));
+		dev->flags &= ~P2P_DEV_PD_BEFORE_GO_NEG;
+		p2p_connect_send(p2p, dev);
+		return;
+	}
+	if (success && p2p->cfg->prov_disc_resp)
 		p2p->cfg->prov_disc_resp(p2p->cfg->cb_ctx, sa,
 					 report_config_methods);
 }
@@ -316,6 +344,8 @@ int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
 	if (req == NULL)
 		return -1;
 
+	if (p2p->state != P2P_IDLE)
+		p2p_stop_listen_for_freq(p2p, freq);
 	p2p->pending_action_state = P2P_PENDING_PD;
 	if (p2p_send_action(p2p, freq, dev->info.p2p_device_addr,
 			    p2p->cfg->dev_addr, dev->info.p2p_device_addr,

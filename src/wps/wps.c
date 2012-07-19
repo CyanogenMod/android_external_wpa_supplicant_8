@@ -56,6 +56,23 @@ struct wps_data * wps_init(const struct wps_config *cfg)
 		data->dev_password_len = cfg->pin_len;
 	}
 
+#ifdef CONFIG_WPS_NFC
+	if (cfg->wps->ap && !cfg->registrar && cfg->wps->ap_nfc_dev_pw_id) {
+		data->dev_pw_id = cfg->wps->ap_nfc_dev_pw_id;
+		os_free(data->dev_password);
+		data->dev_password =
+			os_malloc(wpabuf_len(cfg->wps->ap_nfc_dev_pw));
+		if (data->dev_password == NULL) {
+			os_free(data);
+			return NULL;
+		}
+		os_memcpy(data->dev_password,
+			  wpabuf_head(cfg->wps->ap_nfc_dev_pw),
+			  wpabuf_len(cfg->wps->ap_nfc_dev_pw));
+		data->dev_password_len = wpabuf_len(cfg->wps->ap_nfc_dev_pw);
+	}
+#endif /* CONFIG_WPS_NFC */
+
 	data->pbc = cfg->pbc;
 	if (cfg->pbc) {
 		/* Use special PIN '00000000' for PBC */
@@ -118,6 +135,12 @@ struct wps_data * wps_init(const struct wps_config *cfg)
  */
 void wps_deinit(struct wps_data *data)
 {
+#ifdef CONFIG_WPS_NFC
+	if (data->registrar && data->nfc_pw_token)
+		wps_registrar_remove_nfc_pw_token(data->wps->registrar,
+						  data->nfc_pw_token);
+#endif /* CONFIG_WPS_NFC */
+
 	if (data->wps_pin_revealed) {
 		wpa_printf(MSG_DEBUG, "WPS: Full PIN information revealed and "
 			   "negotiation failed");
@@ -136,6 +159,7 @@ void wps_deinit(struct wps_data *data)
 	wps_device_data_free(&data->peer_dev);
 	os_free(data->new_ap_settings);
 	dh5_free(data->dh_ctx);
+	os_free(data->nfc_pw_token);
 	os_free(data);
 }
 
@@ -431,7 +455,8 @@ struct wpabuf * wps_build_assoc_resp_ie(void)
 
 /**
  * wps_build_probe_req_ie - Build WPS IE for Probe Request
- * @pbc: Whether searching for PBC mode APs
+ * @pw_id: Password ID (DEV_PW_PUSHBUTTON for active PBC and DEV_PW_DEFAULT for
+ * most other use cases)
  * @dev: Device attributes
  * @uuid: Own UUID
  * @req_type: Value for Request Type attribute
@@ -442,7 +467,7 @@ struct wpabuf * wps_build_assoc_resp_ie(void)
  *
  * The caller is responsible for freeing the buffer.
  */
-struct wpabuf * wps_build_probe_req_ie(int pbc, struct wps_device_data *dev,
+struct wpabuf * wps_build_probe_req_ie(u16 pw_id, struct wps_device_data *dev,
 				       const u8 *uuid,
 				       enum wps_request_type req_type,
 				       unsigned int num_req_dev_types,
@@ -464,8 +489,7 @@ struct wpabuf * wps_build_probe_req_ie(int pbc, struct wps_device_data *dev,
 	    wps_build_rf_bands(dev, ie) ||
 	    wps_build_assoc_state(NULL, ie) ||
 	    wps_build_config_error(ie, WPS_CFG_NO_ERROR) ||
-	    wps_build_dev_password_id(ie, pbc ? DEV_PW_PUSHBUTTON :
-				      DEV_PW_DEFAULT) ||
+	    wps_build_dev_password_id(ie, pw_id) ||
 #ifdef CONFIG_WPS2
 	    wps_build_manufacturer(dev, ie) ||
 	    wps_build_model_name(dev, ie) ||

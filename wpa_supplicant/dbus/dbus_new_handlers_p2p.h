@@ -1,15 +1,9 @@
-
 /*
  * WPA Supplicant / dbus-based control interface for p2p
+ * Copyright (c) 2011-2012, Intel Corporation
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #ifndef DBUS_NEW_HANDLERS_P2P_H
@@ -94,13 +88,13 @@ DBusMessage *wpas_dbus_handler_p2p_serv_disc_external(
 /*
  * P2P Device property accessor methods.
  */
-dbus_bool_t wpas_dbus_setter_p2p_device_properties(DBusMessageIter *iter,
-						   DBusError *error,
-						   void *user_data);
+dbus_bool_t wpas_dbus_setter_p2p_device_config(DBusMessageIter *iter,
+					       DBusError *error,
+					       void *user_data);
 
-dbus_bool_t wpas_dbus_getter_p2p_device_properties(DBusMessageIter *iter,
-						   DBusError *error,
-						   void *user_data);
+dbus_bool_t wpas_dbus_getter_p2p_device_config(DBusMessageIter *iter,
+					       DBusError *error,
+					       void *user_data);
 
 dbus_bool_t wpas_dbus_getter_p2p_peers(DBusMessageIter *iter, DBusError *error,
 				       void *user_data);
@@ -161,11 +155,31 @@ dbus_bool_t wpas_dbus_getter_p2p_group_members(DBusMessageIter *iter,
 					       DBusError *error,
 					       void *user_data);
 
-dbus_bool_t wpas_dbus_getter_p2p_group_properties(DBusMessageIter *iter,
+dbus_bool_t wpas_dbus_getter_p2p_group_ssid(DBusMessageIter *iter,
+					    DBusError *error,
+					    void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_group_bssid(DBusMessageIter *iter,
+					     DBusError *error,
+					     void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_group_frequency(DBusMessageIter *iter,
+						 DBusError *error,
+						 void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_group_passphrase(DBusMessageIter *iter,
 						  DBusError *error,
 						  void *user_data);
 
-dbus_bool_t wpas_dbus_setter_p2p_group_properties(DBusMessageIter *iter,
+dbus_bool_t wpas_dbus_getter_p2p_group_psk(DBusMessageIter *iter,
+					   DBusError *error,
+					   void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_group_vendor_ext(DBusMessageIter *iter,
+						  DBusError *error,
+						  void *user_data);
+
+dbus_bool_t wpas_dbus_setter_p2p_group_vendor_ext(DBusMessageIter *iter,
 						  DBusError *error,
 						  void *user_data);
 

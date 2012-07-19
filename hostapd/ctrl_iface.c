@@ -1,6 +1,6 @@
 /*
  * hostapd / UNIX domain socket -based control interface
- * Copyright (c) 2004-2010, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -31,6 +31,7 @@
 #include "ap/ap_drv_ops.h"
 #include "wps/wps_defs.h"
 #include "wps/wps.h"
+#include "config_file.h"
 #include "ctrl_iface.h"
 
 
@@ -148,173 +149,6 @@ static int hostapd_ctrl_iface_new_sta(struct hostapd_data *hapd,
 		return -1;
 
 	hostapd_new_assoc_sta(hapd, sta, 0);
-	return 0;
-}
-
-
-#ifdef CONFIG_P2P_MANAGER
-static int p2p_manager_disconnect(struct hostapd_data *hapd, u16 stype,
-				  u8 minor_reason_code, const u8 *addr)
-{
-	struct ieee80211_mgmt *mgmt;
-	int ret;
-	u8 *pos;
-
-	if (hapd->driver->send_frame == NULL)
-		return -1;
-
-	mgmt = os_zalloc(sizeof(*mgmt) + 100);
-	if (mgmt == NULL)
-		return -1;
-
-	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "P2P: Disconnect STA " MACSTR
-		" with minor reason code %u (stype=%u)",
-		MAC2STR(addr), minor_reason_code, stype);
-
-	mgmt->frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT, stype);
-	os_memcpy(mgmt->da, addr, ETH_ALEN);
-	os_memcpy(mgmt->sa, hapd->own_addr, ETH_ALEN);
-	os_memcpy(mgmt->bssid, hapd->own_addr, ETH_ALEN);
-	if (stype == WLAN_FC_STYPE_DEAUTH) {
-		mgmt->u.deauth.reason_code =
-			host_to_le16(WLAN_REASON_PREV_AUTH_NOT_VALID);
-		pos = (u8 *) (&mgmt->u.deauth.reason_code + 1);
-	} else {
-		mgmt->u.disassoc.reason_code =
-			host_to_le16(WLAN_REASON_PREV_AUTH_NOT_VALID);
-		pos = (u8 *) (&mgmt->u.disassoc.reason_code + 1);
-	}
-
-	*pos++ = WLAN_EID_VENDOR_SPECIFIC;
-	*pos++ = 4 + 3 + 1;
-	WPA_PUT_BE24(pos, OUI_WFA);
-	pos += 3;
-	*pos++ = P2P_OUI_TYPE;
-
-	*pos++ = P2P_ATTR_MINOR_REASON_CODE;
-	WPA_PUT_LE16(pos, 1);
-	pos += 2;
-	*pos++ = minor_reason_code;
-
-	ret = hapd->driver->send_frame(hapd->drv_priv, (u8 *) mgmt,
-				       pos - (u8 *) mgmt, 1);
-	os_free(mgmt);
-
-	return ret < 0 ? -1 : 0;
-}
-#endif /* CONFIG_P2P_MANAGER */
-
-
-static int hostapd_ctrl_iface_deauthenticate(struct hostapd_data *hapd,
-					     const char *txtaddr)
-{
-	u8 addr[ETH_ALEN];
-	struct sta_info *sta;
-	const char *pos;
-
-	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "CTRL_IFACE DEAUTHENTICATE %s",
-		txtaddr);
-
-	if (hwaddr_aton(txtaddr, addr))
-		return -1;
-
-	pos = os_strstr(txtaddr, " test=");
-	if (pos) {
-		struct ieee80211_mgmt mgmt;
-		int encrypt;
-		if (hapd->driver->send_frame == NULL)
-			return -1;
-		pos += 6;
-		encrypt = atoi(pos);
-		os_memset(&mgmt, 0, sizeof(mgmt));
-		mgmt.frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT,
-						  WLAN_FC_STYPE_DEAUTH);
-		os_memcpy(mgmt.da, addr, ETH_ALEN);
-		os_memcpy(mgmt.sa, hapd->own_addr, ETH_ALEN);
-		os_memcpy(mgmt.bssid, hapd->own_addr, ETH_ALEN);
-		mgmt.u.deauth.reason_code =
-			host_to_le16(WLAN_REASON_PREV_AUTH_NOT_VALID);
-		if (hapd->driver->send_frame(hapd->drv_priv, (u8 *) &mgmt,
-					     IEEE80211_HDRLEN +
-					     sizeof(mgmt.u.deauth),
-					     encrypt) < 0)
-			return -1;
-		return 0;
-	}
-
-#ifdef CONFIG_P2P_MANAGER
-	pos = os_strstr(txtaddr, " p2p=");
-	if (pos) {
-		return p2p_manager_disconnect(hapd, WLAN_FC_STYPE_DEAUTH,
-					      atoi(pos + 5), addr);
-	}
-#endif /* CONFIG_P2P_MANAGER */
-
-	hostapd_drv_sta_deauth(hapd, addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
-	sta = ap_get_sta(hapd, addr);
-	if (sta)
-		ap_sta_deauthenticate(hapd, sta,
-				      WLAN_REASON_PREV_AUTH_NOT_VALID);
-	else if (addr[0] == 0xff)
-		hostapd_free_stas(hapd);
-
-	return 0;
-}
-
-
-static int hostapd_ctrl_iface_disassociate(struct hostapd_data *hapd,
-					   const char *txtaddr)
-{
-	u8 addr[ETH_ALEN];
-	struct sta_info *sta;
-	const char *pos;
-
-	wpa_dbg(hapd->msg_ctx, MSG_DEBUG, "CTRL_IFACE DISASSOCIATE %s",
-		txtaddr);
-
-	if (hwaddr_aton(txtaddr, addr))
-		return -1;
-
-	pos = os_strstr(txtaddr, " test=");
-	if (pos) {
-		struct ieee80211_mgmt mgmt;
-		int encrypt;
-		if (hapd->driver->send_frame == NULL)
-			return -1;
-		pos += 6;
-		encrypt = atoi(pos);
-		os_memset(&mgmt, 0, sizeof(mgmt));
-		mgmt.frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT,
-						  WLAN_FC_STYPE_DISASSOC);
-		os_memcpy(mgmt.da, addr, ETH_ALEN);
-		os_memcpy(mgmt.sa, hapd->own_addr, ETH_ALEN);
-		os_memcpy(mgmt.bssid, hapd->own_addr, ETH_ALEN);
-		mgmt.u.disassoc.reason_code =
-			host_to_le16(WLAN_REASON_PREV_AUTH_NOT_VALID);
-		if (hapd->driver->send_frame(hapd->drv_priv, (u8 *) &mgmt,
-					     IEEE80211_HDRLEN +
-					     sizeof(mgmt.u.deauth),
-					     encrypt) < 0)
-			return -1;
-		return 0;
-	}
-
-#ifdef CONFIG_P2P_MANAGER
-	pos = os_strstr(txtaddr, " p2p=");
-	if (pos) {
-		return p2p_manager_disconnect(hapd, WLAN_FC_STYPE_DISASSOC,
-					      atoi(pos + 5), addr);
-	}
-#endif /* CONFIG_P2P_MANAGER */
-
-	hostapd_drv_sta_disassoc(hapd, addr, WLAN_REASON_PREV_AUTH_NOT_VALID);
-	sta = ap_get_sta(hapd, addr);
-	if (sta)
-		ap_sta_disassociate(hapd, sta,
-				    WLAN_REASON_PREV_AUTH_NOT_VALID);
-	else if (addr[0] == 0xff)
-		hostapd_free_stas(hapd);
-
 	return 0;
 }
 
@@ -438,6 +272,111 @@ static int hostapd_ctrl_iface_wps_oob(struct hostapd_data *hapd, char *txt)
 	return hostapd_wps_start_oob(hapd, txt, path, method, name);
 }
 #endif /* CONFIG_WPS_OOB */
+
+
+#ifdef CONFIG_WPS_NFC
+static int hostapd_ctrl_iface_wps_nfc_tag_read(struct hostapd_data *hapd,
+					       char *pos)
+{
+	size_t len;
+	struct wpabuf *buf;
+	int ret;
+
+	len = os_strlen(pos);
+	if (len & 0x01)
+		return -1;
+	len /= 2;
+
+	buf = wpabuf_alloc(len);
+	if (buf == NULL)
+		return -1;
+	if (hexstr2bin(pos, wpabuf_put(buf, len), len) < 0) {
+		wpabuf_free(buf);
+		return -1;
+	}
+
+	ret = hostapd_wps_nfc_tag_read(hapd, buf);
+	wpabuf_free(buf);
+
+	return ret;
+}
+
+
+static int hostapd_ctrl_iface_wps_nfc_config_token(struct hostapd_data *hapd,
+						   char *cmd, char *reply,
+						   size_t max_len)
+{
+	int ndef;
+	struct wpabuf *buf;
+	int res;
+
+	if (os_strcmp(cmd, "WPS") == 0)
+		ndef = 0;
+	else if (os_strcmp(cmd, "NDEF") == 0)
+		ndef = 1;
+	else
+		return -1;
+
+	buf = hostapd_wps_nfc_config_token(hapd, ndef);
+	if (buf == NULL)
+		return -1;
+
+	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
+					 wpabuf_len(buf));
+	reply[res++] = '\n';
+	reply[res] = '\0';
+
+	wpabuf_free(buf);
+
+	return res;
+}
+
+
+static int hostapd_ctrl_iface_wps_nfc_token_gen(struct hostapd_data *hapd,
+						char *reply, size_t max_len,
+						int ndef)
+{
+	struct wpabuf *buf;
+	int res;
+
+	buf = hostapd_wps_nfc_token_gen(hapd, ndef);
+	if (buf == NULL)
+		return -1;
+
+	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
+					 wpabuf_len(buf));
+	reply[res++] = '\n';
+	reply[res] = '\0';
+
+	wpabuf_free(buf);
+
+	return res;
+}
+
+
+static int hostapd_ctrl_iface_wps_nfc_token(struct hostapd_data *hapd,
+					    char *cmd, char *reply,
+					    size_t max_len)
+{
+	if (os_strcmp(cmd, "WPS") == 0)
+		return hostapd_ctrl_iface_wps_nfc_token_gen(hapd, reply,
+							    max_len, 0);
+
+	if (os_strcmp(cmd, "NDEF") == 0)
+		return hostapd_ctrl_iface_wps_nfc_token_gen(hapd, reply,
+							    max_len, 1);
+
+	if (os_strcmp(cmd, "enable") == 0)
+		return hostapd_wps_nfc_token_enable(hapd);
+
+	if (os_strcmp(cmd, "disable") == 0) {
+		hostapd_wps_nfc_token_disable(hapd);
+		return 0;
+	}
+
+	return -1;
+}
+#endif /* CONFIG_WPS_NFC */
 
 
 static int hostapd_ctrl_iface_wps_ap_pin(struct hostapd_data *hapd, char *txt,
@@ -773,8 +712,16 @@ static int hostapd_ctrl_iface_set(struct hostapd_data *hapd, char *cmd)
 		wpa_printf(MSG_DEBUG, "WPS: Testing - dummy_cred=%d",
 			   wps_testing_dummy_cred);
 #endif /* CONFIG_WPS_TESTING */
+#ifdef CONFIG_INTERWORKING
+	} else if (os_strcasecmp(cmd, "gas_frag_limit") == 0) {
+		int val = atoi(value);
+		if (val <= 0)
+			ret = -1;
+		else
+			hapd->gas_frag_limit = val;
+#endif /* CONFIG_INTERWORKING */
 	} else {
-		ret = -1;
+		ret = hostapd_set_iface(hapd->iconf, hapd->conf, cmd, value);
 	}
 
 	return ret;
@@ -913,6 +860,9 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strcmp(buf, "WPS_PBC") == 0) {
 		if (hostapd_wps_button_pushed(hapd, NULL))
 			reply_len = -1;
+	} else if (os_strcmp(buf, "WPS_CANCEL") == 0) {
+		if (hostapd_wps_cancel(hapd))
+			reply_len = -1;
 #ifdef CONFIG_WPS_OOB
 	} else if (os_strncmp(buf, "WPS_OOB ", 8) == 0) {
 		if (hostapd_ctrl_iface_wps_oob(hapd, buf + 8))
@@ -924,6 +874,17 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "WPS_CONFIG ", 11) == 0) {
 		if (hostapd_ctrl_iface_wps_config(hapd, buf + 11) < 0)
 			reply_len = -1;
+#ifdef CONFIG_WPS_NFC
+	} else if (os_strncmp(buf, "WPS_NFC_TAG_READ ", 17) == 0) {
+		if (hostapd_ctrl_iface_wps_nfc_tag_read(hapd, buf + 17))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "WPS_NFC_CONFIG_TOKEN ", 21) == 0) {
+		reply_len = hostapd_ctrl_iface_wps_nfc_config_token(
+			hapd, buf + 21, reply, reply_size);
+	} else if (os_strncmp(buf, "WPS_NFC_TOKEN ", 14) == 0) {
+		reply_len = hostapd_ctrl_iface_wps_nfc_token(
+			hapd, buf + 14, reply, reply_size);
+#endif /* CONFIG_WPS_NFC */
 #endif /* CONFIG_WPS */
 	} else if (os_strncmp(buf, "ESS_DISASSOC ", 13) == 0) {
 		if (hostapd_ctrl_iface_ess_disassoc(hapd, buf + 13))
@@ -988,7 +949,10 @@ int hostapd_ctrl_iface_init(struct hostapd_data *hapd)
 	int s = -1;
 	char *fname = NULL;
 
-	hapd->ctrl_sock = -1;
+	if (hapd->ctrl_sock > -1) {
+		wpa_printf(MSG_DEBUG, "ctrl_iface already exists!");
+		return 0;
+	}
 
 	if (hapd->conf->ctrl_interface == NULL)
 		return 0;
@@ -1045,7 +1009,7 @@ int hostapd_ctrl_iface_init(struct hostapd_data *hapd)
 			}
 			if (bind(s, (struct sockaddr *) &addr, sizeof(addr)) <
 			    0) {
-				perror("bind(PF_UNIX)");
+				perror("hostapd-ctrl-iface: bind(PF_UNIX)");
 				goto fail;
 			}
 			wpa_printf(MSG_DEBUG, "Successfully replaced leftover "

@@ -1,6 +1,6 @@
 /*
  * hostapd / RADIUS Accounting
- * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2009, 2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -39,6 +39,8 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 	u8 *val;
 	size_t len;
 	int i;
+	struct wpabuf *b;
+	struct hostapd_radius_attr *attr;
 
 	msg = radius_msg_new(RADIUS_CODE_ACCOUNTING_REQUEST,
 			     radius_client_get_id(hapd->radius));
@@ -67,7 +69,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_AUTHENTIC,
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_ACCT_AUTHENTIC) &&
+	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_AUTHENTIC,
 				       hapd->conf->ieee802_1x ?
 				       RADIUS_ACCT_AUTHENTIC_RADIUS :
 				       RADIUS_ACCT_AUTHENTIC_LOCAL)) {
@@ -91,7 +95,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		}
 	}
 
-	if (hapd->conf->own_ip_addr.af == AF_INET &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_NAS_IP_ADDRESS) &&
+	    hapd->conf->own_ip_addr.af == AF_INET &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IP_ADDRESS,
 				 (u8 *) &hapd->conf->own_ip_addr.u.v4, 4)) {
 		printf("Could not add NAS-IP-Address\n");
@@ -99,7 +105,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 	}
 
 #ifdef CONFIG_IPV6
-	if (hapd->conf->own_ip_addr.af == AF_INET6 &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_NAS_IPV6_ADDRESS) &&
+	    hapd->conf->own_ip_addr.af == AF_INET6 &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IPV6_ADDRESS,
 				 (u8 *) &hapd->conf->own_ip_addr.u.v6, 16)) {
 		printf("Could not add NAS-IPv6-Address\n");
@@ -107,7 +115,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 	}
 #endif /* CONFIG_IPV6 */
 
-	if (hapd->conf->nas_identifier &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_NAS_IDENTIFIER) &&
+	    hapd->conf->nas_identifier &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_NAS_IDENTIFIER,
 				 (u8 *) hapd->conf->nas_identifier,
 				 os_strlen(hapd->conf->nas_identifier))) {
@@ -115,7 +125,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	if (sta &&
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_NAS_PORT) &&
+	    sta &&
 	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_NAS_PORT, sta->aid)) {
 		printf("Could not add NAS-Port\n");
 		goto fail;
@@ -123,7 +135,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 
 	os_snprintf(buf, sizeof(buf), RADIUS_802_1X_ADDR_FORMAT ":%s",
 		    MAC2STR(hapd->own_addr), hapd->conf->ssid.ssid);
-	if (!radius_msg_add_attr(msg, RADIUS_ATTR_CALLED_STATION_ID,
+	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
+					    RADIUS_ATTR_CALLED_STATION_ID) &&
+	    !radius_msg_add_attr(msg, RADIUS_ATTR_CALLED_STATION_ID,
 				 (u8 *) buf, os_strlen(buf))) {
 		printf("Could not add Called-Station-Id\n");
 		goto fail;
@@ -138,7 +152,10 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 			goto fail;
 		}
 
-		if (!radius_msg_add_attr_int32(
+		if (!hostapd_config_get_radius_attr(
+			    hapd->conf->radius_acct_req_attr,
+			    RADIUS_ATTR_NAS_PORT_TYPE) &&
+		    !radius_msg_add_attr_int32(
 			    msg, RADIUS_ATTR_NAS_PORT_TYPE,
 			    RADIUS_NAS_PORT_TYPE_IEEE_802_11)) {
 			printf("Could not add NAS-Port-Type\n");
@@ -149,7 +166,10 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 			    radius_sta_rate(hapd, sta) / 2,
 			    (radius_sta_rate(hapd, sta) & 1) ? ".5" : "",
 			    radius_mode_txt(hapd));
-		if (!radius_msg_add_attr(msg, RADIUS_ATTR_CONNECT_INFO,
+		if (!hostapd_config_get_radius_attr(
+			    hapd->conf->radius_acct_req_attr,
+			    RADIUS_ATTR_CONNECT_INFO) &&
+		    !radius_msg_add_attr(msg, RADIUS_ATTR_CONNECT_INFO,
 					 (u8 *) buf, os_strlen(buf))) {
 			printf("Could not add Connect-Info\n");
 			goto fail;
@@ -166,6 +186,26 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 				printf("Could not add Class\n");
 				goto fail;
 			}
+		}
+
+		b = ieee802_1x_get_radius_cui(sta->eapol_sm);
+		if (b &&
+		    !radius_msg_add_attr(msg,
+					 RADIUS_ATTR_CHARGEABLE_USER_IDENTITY,
+					 wpabuf_head(b), wpabuf_len(b))) {
+			wpa_printf(MSG_ERROR, "Could not add CUI");
+			goto fail;
+		}
+	}
+
+	for (attr = hapd->conf->radius_acct_req_attr; attr; attr = attr->next)
+	{
+		if (!radius_msg_add_attr(msg, attr->type,
+					 wpabuf_head(attr->val),
+					 wpabuf_len(attr->val))) {
+			wpa_printf(MSG_ERROR, "Could not add RADIUS "
+				   "attribute");
+			goto fail;
 		}
 	}
 
@@ -259,8 +299,9 @@ void accounting_sta_start(struct hostapd_data *hapd, struct sta_info *sta)
 			       hapd, sta);
 
 	msg = accounting_msg(hapd, sta, RADIUS_ACCT_STATUS_TYPE_START);
-	if (msg)
-		radius_client_send(hapd->radius, msg, RADIUS_ACCT, sta->addr);
+	if (msg &&
+	    radius_client_send(hapd->radius, msg, RADIUS_ACCT, sta->addr) < 0)
+		radius_msg_free(msg);
 
 	sta->acct_session_started = 1;
 }
@@ -358,9 +399,10 @@ static void accounting_sta_report(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	radius_client_send(hapd->radius, msg,
-			   stop ? RADIUS_ACCT : RADIUS_ACCT_INTERIM,
-			   sta->addr);
+	if (radius_client_send(hapd->radius, msg,
+			       stop ? RADIUS_ACCT : RADIUS_ACCT_INTERIM,
+			       sta->addr) < 0)
+		goto fail;
 	return;
 
  fail:
@@ -463,7 +505,8 @@ static void accounting_report_state(struct hostapd_data *hapd, int on)
 		return;
 	}
 
-	radius_client_send(hapd->radius, msg, RADIUS_ACCT, NULL);
+	if (radius_client_send(hapd->radius, msg, RADIUS_ACCT, NULL) < 0)
+		radius_msg_free(msg);
 }
 
 

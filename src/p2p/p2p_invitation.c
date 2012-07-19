@@ -121,7 +121,8 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 			"P2P: Invitation Request from unknown peer "
 			MACSTR, MAC2STR(sa));
 
-		if (p2p_add_device(p2p, sa, rx_freq, 0, data + 1, len - 1)) {
+		if (p2p_add_device(p2p, sa, rx_freq, 0, data + 1, len - 1, 0))
+		{
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Invitation Request add device failed "
 				MACSTR, MAC2STR(sa));
@@ -344,6 +345,8 @@ int p2p_invite_send(struct p2p_data *p2p, struct p2p_device *dev,
 	req = p2p_build_invitation_req(p2p, dev, go_dev_addr);
 	if (req == NULL)
 		return -1;
+	if (p2p->state != P2P_IDLE)
+		p2p_stop_listen_for_freq(p2p, freq);
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 		"P2P: Sending Invitation Request");
 	p2p_set_state(p2p, P2P_INVITE);

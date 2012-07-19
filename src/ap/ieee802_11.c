@@ -876,6 +876,7 @@ static void send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 #endif /* CONFIG_IEEE80211N */
 
 	p = hostapd_eid_ext_capab(hapd, p);
+	p = hostapd_eid_bss_max_idle_period(hapd, p);
 
 	if (sta->flags & WLAN_STA_WMM)
 		p = hostapd_eid_wmm(hapd, p);
@@ -1392,7 +1393,7 @@ void ieee802_11_mgmt(struct hostapd_data *hapd, const u8 *buf, size_t len,
 
 
 	if (stype == WLAN_FC_STYPE_PROBE_REQ) {
-		handle_probe_req(hapd, mgmt, len);
+		handle_probe_req(hapd, mgmt, len, fi->ssi_signal);
 		return;
 	}
 

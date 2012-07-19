@@ -262,6 +262,11 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 	pos = hostapd_eid_adv_proto(hapd, pos);
 	pos = hostapd_eid_roaming_consortium(hapd, pos);
 
+#ifdef CONFIG_IEEE80211AC
+	pos = hostapd_eid_vht_capabilities(hapd, pos);
+	pos = hostapd_eid_vht_operation(hapd, pos);
+#endif /* CONFIG_IEEE80211AC */
+
 	/* Wi-Fi Alliance WMM */
 	pos = hostapd_eid_wmm(hapd, pos);
 
@@ -293,7 +298,8 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 
 
 void handle_probe_req(struct hostapd_data *hapd,
-		      const struct ieee80211_mgmt *mgmt, size_t len)
+		      const struct ieee80211_mgmt *mgmt, size_t len,
+		      int ssi_signal)
 {
 	u8 *resp;
 	struct ieee802_11_elems elems;
@@ -311,7 +317,7 @@ void handle_probe_req(struct hostapd_data *hapd,
 	for (i = 0; hapd->probereq_cb && i < hapd->num_probereq_cb; i++)
 		if (hapd->probereq_cb[i].cb(hapd->probereq_cb[i].ctx,
 					    mgmt->sa, mgmt->da, mgmt->bssid,
-					    ie, ie_len) > 0)
+					    ie, ie_len, ssi_signal) > 0)
 			return;
 
 	if (!hapd->iconf->send_probe_response)
@@ -594,6 +600,11 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 	tailpos = hostapd_eid_adv_proto(hapd, tailpos);
 	tailpos = hostapd_eid_roaming_consortium(hapd, tailpos);
 
+#ifdef CONFIG_IEEE80211AC
+	tailpos = hostapd_eid_vht_capabilities(hapd, tailpos);
+	tailpos = hostapd_eid_vht_operation(hapd, tailpos);
+#endif /* CONFIG_IEEE80211AC */
+
 	/* Wi-Fi Alliance WMM */
 	tailpos = hostapd_eid_wmm(hapd, tailpos);
 
@@ -682,6 +693,7 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 	    !is_zero_ether_addr(hapd->conf->hessid))
 		params.hessid = hapd->conf->hessid;
 	params.access_network_type = hapd->conf->access_network_type;
+	params.ap_max_inactivity = hapd->conf->ap_max_inactivity;
 	if (hostapd_drv_set_ap(hapd, &params))
 		wpa_printf(MSG_ERROR, "Failed to set beacon parameters");
 	hostapd_free_ap_extra_ies(hapd, beacon, proberesp, assocresp);
@@ -697,6 +709,16 @@ void ieee802_11_set_beacons(struct hostapd_iface *iface)
 	size_t i;
 	for (i = 0; i < iface->num_bss; i++)
 		ieee802_11_set_beacon(iface->bss[i]);
+}
+
+
+/* only update beacons if started */
+void ieee802_11_update_beacons(struct hostapd_iface *iface)
+{
+	size_t i;
+	for (i = 0; i < iface->num_bss; i++)
+		if (iface->bss[i]->beacon_set_done)
+			ieee802_11_set_beacon(iface->bss[i]);
 }
 
 #endif /* CONFIG_NATIVE_WINDOWS */

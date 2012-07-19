@@ -31,6 +31,10 @@ int ap_ctrl_iface_sta(struct wpa_supplicant *wpa_s, const char *txtaddr,
 		      char *buf, size_t buflen);
 int ap_ctrl_iface_sta_next(struct wpa_supplicant *wpa_s, const char *txtaddr,
 			   char *buf, size_t buflen);
+int ap_ctrl_iface_sta_deauthenticate(struct wpa_supplicant *wpa_s,
+				     const char *txtaddr);
+int ap_ctrl_iface_sta_disassociate(struct wpa_supplicant *wpa_s,
+				   const char *txtaddr);
 int ap_ctrl_iface_wpa_get_status(struct wpa_supplicant *wpa_s, char *buf,
 				 size_t buflen, int verbose);
 void ap_tx_status(void *ctx, const u8 *addr,
@@ -45,5 +49,7 @@ int wpa_supplicant_ap_update_beacon(struct wpa_supplicant *wpa_s);
 int wpa_supplicant_ap_mac_addr_filter(struct wpa_supplicant *wpa_s,
 				      const u8 *addr);
 void wpa_supplicant_ap_pwd_auth_fail(struct wpa_supplicant *wpa_s);
+void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
+		       int offset);
 
 #endif /* AP_H */

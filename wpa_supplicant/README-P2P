@@ -101,7 +101,7 @@ Flush P2P peer table and state.
 
 Group Formation
 
-p2p_prov_disc <peer device address> <display|keypad|pbc> [join]
+p2p_prov_disc <peer device address> <display|keypad|pbc> [join|auto]
 
 Send P2P provision discovery request to the specified peer. The
 parameters for this command are the P2P device address of the peer and
@@ -112,10 +112,14 @@ to enter a PIN that we display.
 
 The optional "join" parameter can be used to indicate that this command
 is requesting an already running GO to prepare for a new client. This is
-mainly used with "display" to request it to display a PIN.
+mainly used with "display" to request it to display a PIN. The "auto"
+parameter can be used to request wpa_supplicant to automatically figure
+out whether the peer device is operating as a GO and if so, use
+join-a-group style PD instead of GO Negotiation style PD.
 
 p2p_connect <peer device address> <pbc|pin|PIN#> [display|keypad]
-	[persistent] [join|auth] [go_intent=<0..15>] [freq=<in MHz>]
+	[persistent|persistent=<network id>] [join|auth]
+	[go_intent=<0..15>] [freq=<in MHz>] [provdisc]
 
 Start P2P group formation with a discovered P2P peer. This includes
 optional group owner negotiation, group interface setup, provisioning,
@@ -128,7 +132,12 @@ the command return code), PIN# means that a pre-selected PIN can be
 used (e.g., 12345670). [display|keypad] is used with PIN method
 to specify which PIN is used (display=dynamically generated random PIN
 from local display, keypad=PIN entered from peer display). "persistent"
-parameter can be used to request a persistent group to be formed.
+parameter can be used to request a persistent group to be formed. The
+"persistent=<network id>" alternative can be used to pre-populate
+SSID/passphrase configuration based on a previously used persistent
+group where this device was the GO. The previously used parameters will
+then be used if the local end becomes the GO in GO Negotiation (which
+can be forced with go_intent=15).
 
 "join" indicates that this is a command to join an existing group as a
 client. It skips the GO Negotiation part. This will send a Provision
@@ -145,6 +154,11 @@ Negotiation.
 
 "freq" can be used to set a forced operating channel (e.g., freq=2412
 to select 2.4 GHz channel 1).
+
+"provdisc" can be used to request a Provision Discovery exchange to be
+used prior to starting GO Negotiation as a workaround with some deployed
+P2P implementations that require this to allow the user to accept the
+connection.
 
 p2p_group_add [persistent|persistent=<network id>] [freq=<freq in MHz>]
 
@@ -322,7 +336,7 @@ p2p_invite [persistent=<network id>|group=<group ifname>] [peer=address]
 
 Invite a peer to join a group (e.g., group=wlan1) or to reinvoke a
 persistent group (e.g., persistent=4). If the peer device is the GO of
-the persisten group, the peer parameter is not needed. Otherwise it is
+the persistent group, the peer parameter is not needed. Otherwise it is
 used to specify which device to invite. go_dev_addr parameter can be
 used to override the GO device address for Invitation Request should
 it be not known for some reason (this should not be needed in most

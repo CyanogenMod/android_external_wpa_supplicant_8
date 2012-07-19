@@ -19,24 +19,6 @@ struct wpa_scan_res;
 #define WPA_BSS_ASSOCIATED		BIT(5)
 #define WPA_BSS_ANQP_FETCH_TRIED	BIT(6)
 
-#define WPA_BSS_MASK_ALL		0xFFFFFFFF
-#define WPA_BSS_MASK_ID			BIT(0)
-#define WPA_BSS_MASK_BSSID		BIT(1)
-#define WPA_BSS_MASK_FREQ		BIT(2)
-#define WPA_BSS_MASK_BEACON_INT		BIT(3)
-#define WPA_BSS_MASK_CAPABILITIES	BIT(4)
-#define WPA_BSS_MASK_QUAL		BIT(5)
-#define WPA_BSS_MASK_NOISE		BIT(6)
-#define WPA_BSS_MASK_LEVEL		BIT(7)
-#define WPA_BSS_MASK_TSF		BIT(8)
-#define WPA_BSS_MASK_AGE		BIT(9)
-#define WPA_BSS_MASK_IE			BIT(10)
-#define WPA_BSS_MASK_FLAGS		BIT(11)
-#define WPA_BSS_MASK_SSID		BIT(12)
-#define WPA_BSS_MASK_WPS_SCAN		BIT(13)
-#define WPA_BSS_MASK_P2P_SCAN		BIT(14)
-#define WPA_BSS_MASK_INTERNETW		BIT(15)
-
 /**
  * struct wpa_bss - BSS table
  * @list: List entry for struct wpa_supplicant::bss
@@ -87,6 +69,12 @@ struct wpa_bss {
 	struct wpabuf *anqp_3gpp;
 	struct wpabuf *anqp_domain_name;
 #endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_HS20
+	struct wpabuf *hs20_operator_friendly_name;
+	struct wpabuf *hs20_wan_metrics;
+	struct wpabuf *hs20_connection_capability;
+	struct wpabuf *hs20_operating_class;
+#endif /* CONFIG_HS20 */
 	size_t ie_len;
 	size_t beacon_ie_len;
 	/* followed by ie_len octets of IEs */

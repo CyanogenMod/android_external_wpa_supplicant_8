@@ -107,8 +107,17 @@ static struct wpabuf * eap_sim_build_start(struct eap_sm *sm,
 			       EAP_SIM_SUBTYPE_START);
 	if (eap_sim_db_identity_known(sm->eap_sim_db_priv, sm->identity,
 				      sm->identity_len)) {
-		wpa_printf(MSG_DEBUG, "   AT_PERMANENT_ID_REQ");
-		eap_sim_msg_add(msg, EAP_SIM_AT_PERMANENT_ID_REQ, 0, NULL, 0);
+		if (sm->identity_len > 0 &&
+		    sm->identity[0] == EAP_SIM_REAUTH_ID_PREFIX) {
+			/* Reauth id may have expired - try fullauth */
+			wpa_printf(MSG_DEBUG, "   AT_FULLAUTH_ID_REQ");
+			eap_sim_msg_add(msg, EAP_SIM_AT_FULLAUTH_ID_REQ, 0,
+					NULL, 0);
+		} else {
+			wpa_printf(MSG_DEBUG, "   AT_PERMANENT_ID_REQ");
+			eap_sim_msg_add(msg, EAP_SIM_AT_PERMANENT_ID_REQ, 0,
+					NULL, 0);
+		}
 	} else {
 		/*
 		 * RFC 4186, Chap. 4.2.4 recommends that identity from EAP is
@@ -131,12 +140,19 @@ static int eap_sim_build_encr(struct eap_sm *sm, struct eap_sim_data *data,
 			      const u8 *nonce_s)
 {
 	os_free(data->next_pseudonym);
-	data->next_pseudonym =
-		eap_sim_db_get_next_pseudonym(sm->eap_sim_db_priv, 0);
+	if (nonce_s == NULL) {
+		data->next_pseudonym =
+			eap_sim_db_get_next_pseudonym(sm->eap_sim_db_priv,
+						      EAP_SIM_DB_SIM);
+	} else {
+		/* Do not update pseudonym during re-authentication */
+		data->next_pseudonym = NULL;
+	}
 	os_free(data->next_reauth_id);
 	if (data->counter <= EAP_SIM_MAX_FAST_REAUTHS) {
 		data->next_reauth_id =
-			eap_sim_db_get_next_reauth_id(sm->eap_sim_db_priv, 0);
+			eap_sim_db_get_next_reauth_id(sm->eap_sim_db_priv,
+						      EAP_SIM_DB_SIM);
 	} else {
 		wpa_printf(MSG_DEBUG, "EAP-SIM: Max fast re-authentication "
 			   "count exceeded - force full authentication");
@@ -616,11 +632,6 @@ static void eap_sim_process_reauth(struct eap_sm *sm,
 		identity_len = id2_len;
 	}
 
-	if (data->next_pseudonym) {
-		eap_sim_db_add_pseudonym(sm->eap_sim_db_priv, identity,
-					 identity_len, data->next_pseudonym);
-		data->next_pseudonym = NULL;
-	}
 	if (data->next_reauth_id) {
 		eap_sim_db_add_reauth(sm->eap_sim_db_priv, identity,
 				      identity_len, data->next_reauth_id,

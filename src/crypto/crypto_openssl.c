@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant / wrapper functions for libcrypto
- * Copyright (c) 2004-2009, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -14,6 +14,7 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/dh.h>
+#include <openssl/hmac.h>
 
 #include "common.h"
 #include "wpabuf.h"
@@ -452,6 +453,41 @@ err:
 }
 
 
+void * dh5_init_fixed(const struct wpabuf *priv, const struct wpabuf *publ)
+{
+	DH *dh;
+
+	dh = DH_new();
+	if (dh == NULL)
+		return NULL;
+
+	dh->g = BN_new();
+	if (dh->g == NULL || BN_set_word(dh->g, 2) != 1)
+		goto err;
+
+	dh->p = get_group5_prime();
+	if (dh->p == NULL)
+		goto err;
+
+	dh->priv_key = BN_bin2bn(wpabuf_head(priv), wpabuf_len(priv), NULL);
+	if (dh->priv_key == NULL)
+		goto err;
+
+	dh->pub_key = BN_bin2bn(wpabuf_head(publ), wpabuf_len(publ), NULL);
+	if (dh->pub_key == NULL)
+		goto err;
+
+	if (DH_generate_key(dh) != 1)
+		goto err;
+
+	return dh;
+
+err:
+	DH_free(dh);
+	return NULL;
+}
+
+
 struct wpabuf * dh5_derive_shared(void *ctx, const struct wpabuf *peer_public,
 				  const struct wpabuf *own_private)
 {
@@ -496,4 +532,94 @@ void dh5_free(void *ctx)
 		return;
 	dh = ctx;
 	DH_free(dh);
+}
+
+
+struct crypto_hash {
+	HMAC_CTX ctx;
+};
+
+
+struct crypto_hash * crypto_hash_init(enum crypto_hash_alg alg, const u8 *key,
+				      size_t key_len)
+{
+	struct crypto_hash *ctx;
+	const EVP_MD *md;
+
+	switch (alg) {
+#ifndef OPENSSL_NO_MD5
+	case CRYPTO_HASH_ALG_HMAC_MD5:
+		md = EVP_md5();
+		break;
+#endif /* OPENSSL_NO_MD5 */
+#ifndef OPENSSL_NO_SHA
+	case CRYPTO_HASH_ALG_HMAC_SHA1:
+		md = EVP_sha1();
+		break;
+#endif /* OPENSSL_NO_SHA */
+#ifndef OPENSSL_NO_SHA256
+#ifdef CONFIG_SHA256
+	case CRYPTO_HASH_ALG_HMAC_SHA256:
+		md = EVP_sha256();
+		break;
+#endif /* CONFIG_SHA256 */
+#endif /* OPENSSL_NO_SHA256 */
+	default:
+		return NULL;
+	}
+
+	ctx = os_zalloc(sizeof(*ctx));
+	if (ctx == NULL)
+		return NULL;
+
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Init_ex(&ctx->ctx, key, key_len, md, NULL);
+#else /* openssl < 0.9.9 */
+	if (HMAC_Init_ex(&ctx->ctx, key, key_len, md, NULL) != 1) {
+		os_free(ctx);
+		return NULL;
+	}
+#endif /* openssl < 0.9.9 */
+
+	return ctx;
+}
+
+
+void crypto_hash_update(struct crypto_hash *ctx, const u8 *data, size_t len)
+{
+	if (ctx == NULL)
+		return;
+	HMAC_Update(&ctx->ctx, data, len);
+}
+
+
+int crypto_hash_finish(struct crypto_hash *ctx, u8 *mac, size_t *len)
+{
+	unsigned int mdlen;
+	int res;
+
+	if (ctx == NULL)
+		return -2;
+
+	if (mac == NULL || len == NULL) {
+		os_free(ctx);
+		return 0;
+	}
+
+	mdlen = *len;
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Final(&ctx->ctx, mac, &mdlen);
+	res = 1;
+#else /* openssl < 0.9.9 */
+	res = HMAC_Final(&ctx->ctx, mac, &mdlen);
+#endif /* openssl < 0.9.9 */
+	HMAC_CTX_cleanup(&ctx->ctx);
+	os_free(ctx);
+
+	if (res == 1) {
+		*len = mdlen;
+		return 0;
+	}
+
+	return -1;
 }

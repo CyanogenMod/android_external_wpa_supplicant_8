@@ -120,6 +120,8 @@ extern "C" {
 #define P2P_EVENT_PROV_DISC_PBC_REQ "P2P-PROV-DISC-PBC-REQ "
 /* parameters: <peer address> */
 #define P2P_EVENT_PROV_DISC_PBC_RESP "P2P-PROV-DISC-PBC-RESP "
+/* parameters: <peer address> <status> */
+#define P2P_EVENT_PROV_DISC_FAILURE "P2P-PROV-DISC-FAILURE"
 /* parameters: <freq> <src addr> <dialog token> <update indicator> <TLVs> */
 #define P2P_EVENT_SERV_DISC_REQ "P2P-SERV-DISC-REQ "
 /* parameters: <src addr> <update indicator> <TLVs> */
@@ -141,6 +143,27 @@ extern "C" {
 #define WPS_EVENT_AP_PIN_DISABLED "WPS-AP-PIN-DISABLED "
 #define AP_STA_CONNECTED "AP-STA-CONNECTED "
 #define AP_STA_DISCONNECTED "AP-STA-DISCONNECTED "
+
+
+/* BSS command information masks */
+
+#define WPA_BSS_MASK_ALL		0xFFFFFFFF
+#define WPA_BSS_MASK_ID			BIT(0)
+#define WPA_BSS_MASK_BSSID		BIT(1)
+#define WPA_BSS_MASK_FREQ		BIT(2)
+#define WPA_BSS_MASK_BEACON_INT		BIT(3)
+#define WPA_BSS_MASK_CAPABILITIES	BIT(4)
+#define WPA_BSS_MASK_QUAL		BIT(5)
+#define WPA_BSS_MASK_NOISE		BIT(6)
+#define WPA_BSS_MASK_LEVEL		BIT(7)
+#define WPA_BSS_MASK_TSF		BIT(8)
+#define WPA_BSS_MASK_AGE		BIT(9)
+#define WPA_BSS_MASK_IE			BIT(10)
+#define WPA_BSS_MASK_FLAGS		BIT(11)
+#define WPA_BSS_MASK_SSID		BIT(12)
+#define WPA_BSS_MASK_WPS_SCAN		BIT(13)
+#define WPA_BSS_MASK_P2P_SCAN		BIT(14)
+#define WPA_BSS_MASK_INTERNETW		BIT(15)
 
 
 /* wpa_supplicant/hostapd control interface access */
