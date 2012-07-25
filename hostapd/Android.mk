@@ -43,7 +43,11 @@ endif
 
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
+ifdef USES_TI_MAC80211
+L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"
+else
 L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/hostapd\"
+endif
 
 # To force sizeof(enum) = 4
 ifeq ($(TARGET_ARCH),arm)

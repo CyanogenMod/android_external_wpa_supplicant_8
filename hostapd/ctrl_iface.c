@@ -14,6 +14,10 @@
 #include <sys/stat.h>
 #include <stddef.h>
 
+#ifdef USES_TI_MAC80211
+#include <cutils/sockets.h>
+#endif /* USES_TI_MAC80211 */
+
 #include "utils/common.h"
 #include "utils/eloop.h"
 #include "common/version.h"
@@ -1015,6 +1019,14 @@ int hostapd_ctrl_iface_init(struct hostapd_data *hapd)
 	if (hapd->conf->ctrl_interface == NULL)
 		return 0;
 
+#ifdef USES_TI_MAC80211
+        os_snprintf(addr.sun_path, sizeof(addr.sun_path), "wpa_%s",
+                    hapd->conf->ctrl_interface);
+        s = android_get_control_socket(addr.sun_path);
+        if (s >= 0)
+                goto havesock;
+#endif /* USES_TI_MAC80211 */
+
 	if (mkdir(hapd->conf->ctrl_interface, S_IRWXU | S_IRWXG) < 0) {
 		if (errno == EEXIST) {
 			wpa_printf(MSG_DEBUG, "Using existing control "
@@ -1094,6 +1106,10 @@ int hostapd_ctrl_iface_init(struct hostapd_data *hapd)
 		goto fail;
 	}
 	os_free(fname);
+
+#ifdef USES_TI_MAC80211
+havesock:
+#endif /* USES_TI_MAC80211 */
 
 	hapd->ctrl_sock = s;
 	eloop_register_read_sock(s, hostapd_ctrl_iface_receive, hapd,
