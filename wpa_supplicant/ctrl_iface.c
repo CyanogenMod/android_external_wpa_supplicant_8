@@ -4102,6 +4102,24 @@ static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 	return ret;
 }
 
+static int wpa_supplicant_pktcnt_poll(struct wpa_supplicant *wpa_s, char *buf,
+				      size_t buflen)
+{
+	struct hostap_sta_driver_data sta;
+	int ret;
+
+	ret = wpa_drv_pktcnt_poll(wpa_s, &sta);
+	if (ret)
+		return -1;
+
+	ret = os_snprintf(buf, buflen, "TXGOOD=%lu\nTXBAD=%lu\nRXGOOD=%lu\n",
+	            sta.tx_packets, sta.tx_retry_failed, sta.rx_packets);
+	if (ret < 0 || (unsigned int) ret > buflen)
+		return -1;
+	return ret;
+}
+
+
 #ifdef ANDROID
 static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 				     char *buf, size_t buflen)
@@ -4595,6 +4613,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_TDLS */
 	} else if (os_strncmp(buf, "SIGNAL_POLL", 11) == 0) {
 		reply_len = wpa_supplicant_signal_poll(wpa_s, reply,
+						       reply_size);
+	} else if (os_strncmp(buf, "PKTCNT_POLL", 11) == 0) {
+		reply_len = wpa_supplicant_pktcnt_poll(wpa_s, reply,
 						       reply_size);
 #ifdef CONFIG_AUTOSCAN
 	} else if (os_strncmp(buf, "AUTOSCAN ", 9) == 0) {
