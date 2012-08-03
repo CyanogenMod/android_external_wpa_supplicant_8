@@ -25,7 +25,7 @@
 #include "private/android_filesystem_config.h"
 #endif /* ANDROID */
 
-#include "wpa_ctrl.h"
+#include <src/common/wpa_ctrl.h>
 #include "common.h"
 
 
