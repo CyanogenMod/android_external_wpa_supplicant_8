@@ -2383,8 +2383,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
 			sme_event_assoc_reject(wpa_s, data);
 #ifdef ANDROID_P2P
-		else {
-
+#ifdef CONFIG_P2P
+		else if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE) {
 			if(!wpa_s->current_ssid) {
 				wpa_printf(MSG_ERROR, "current_ssid == NULL");
 				break;
@@ -2410,13 +2410,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			 	 */
 				wpa_printf(MSG_ERROR, "Assoc retry threshold reached. "
 				"Disabling the network");
+				wpa_s->current_ssid->assoc_retry = 0;
 				wpa_supplicant_disable_network(wpa_s, wpa_s->current_ssid);
-#ifdef CONFIG_P2P
-				if(wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)
-					wpas_p2p_group_remove(wpa_s, wpa_s->ifname);
-#endif
+				wpas_p2p_group_remove(wpa_s, wpa_s->ifname);
 			}
 		}
+#endif
 #endif /* ANDROID_P2P */
 		break;
 	case EVENT_AUTH_TIMED_OUT:
