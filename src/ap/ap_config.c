@@ -474,9 +474,6 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	}
 #endif /* CONFIG_IEEE80211R */
 
-#ifdef ANDROID_P2P
-	os_free(conf->prioritize);
-#endif
 #ifdef CONFIG_WPS
 	os_free(conf->wps_pin_requests);
 	os_free(conf->device_name);

@@ -344,7 +344,12 @@ struct p2p_data {
 	 * srv_update_indic - Service Update Indicator for local services
 	 */
 	u16 srv_update_indic;
-
+#ifdef ANDROID_P2P
+	/**
+	 * srv_count - Registered services count
+	 */
+	u16 srv_count;
+#endif
 	struct wpabuf *sd_resp; /* Fragmented SD response */
 	u8 sd_resp_addr[ETH_ALEN];
 	u8 sd_resp_dialog_token;
