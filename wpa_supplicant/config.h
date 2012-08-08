@@ -165,9 +165,6 @@ struct wpa_cred {
 #define CFG_CHANGED_P2P_LISTEN_CHANNEL BIT(11)
 #define CFG_CHANGED_P2P_OPER_CHANNEL BIT(12)
 #define CFG_CHANGED_P2P_PREF_CHAN BIT(13)
-#ifdef ANDROID_P2P
-#define CFG_CHANGED_IFACE_PRIORITY BIT(14)
-#endif
 
 /**
  * struct wpa_config - wpa_supplicant configuration data

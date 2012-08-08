@@ -323,9 +323,6 @@ struct hostapd_bss_config {
 	u8 uuid[16];
 	char *wps_pin_requests;
 	char *device_name;
-#ifdef ANDROID_P2P
-	char *prioritize;
-#endif
 	char *manufacturer;
 	char *model_name;
 	char *model_number;

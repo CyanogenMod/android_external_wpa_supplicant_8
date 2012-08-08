@@ -53,6 +53,10 @@ enum p2p_wps_method {
 	WPS_NOT_READY, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC
 };
 
+enum p2p_sd_action {
+	SRV_UPDATE, SRV_ADD, SRV_DEL, SRV_FLUSH
+};
+
 /**
  * struct p2p_go_neg_results - P2P Group Owner Negotiation results
  */
@@ -131,6 +135,7 @@ struct p2p_data;
 enum p2p_scan_type {
 	P2P_SCAN_SOCIAL,
 	P2P_SCAN_FULL,
+	P2P_SCAN_SPECIFIC,
 	P2P_SCAN_SOCIAL_PLUS_ONE
 };
 
@@ -986,7 +991,11 @@ void p2p_sd_response(struct p2p_data *p2p, int freq, const u8 *dst,
  * of the local services. This will increment the Service Update Indicator
  * value which will be used in SD Request and Response frames.
  */
+#ifdef ANDROID_P2P
+void p2p_sd_service_update(struct p2p_data *p2p, int action);
+#else
 void p2p_sd_service_update(struct p2p_data *p2p);
+#endif
 
 
 enum p2p_invite_role {
