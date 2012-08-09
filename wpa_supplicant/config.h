@@ -661,16 +661,6 @@ struct wpa_config {
 	 * wps_nfc_dh_pubkey - NFC Device Password for password token
 	 */
 	struct wpabuf *wps_nfc_dev_pw;
-
-#ifdef ANDROID_P2P
-	/**
-	 * prioritize - Prioritize an Interface
-	 * Interface name of the interface that needs to be proritized; Useful
-	 * for resolving conflicts in connection. up to 16 octets encoded in
-	 * UTF-8
-	 */
-	char *prioritize;
-#endif
 };
 
 

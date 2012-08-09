@@ -306,9 +306,6 @@ static int android_pno_start(struct i802_bss *bss,
 static int android_pno_stop(struct i802_bss *bss);
 #endif /* ANDROID */
 #ifdef ANDROID_P2P
-static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
-				  enum wpa_event_type type,
-				  const u8 *frame, size_t len);
 int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
 int wpa_driver_get_p2p_noa(void *priv, u8 *buf, size_t len);
 int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
@@ -458,6 +455,9 @@ static int send_and_recv_msgs_global(struct nl80211_global *global,
 }
 
 
+#ifndef ANDROID
+static
+#endif
 int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
 			      struct nl_msg *msg,
 			      int (*valid_handler)(struct nl_msg *, void *),
@@ -8382,7 +8382,6 @@ static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 		wpa_printf(MSG_DEBUG, "nl80211: Set TX rates failed: ret=%d "
 			   "(%s)", ret, strerror(-ret));
 	}
-
 	return ret;
 
 nla_put_failure:
