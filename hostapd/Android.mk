@@ -33,6 +33,10 @@ L_CFLAGS += -DANDROID_QCOM_PATCH
 L_CFLAGS += -DANDROID_P2P
 endif
 
+ifeq ($(BOARD_LEGACY_NL80211_STA_EVENTS),true)
+L_CFLAGS += -DLEGACY_STA_EVENTS
+endif
+
 ifdef USES_TI_MAC80211
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
