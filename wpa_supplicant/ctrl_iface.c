@@ -2741,6 +2741,13 @@ static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 	}
 #endif /* CONFIG_INTERWORKING */
 
+#ifdef ANDROID
+	ret = os_snprintf(pos, end - pos, "====\n");
+	if (ret < 0 || ret >= end - pos)
+		return 0;
+	pos += ret;
+#endif
+
 	return pos - buf;
 }
 
