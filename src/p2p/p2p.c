@@ -1151,10 +1151,26 @@ static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
 		}
 		p2p->op_reg_class = op_reg_class;
 		p2p->op_channel = op_channel;
+#ifndef ANDROID_P2P
 		p2p->channels.reg_classes = 1;
 		p2p->channels.reg_class[0].channels = 1;
 		p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
 		p2p->channels.reg_class[0].channel[0] = p2p->op_channel;
+#else
+		if(p2p->cfg->p2p_concurrency == P2P_MULTI_CHANNEL_CONCURRENT) {
+			/* We we are requesting for a preferred channel. But since
+			 * are multichannel concurrent, we have to poplulate the
+			 * p2p_channels with list of channels that we support.
+			 */
+			os_memcpy(&p2p->channels, &p2p->cfg->channels,
+				sizeof(struct p2p_channels));
+		} else {
+			p2p->channels.reg_classes = 1;
+			p2p->channels.reg_class[0].channels = 1;
+			p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
+			p2p->channels.reg_class[0].channel[0] = p2p->op_channel;
+		}
+#endif
 	} else {
 		u8 op_reg_class, op_channel;
 
