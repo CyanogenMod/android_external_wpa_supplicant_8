@@ -70,6 +70,8 @@ int p2p_connection_in_progress(struct p2p_data *p2p)
 			wpa_printf(MSG_DEBUG, "p2p_connection_in_progress state %d", p2p->state);
 			ret = 0;
 	}
+	if (p2p->pending_action_state == P2P_PENDING_PD)
+		ret = 1;
 
 	return ret;
 }
