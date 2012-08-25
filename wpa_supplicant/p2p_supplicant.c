@@ -3004,7 +3004,17 @@ static void wpas_p2p_join_scan_req(struct wpa_supplicant *wpa_s, int freq)
 	struct wpabuf *wps_ie, *ies;
 	size_t ielen;
 	int freqs[2] = { 0, 0 };
+#ifdef ANDROID_P2P
+	int oper_freq;
 
+	/* If freq is not provided, check the operating freq of the GO and do a
+	 * a directed scan to save time
+	 */
+	if(!freq) {
+		freq = (oper_freq = p2p_get_oper_freq(wpa_s->global->p2p,
+			 wpa_s->pending_join_iface_addr) == -1) ? 0 : oper_freq; 
+	}
+#endif
 	os_memset(&params, 0, sizeof(params));
 
 	/* P2P Wildcard SSID */
@@ -4384,7 +4394,7 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s)
 			   "during provisioning");
 		return;
 	}
-
+#ifndef ANDROID_P2P
 	if (wpa_s->show_group_started) {
 		/*
 		 * Use the normal group formation timeout between the end of
@@ -4397,6 +4407,7 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s)
 			   "complete");
 		return;
 	}
+#endif
 
 	wpa_printf(MSG_DEBUG, "P2P: Set P2P group idle timeout to %u seconds",
 		   timeout);
