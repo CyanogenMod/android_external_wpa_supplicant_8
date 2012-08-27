@@ -2566,9 +2566,8 @@ broken_combination:
 				WPA_DRIVER_FLAGS_TDLS_EXTERNAL_SETUP;
 		}
 	}
-#ifndef ANDROID_P2P
+
 	if (tb[NL80211_ATTR_DEVICE_AP_SME])
-#endif
 		info->device_ap_sme = 1;
 
 	if (tb[NL80211_ATTR_FEATURE_FLAGS]) {
@@ -2646,9 +2645,8 @@ static int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	drv->capa.flags |= WPA_DRIVER_FLAGS_SANE_ERROR_CODES;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_SET_KEYS_AFTER_ASSOC_DONE;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_EAPOL_TX_STATUS;
-#ifndef ANDROID_P2P
+
 	if (!info.device_ap_sme)
-#endif
 		drv->capa.flags |= WPA_DRIVER_FLAGS_DEAUTH_TX_STATUS;
 
 	drv->device_ap_sme = info.device_ap_sme;
