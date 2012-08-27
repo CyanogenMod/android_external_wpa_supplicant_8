@@ -184,8 +184,8 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 				wpa_s = eloop_ctx;
 			}
 			os_memmove(ifname, ifend, strlen(ifend) + 1);
+			wpa_printf(MSG_INFO, "wpa_s %p cmd %s", wpa_s, buf);
 		}
-		wpa_printf(MSG_INFO, "wpa_s %p cmd %s", wpa_s, buf);
 #endif /* defined CONFIG_P2P && defined ANDROID_P2P */
 		reply = wpa_supplicant_ctrl_iface_process(wpa_s, buf,
 							  &reply_len);
