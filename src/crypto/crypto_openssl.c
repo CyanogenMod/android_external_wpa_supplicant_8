@@ -15,6 +15,10 @@
 #include <openssl/evp.h>
 #include <openssl/dh.h>
 #include <openssl/hmac.h>
+#include <openssl/rand.h>
+#ifdef CONFIG_OPENSSL_CMAC
+#include <openssl/cmac.h>
+#endif /* CONFIG_OPENSSL_CMAC */
 
 #include "common.h"
 #include "wpabuf.h"
@@ -69,21 +73,14 @@ static BIGNUM * get_group5_prime(void)
 #define NO_SHA256_WRAPPER
 #endif
 
-static int openssl_digest_vector(const EVP_MD *type, int non_fips,
-				 size_t num_elem, const u8 *addr[],
-				 const size_t *len, u8 *mac)
+static int openssl_digest_vector(const EVP_MD *type, size_t num_elem,
+				 const u8 *addr[], const size_t *len, u8 *mac)
 {
 	EVP_MD_CTX ctx;
 	size_t i;
 	unsigned int mac_len;
 
 	EVP_MD_CTX_init(&ctx);
-#ifdef CONFIG_FIPS
-#ifdef OPENSSL_FIPS
-	if (non_fips)
-		EVP_MD_CTX_set_flags(&ctx, EVP_MD_CTX_FLAG_NON_FIPS_ALLOW);
-#endif /* OPENSSL_FIPS */
-#endif /* CONFIG_FIPS */
 	if (!EVP_DigestInit_ex(&ctx, type, NULL)) {
 		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DigestInit_ex failed: %s",
 			   ERR_error_string(ERR_get_error(), NULL));
@@ -109,7 +106,7 @@ static int openssl_digest_vector(const EVP_MD *type, int non_fips,
 
 int md4_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 {
-	return openssl_digest_vector(EVP_md4(), 0, num_elem, addr, len, mac);
+	return openssl_digest_vector(EVP_md4(), num_elem, addr, len, mac);
 }
 
 
@@ -173,22 +170,13 @@ out:
 
 int md5_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 {
-	return openssl_digest_vector(EVP_md5(), 0, num_elem, addr, len, mac);
+	return openssl_digest_vector(EVP_md5(), num_elem, addr, len, mac);
 }
-
-
-#ifdef CONFIG_FIPS
-int md5_vector_non_fips_allow(size_t num_elem, const u8 *addr[],
-			      const size_t *len, u8 *mac)
-{
-	return openssl_digest_vector(EVP_md5(), 1, num_elem, addr, len, mac);
-}
-#endif /* CONFIG_FIPS */
 
 
 int sha1_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 {
-	return openssl_digest_vector(EVP_sha1(), 0, num_elem, addr, len, mac);
+	return openssl_digest_vector(EVP_sha1(), num_elem, addr, len, mac);
 }
 
 
@@ -196,60 +184,124 @@ int sha1_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 int sha256_vector(size_t num_elem, const u8 *addr[], const size_t *len,
 		  u8 *mac)
 {
-	return openssl_digest_vector(EVP_sha256(), 0, num_elem, addr, len,
-				     mac);
+	return openssl_digest_vector(EVP_sha256(), num_elem, addr, len, mac);
 }
 #endif /* NO_SHA256_WRAPPER */
 
 
+static const EVP_CIPHER * aes_get_evp_cipher(size_t keylen)
+{
+	switch (keylen) {
+	case 16:
+		return EVP_aes_128_ecb();
+	case 24:
+		return EVP_aes_192_ecb();
+	case 32:
+		return EVP_aes_256_ecb();
+	}
+
+	return NULL;
+}
+
+
 void * aes_encrypt_init(const u8 *key, size_t len)
 {
-	AES_KEY *ak;
-	ak = os_malloc(sizeof(*ak));
-	if (ak == NULL)
+	EVP_CIPHER_CTX *ctx;
+	const EVP_CIPHER *type;
+
+	type = aes_get_evp_cipher(len);
+	if (type == NULL)
 		return NULL;
-	if (AES_set_encrypt_key(key, 8 * len, ak) < 0) {
-		os_free(ak);
+
+	ctx = os_malloc(sizeof(*ctx));
+	if (ctx == NULL)
+		return NULL;
+	EVP_CIPHER_CTX_init(ctx);
+	if (EVP_EncryptInit_ex(ctx, type, NULL, key, NULL) != 1) {
+		os_free(ctx);
 		return NULL;
 	}
-	return ak;
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+	return ctx;
 }
 
 
 void aes_encrypt(void *ctx, const u8 *plain, u8 *crypt)
 {
-	AES_encrypt(plain, crypt, ctx);
+	EVP_CIPHER_CTX *c = ctx;
+	int clen = 16;
+	if (EVP_EncryptUpdate(c, crypt, &clen, plain, 16) != 1) {
+		wpa_printf(MSG_ERROR, "OpenSSL: EVP_EncryptUpdate failed: %s",
+			   ERR_error_string(ERR_get_error(), NULL));
+	}
 }
 
 
 void aes_encrypt_deinit(void *ctx)
 {
-	os_free(ctx);
+	EVP_CIPHER_CTX *c = ctx;
+	u8 buf[16];
+	int len = sizeof(buf);
+	if (EVP_EncryptFinal_ex(c, buf, &len) != 1) {
+		wpa_printf(MSG_ERROR, "OpenSSL: EVP_EncryptFinal_ex failed: "
+			   "%s", ERR_error_string(ERR_get_error(), NULL));
+	}
+	if (len != 0) {
+		wpa_printf(MSG_ERROR, "OpenSSL: Unexpected padding length %d "
+			   "in AES encrypt", len);
+	}
+	EVP_CIPHER_CTX_cleanup(c);
+	os_free(c);
 }
 
 
 void * aes_decrypt_init(const u8 *key, size_t len)
 {
-	AES_KEY *ak;
-	ak = os_malloc(sizeof(*ak));
-	if (ak == NULL)
+	EVP_CIPHER_CTX *ctx;
+	const EVP_CIPHER *type;
+
+	type = aes_get_evp_cipher(len);
+	if (type == NULL)
 		return NULL;
-	if (AES_set_decrypt_key(key, 8 * len, ak) < 0) {
-		os_free(ak);
+
+	ctx = os_malloc(sizeof(*ctx));
+	if (ctx == NULL)
+		return NULL;
+	EVP_CIPHER_CTX_init(ctx);
+	if (EVP_DecryptInit_ex(ctx, type, NULL, key, NULL) != 1) {
+		os_free(ctx);
 		return NULL;
 	}
-	return ak;
+	EVP_CIPHER_CTX_set_padding(ctx, 0);
+	return ctx;
 }
 
 
 void aes_decrypt(void *ctx, const u8 *crypt, u8 *plain)
 {
-	AES_decrypt(crypt, plain, ctx);
+	EVP_CIPHER_CTX *c = ctx;
+	int plen = 16;
+	if (EVP_DecryptUpdate(c, plain, &plen, crypt, 16) != 1) {
+		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DecryptUpdate failed: %s",
+			   ERR_error_string(ERR_get_error(), NULL));
+	}
 }
 
 
 void aes_decrypt_deinit(void *ctx)
 {
+	EVP_CIPHER_CTX *c = ctx;
+	u8 buf[16];
+	int len = sizeof(buf);
+	if (EVP_DecryptFinal_ex(c, buf, &len) != 1) {
+		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DecryptFinal_ex failed: "
+			   "%s", ERR_error_string(ERR_get_error(), NULL));
+	}
+	if (len != 0) {
+		wpa_printf(MSG_ERROR, "OpenSSL: Unexpected padding length %d "
+			   "in AES decrypt", len);
+	}
+	EVP_CIPHER_CTX_cleanup(c);
 	os_free(ctx);
 }
 
@@ -571,6 +623,7 @@ struct crypto_hash * crypto_hash_init(enum crypto_hash_alg alg, const u8 *key,
 	ctx = os_zalloc(sizeof(*ctx));
 	if (ctx == NULL)
 		return NULL;
+	HMAC_CTX_init(&ctx->ctx);
 
 #if OPENSSL_VERSION_NUMBER < 0x00909000
 	HMAC_Init_ex(&ctx->ctx, key, key_len, md, NULL);
@@ -623,3 +676,145 @@ int crypto_hash_finish(struct crypto_hash *ctx, u8 *mac, size_t *len)
 
 	return -1;
 }
+
+
+int pbkdf2_sha1(const char *passphrase, const u8 *ssid, size_t ssid_len,
+		int iterations, u8 *buf, size_t buflen)
+{
+#if OPENSSL_VERSION_NUMBER < 0x00908000
+	if (PKCS5_PBKDF2_HMAC_SHA1(passphrase, os_strlen(passphrase),
+				   (unsigned char *) ssid,
+				   ssid_len, 4096, buflen, buf) != 1)
+		return -1;
+#else /* openssl < 0.9.8 */
+	if (PKCS5_PBKDF2_HMAC_SHA1(passphrase, os_strlen(passphrase), ssid,
+				   ssid_len, 4096, buflen, buf) != 1)
+		return -1;
+#endif /* openssl < 0.9.8 */
+	return 0;
+}
+
+
+int hmac_sha1_vector(const u8 *key, size_t key_len, size_t num_elem,
+		     const u8 *addr[], const size_t *len, u8 *mac)
+{
+	HMAC_CTX ctx;
+	size_t i;
+	unsigned int mdlen;
+	int res;
+
+	HMAC_CTX_init(&ctx);
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Init_ex(&ctx, key, key_len, EVP_sha1(), NULL);
+#else /* openssl < 0.9.9 */
+	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha1(), NULL) != 1)
+		return -1;
+#endif /* openssl < 0.9.9 */
+
+	for (i = 0; i < num_elem; i++)
+		HMAC_Update(&ctx, addr[i], len[i]);
+
+	mdlen = 20;
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Final(&ctx, mac, &mdlen);
+	res = 1;
+#else /* openssl < 0.9.9 */
+	res = HMAC_Final(&ctx, mac, &mdlen);
+#endif /* openssl < 0.9.9 */
+	HMAC_CTX_cleanup(&ctx);
+
+	return res == 1 ? 0 : -1;
+}
+
+
+int hmac_sha1(const u8 *key, size_t key_len, const u8 *data, size_t data_len,
+	       u8 *mac)
+{
+	return hmac_sha1_vector(key, key_len, 1, &data, &data_len, mac);
+}
+
+
+#ifdef CONFIG_SHA256
+
+int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
+		       const u8 *addr[], const size_t *len, u8 *mac)
+{
+	HMAC_CTX ctx;
+	size_t i;
+	unsigned int mdlen;
+	int res;
+
+	HMAC_CTX_init(&ctx);
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Init_ex(&ctx, key, key_len, EVP_sha256(), NULL);
+#else /* openssl < 0.9.9 */
+	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha256(), NULL) != 1)
+		return -1;
+#endif /* openssl < 0.9.9 */
+
+	for (i = 0; i < num_elem; i++)
+		HMAC_Update(&ctx, addr[i], len[i]);
+
+	mdlen = 32;
+#if OPENSSL_VERSION_NUMBER < 0x00909000
+	HMAC_Final(&ctx, mac, &mdlen);
+	res = 1;
+#else /* openssl < 0.9.9 */
+	res = HMAC_Final(&ctx, mac, &mdlen);
+#endif /* openssl < 0.9.9 */
+	HMAC_CTX_cleanup(&ctx);
+
+	return res == 1 ? 0 : -1;
+}
+
+
+int hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
+		size_t data_len, u8 *mac)
+{
+	return hmac_sha256_vector(key, key_len, 1, &data, &data_len, mac);
+}
+
+#endif /* CONFIG_SHA256 */
+
+
+int crypto_get_random(void *buf, size_t len)
+{
+	if (RAND_bytes(buf, len) != 1)
+		return -1;
+	return 0;
+}
+
+
+#ifdef CONFIG_OPENSSL_CMAC
+int omac1_aes_128_vector(const u8 *key, size_t num_elem,
+			 const u8 *addr[], const size_t *len, u8 *mac)
+{
+	CMAC_CTX *ctx;
+	int ret = -1;
+	size_t outlen, i;
+
+	ctx = CMAC_CTX_new();
+	if (ctx == NULL)
+		return -1;
+
+	if (!CMAC_Init(ctx, key, 16, EVP_aes_128_cbc(), NULL))
+		goto fail;
+	for (i = 0; i < num_elem; i++) {
+		if (!CMAC_Update(ctx, addr[i], len[i]))
+			goto fail;
+	}
+	if (!CMAC_Final(ctx, mac, &outlen) || outlen != 16)
+		goto fail;
+
+	ret = 0;
+fail:
+	CMAC_CTX_free(ctx);
+	return ret;
+}
+
+
+int omac1_aes_128(const u8 *key, const u8 *data, size_t data_len, u8 *mac)
+{
+	return omac1_aes_128_vector(key, 1, &data, &data_len, mac);
+}
+#endif /* CONFIG_OPENSSL_CMAC */

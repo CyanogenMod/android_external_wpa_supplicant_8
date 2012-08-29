@@ -1478,7 +1478,7 @@ static struct wpa_scan_results * wpa_driver_test_get_scan_results2(void *priv)
 	if (res == NULL)
 		return NULL;
 
-	res->res = os_zalloc(drv->num_scanres * sizeof(struct wpa_scan_res *));
+	res->res = os_calloc(drv->num_scanres, sizeof(struct wpa_scan_res *));
 	if (res->res == NULL) {
 		os_free(res);
 		return NULL;
@@ -2570,15 +2570,14 @@ wpa_driver_test_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 
 	*num_modes = 3;
 	*flags = 0;
-	modes = os_zalloc(*num_modes * sizeof(struct hostapd_hw_modes));
+	modes = os_calloc(*num_modes, sizeof(struct hostapd_hw_modes));
 	if (modes == NULL)
 		return NULL;
 	modes[0].mode = HOSTAPD_MODE_IEEE80211G;
 	modes[0].num_channels = 11;
 	modes[0].num_rates = 12;
-	modes[0].channels =
-		os_zalloc(11 * sizeof(struct hostapd_channel_data));
-	modes[0].rates = os_zalloc(modes[0].num_rates * sizeof(int));
+	modes[0].channels = os_calloc(11, sizeof(struct hostapd_channel_data));
+	modes[0].rates = os_calloc(modes[0].num_rates, sizeof(int));
 	if (modes[0].channels == NULL || modes[0].rates == NULL)
 		goto fail;
 	for (i = 0; i < 11; i++) {
@@ -2602,9 +2601,8 @@ wpa_driver_test_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 	modes[1].mode = HOSTAPD_MODE_IEEE80211B;
 	modes[1].num_channels = 11;
 	modes[1].num_rates = 4;
-	modes[1].channels =
-		os_zalloc(11 * sizeof(struct hostapd_channel_data));
-	modes[1].rates = os_zalloc(modes[1].num_rates * sizeof(int));
+	modes[1].channels = os_calloc(11, sizeof(struct hostapd_channel_data));
+	modes[1].rates = os_calloc(modes[1].num_rates, sizeof(int));
 	if (modes[1].channels == NULL || modes[1].rates == NULL)
 		goto fail;
 	for (i = 0; i < 11; i++) {
@@ -2620,8 +2618,8 @@ wpa_driver_test_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 	modes[2].mode = HOSTAPD_MODE_IEEE80211A;
 	modes[2].num_channels = 1;
 	modes[2].num_rates = 8;
-	modes[2].channels = os_zalloc(sizeof(struct hostapd_channel_data));
-	modes[2].rates = os_zalloc(modes[2].num_rates * sizeof(int));
+	modes[2].channels = os_calloc(1, sizeof(struct hostapd_channel_data));
+	modes[2].rates = os_calloc(modes[2].num_rates, sizeof(int));
 	if (modes[2].channels == NULL || modes[2].rates == NULL)
 		goto fail;
 	modes[2].channels[0].chan = 60;
@@ -2822,17 +2820,19 @@ static int wpa_driver_test_probe_req_report(void *priv, int report)
 
 static int wpa_driver_test_p2p_find(void *priv, unsigned int timeout, int type)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s(timeout=%u)", __func__, timeout);
 	if (!drv->p2p)
 		return -1;
-	return p2p_find(drv->p2p, timeout, type, 0, NULL, NULL);
+	return p2p_find(drv->p2p, timeout, type, 0, NULL, NULL, 0);
 }
 
 
 static int wpa_driver_test_p2p_stop_find(void *priv)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s", __func__);
 	if (!drv->p2p)
 		return -1;
@@ -2843,7 +2843,8 @@ static int wpa_driver_test_p2p_stop_find(void *priv)
 
 static int wpa_driver_test_p2p_listen(void *priv, unsigned int timeout)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s(timeout=%u)", __func__, timeout);
 	if (!drv->p2p)
 		return -1;
@@ -2857,7 +2858,8 @@ static int wpa_driver_test_p2p_connect(void *priv, const u8 *peer_addr,
 				       unsigned int force_freq,
 				       int persistent_group)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s(peer_addr=" MACSTR " wps_method=%d "
 		   "go_intent=%d "
 		   "own_interface_addr=" MACSTR " force_freq=%u "
@@ -2874,7 +2876,8 @@ static int wpa_driver_test_p2p_connect(void *priv, const u8 *peer_addr,
 
 static int wpa_driver_test_wps_success_cb(void *priv, const u8 *peer_addr)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s(peer_addr=" MACSTR ")",
 		   __func__, MAC2STR(peer_addr));
 	if (!drv->p2p)
@@ -2886,7 +2889,8 @@ static int wpa_driver_test_wps_success_cb(void *priv, const u8 *peer_addr)
 
 static int wpa_driver_test_p2p_group_formation_failed(void *priv)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s", __func__);
 	if (!drv->p2p)
 		return -1;
@@ -2898,7 +2902,8 @@ static int wpa_driver_test_p2p_group_formation_failed(void *priv)
 static int wpa_driver_test_p2p_set_params(void *priv,
 					  const struct p2p_params *params)
 {
-	struct wpa_driver_test_data *drv = priv;
+	struct test_driver_bss *dbss = priv;
+	struct wpa_driver_test_data *drv = dbss->drv;
 	wpa_printf(MSG_DEBUG, "%s", __func__);
 	if (!drv->p2p)
 		return -1;

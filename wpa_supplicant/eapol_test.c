@@ -13,6 +13,7 @@
 #include <assert.h>
 
 #include "common.h"
+#include "utils/ext_password.h"
 #include "config.h"
 #include "eapol_supp/eapol_supp_sm.h"
 #include "eap_peer/eap.h"
@@ -55,9 +56,8 @@ struct eapol_test_data {
 	struct radius_client_data *radius;
 	struct hostapd_radius_servers *radius_conf;
 
-	u8 *last_eap_radius; /* last received EAP Response from Authentication
-			      * Server */
-	size_t last_eap_radius_len;
+	 /* last received EAP Response from Authentication Server */
+	struct wpabuf *last_eap_radius;
 
 	u8 authenticator_pmk[PMK_LEN];
 	size_t authenticator_pmk_len;
@@ -488,7 +488,7 @@ static void test_eapol_clean(struct eapol_test_data *e,
 	struct extra_radius_attr *p, *prev;
 
 	radius_client_deinit(e->radius);
-	os_free(e->last_eap_radius);
+	wpabuf_free(e->last_eap_radius);
 	radius_msg_free(e->last_recv_radius);
 	e->last_recv_radius = NULL;
 	os_free(e->eap_identity);
@@ -506,6 +506,10 @@ static void test_eapol_clean(struct eapol_test_data *e,
 		wpa_supplicant_ctrl_iface_deinit(wpa_s->ctrl_iface);
 		wpa_s->ctrl_iface = NULL;
 	}
+
+	ext_password_deinit(wpa_s->ext_pw);
+	wpa_s->ext_pw = NULL;
+
 	wpa_config_free(wpa_s->conf);
 
 	p = e->extra_attrs;
@@ -574,9 +578,8 @@ static char *eap_type_text(u8 type)
 
 static void ieee802_1x_decapsulate_radius(struct eapol_test_data *e)
 {
-	u8 *eap;
-	size_t len;
-	struct eap_hdr *hdr;
+	struct wpabuf *eap;
+	const struct eap_hdr *hdr;
 	int eap_type = -1;
 	char buf[64];
 	struct radius_msg *msg;
@@ -586,30 +589,29 @@ static void ieee802_1x_decapsulate_radius(struct eapol_test_data *e)
 
 	msg = e->last_recv_radius;
 
-	eap = radius_msg_get_eap(msg, &len);
+	eap = radius_msg_get_eap(msg);
 	if (eap == NULL) {
 		/* draft-aboba-radius-rfc2869bis-20.txt, Chap. 2.6.3:
 		 * RADIUS server SHOULD NOT send Access-Reject/no EAP-Message
 		 * attribute */
 		wpa_printf(MSG_DEBUG, "could not extract "
 			       "EAP-Message from RADIUS message");
-		os_free(e->last_eap_radius);
+		wpabuf_free(e->last_eap_radius);
 		e->last_eap_radius = NULL;
-		e->last_eap_radius_len = 0;
 		return;
 	}
 
-	if (len < sizeof(*hdr)) {
+	if (wpabuf_len(eap) < sizeof(*hdr)) {
 		wpa_printf(MSG_DEBUG, "too short EAP packet "
 			       "received from authentication server");
-		os_free(eap);
+		wpabuf_free(eap);
 		return;
 	}
 
-	if (len > sizeof(*hdr))
-		eap_type = eap[sizeof(*hdr)];
+	if (wpabuf_len(eap) > sizeof(*hdr))
+		eap_type = (wpabuf_head_u8(eap))[sizeof(*hdr)];
 
-	hdr = (struct eap_hdr *) eap;
+	hdr = wpabuf_head(eap);
 	switch (hdr->code) {
 	case EAP_CODE_REQUEST:
 		os_snprintf(buf, sizeof(buf), "EAP-Request-%s (%d)",
@@ -632,7 +634,7 @@ static void ieee802_1x_decapsulate_radius(struct eapol_test_data *e)
 		break;
 	default:
 		os_strlcpy(buf, "unknown EAP code", sizeof(buf));
-		wpa_hexdump(MSG_DEBUG, "Decapsulated EAP packet", eap, len);
+		wpa_hexdump_buf(MSG_DEBUG, "Decapsulated EAP packet", eap);
 		break;
 	}
 	wpa_printf(MSG_DEBUG, "decapsulated EAP packet (code=%d "
@@ -641,20 +643,21 @@ static void ieee802_1x_decapsulate_radius(struct eapol_test_data *e)
 
 	/* sta->eapol_sm->be_auth.idFromServer = hdr->identifier; */
 
-	os_free(e->last_eap_radius);
+	wpabuf_free(e->last_eap_radius);
 	e->last_eap_radius = eap;
-	e->last_eap_radius_len = len;
 
 	{
 		struct ieee802_1x_hdr *dot1x;
-		dot1x = os_malloc(sizeof(*dot1x) + len);
+		dot1x = os_malloc(sizeof(*dot1x) + wpabuf_len(eap));
 		assert(dot1x != NULL);
 		dot1x->version = EAPOL_VERSION;
 		dot1x->type = IEEE802_1X_TYPE_EAP_PACKET;
-		dot1x->length = htons(len);
-		os_memcpy((u8 *) (dot1x + 1), eap, len);
+		dot1x->length = htons(wpabuf_len(eap));
+		os_memcpy((u8 *) (dot1x + 1), wpabuf_head(eap),
+			  wpabuf_len(eap));
 		eapol_sm_rx_eapol(e->wpa_s->eapol, e->wpa_s->bssid,
-				  (u8 *) dot1x, sizeof(*dot1x) + len);
+				  (u8 *) dot1x,
+				  sizeof(*dot1x) + wpabuf_len(eap));
 		os_free(dot1x);
 	}
 }
@@ -1226,6 +1229,9 @@ int main(int argc, char *argv[])
 		return -1;
 
 	if (test_eapol(&eapol_test, &wpa_s, wpa_s.conf->ssid))
+		return -1;
+
+	if (wpas_init_ext_pw(&wpa_s) < 0)
 		return -1;
 
 	if (wait_for_monitor)

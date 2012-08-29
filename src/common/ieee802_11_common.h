@@ -33,8 +33,11 @@ struct ieee802_11_elems {
 	const u8 *timeout_int;
 	const u8 *ht_capabilities;
 	const u8 *ht_operation;
+	const u8 *vht_capabilities;
+	const u8 *vht_operation;
 	const u8 *vendor_ht_cap;
 	const u8 *p2p;
+	const u8 *wfd;
 	const u8 *link_id;
 	const u8 *interworking;
 	const u8 *hs20;
@@ -63,8 +66,11 @@ struct ieee802_11_elems {
 	u8 timeout_int_len;
 	u8 ht_capabilities_len;
 	u8 ht_operation_len;
+	u8 vht_capabilities_len;
+	u8 vht_operation_len;
 	u8 vendor_ht_cap_len;
 	u8 p2p_len;
+	u8 wfd_len;
 	u8 interworking_len;
 	u8 hs20_len;
 	u8 ext_capab_len;
@@ -80,5 +86,16 @@ struct wpabuf * ieee802_11_vendor_ie_concat(const u8 *ies, size_t ies_len,
 					    u32 oui_type);
 struct ieee80211_hdr;
 const u8 * get_hdr_bssid(const struct ieee80211_hdr *hdr, size_t len);
+
+struct hostapd_wmm_ac_params {
+	int cwmin;
+	int cwmax;
+	int aifs;
+	int txop_limit; /* in units of 32us */
+	int admission_control_mandatory;
+};
+
+int hostapd_config_wmm_ac(struct hostapd_wmm_ac_params wmm_ac_params[],
+			  const char *name, const char *val);
 
 #endif /* IEEE802_11_COMMON_H */

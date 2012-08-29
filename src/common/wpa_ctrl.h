@@ -48,6 +48,10 @@ extern "C" {
 #define WPA_EVENT_EAP_SUCCESS "CTRL-EVENT-EAP-SUCCESS "
 /** EAP authentication failed (EAP-Failure received) */
 #define WPA_EVENT_EAP_FAILURE "CTRL-EVENT-EAP-FAILURE "
+/** Network block temporarily disabled (e.g., due to authentication failure) */
+#define WPA_EVENT_TEMP_DISABLED "CTRL-EVENT-SSID-TEMP-DISABLED "
+/** Temporarily disabled network block re-enabled */
+#define WPA_EVENT_REENABLED "CTRL-EVENT-SSID-REENABLED "
 /** New scan results available */
 #define WPA_EVENT_SCAN_RESULTS "CTRL-EVENT-SCAN-RESULTS "
 /** wpa_supplicant state change */
@@ -133,6 +137,8 @@ extern "C" {
 #define INTERWORKING_AP "INTERWORKING-AP "
 #define INTERWORKING_NO_MATCH "INTERWORKING-NO-MATCH "
 
+#define GAS_RESPONSE_INFO "GAS-RESPONSE-INFO "
+
 /* hostapd control interface - fixed message prefixes */
 #define WPS_EVENT_PIN_NEEDED "WPS-PIN-NEEDED "
 #define WPS_EVENT_NEW_AP_SETTINGS "WPS-NEW-AP-SETTINGS "
@@ -164,6 +170,7 @@ extern "C" {
 #define WPA_BSS_MASK_WPS_SCAN		BIT(13)
 #define WPA_BSS_MASK_P2P_SCAN		BIT(14)
 #define WPA_BSS_MASK_INTERNETW		BIT(15)
+#define WPA_BSS_MASK_WIFI_DISPLAY	BIT(16)
 
 
 /* wpa_supplicant/hostapd control interface access */
@@ -290,6 +297,8 @@ int wpa_ctrl_pending(struct wpa_ctrl *ctrl);
  */
 int wpa_ctrl_get_fd(struct wpa_ctrl *ctrl);
 
+char * wpa_ctrl_get_remote_ifname(struct wpa_ctrl *ctrl);
+
 #ifdef ANDROID
 /**
  * wpa_ctrl_cleanup() - Delete any local UNIX domain socket files that
@@ -302,8 +311,11 @@ void wpa_ctrl_cleanup(void);
 #endif /* ANDROID */
 
 #ifdef CONFIG_CTRL_IFACE_UDP
+/* Port range for multiple wpa_supplicant instances and multiple VIFs */
 #define WPA_CTRL_IFACE_PORT 9877
+#define WPA_CTRL_IFACE_PORT_LIMIT 50 /* decremented from start */
 #define WPA_GLOBAL_CTRL_IFACE_PORT 9878
+#define WPA_GLOBAL_CTRL_IFACE_PORT_LIMIT 20 /* incremented from start */
 #endif /* CONFIG_CTRL_IFACE_UDP */
 
 

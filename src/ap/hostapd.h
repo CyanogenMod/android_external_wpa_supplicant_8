@@ -23,8 +23,22 @@ struct full_dynamic_vlan;
 enum wps_event;
 union wps_event_data;
 
+struct hostapd_iface;
+
 struct hapd_interfaces {
+	int (*reload_config)(struct hostapd_iface *iface);
+	struct hostapd_config * (*config_read_cb)(const char *config_fname);
+	int (*ctrl_iface_init)(struct hostapd_data *hapd);
+	void (*ctrl_iface_deinit)(struct hostapd_data *hapd);
+	int (*for_each_interface)(struct hapd_interfaces *interfaces,
+				  int (*cb)(struct hostapd_iface *iface,
+					    void *ctx), void *ctx);
+	int (*driver_init)(struct hostapd_iface *iface);
+
 	size_t count;
+	int global_ctrl_sock;
+	char *global_iface_path;
+	char *global_iface_name;
 	struct hostapd_iface **iface;
 };
 
@@ -182,8 +196,6 @@ struct hostapd_data {
 struct hostapd_iface {
 	struct hapd_interfaces *interfaces;
 	void *owner;
-	int (*reload_config)(struct hostapd_iface *iface);
-	struct hostapd_config * (*config_read_cb)(const char *config_fname);
 	char *config_fname;
 	struct hostapd_config *conf;
 
@@ -241,13 +253,6 @@ struct hostapd_iface {
 
 	u16 ht_op_mode;
 	void (*scan_cb)(struct hostapd_iface *iface);
-
-	int (*ctrl_iface_init)(struct hostapd_data *hapd);
-	void (*ctrl_iface_deinit)(struct hostapd_data *hapd);
-
-	int (*for_each_interface)(struct hapd_interfaces *interfaces,
-				  int (*cb)(struct hostapd_iface *iface,
-					    void *ctx), void *ctx);
 };
 
 /* hostapd.c */
@@ -265,6 +270,12 @@ void hostapd_interface_deinit(struct hostapd_iface *iface);
 void hostapd_interface_free(struct hostapd_iface *iface);
 void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 			   int reassoc);
+void hostapd_interface_deinit_free(struct hostapd_iface *iface);
+int hostapd_enable_iface(struct hostapd_iface *hapd_iface);
+int hostapd_reload_iface(struct hostapd_iface *hapd_iface);
+int hostapd_disable_iface(struct hostapd_iface *hapd_iface);
+int hostapd_add_iface(struct hapd_interfaces *ifaces, char *buf);
+int hostapd_remove_iface(struct hapd_interfaces *ifaces, char *buf);
 
 /* utils.c */
 int hostapd_register_probereq_cb(struct hostapd_data *hapd,

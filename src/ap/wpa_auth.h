@@ -158,6 +158,8 @@ struct wpa_auth_config {
 	int pmk_r1_push;
 	int ft_over_ds;
 #endif /* CONFIG_IEEE80211R */
+	int disable_gtk;
+	int ap_mlme;
 };
 
 typedef enum {
@@ -196,6 +198,8 @@ struct wpa_auth_callbacks {
 	struct wpa_state_machine * (*add_sta)(void *ctx, const u8 *sta_addr);
 	int (*send_ft_action)(void *ctx, const u8 *dst,
 			      const u8 *data, size_t data_len);
+	int (*add_tspec)(void *ctx, const u8 *sta_addr, u8 *tspec_ie,
+                         size_t tspec_ielen);
 #endif /* CONFIG_IEEE80211R */
 };
 
@@ -277,5 +281,14 @@ int wpa_ft_rrb_rx(struct wpa_authenticator *wpa_auth, const u8 *src_addr,
 		  const u8 *data, size_t data_len);
 void wpa_ft_push_pmk_r1(struct wpa_authenticator *wpa_auth, const u8 *addr);
 #endif /* CONFIG_IEEE80211R */
+
+#ifdef CONFIG_IEEE80211V
+void wpa_wnmsleep_rekey_gtk(struct wpa_state_machine *sm);
+void wpa_set_wnmsleep(struct wpa_state_machine *sm, int flag);
+int wpa_wnmsleep_gtk_subelem(struct wpa_state_machine *sm, u8 *pos);
+#ifdef CONFIG_IEEE80211W
+int wpa_wnmsleep_igtk_subelem(struct wpa_state_machine *sm, u8 *pos);
+#endif /* CONFIG_IEEE80211W */
+#endif /* CONFIG_IEEE80211V */
 
 #endif /* WPA_AUTH_H */

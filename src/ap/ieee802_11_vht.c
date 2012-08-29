@@ -61,12 +61,48 @@ u8 * hostapd_eid_vht_operation(struct hostapd_data *hapd, u8 *eid)
 	oper = (struct ieee80211_vht_operation *) pos;
 	os_memset(oper, 0, sizeof(*oper));
 
+	/*
+	 * center freq = 5 GHz + (5 * index)
+	 * So index 42 gives center freq 5.210 GHz
+	 * which is channel 42 in 5G band
+	 */
+	oper->vht_op_info_chan_center_freq_seg0_idx =
+		hapd->iconf->vht_oper_centr_freq_seg0_idx;
+
 	oper->vht_op_info_chwidth = hapd->iconf->vht_oper_chwidth;
 
 	/* VHT Basic MCS set comes from hw */
 	/* Hard code 1 stream, MCS0-7 is a min Basic VHT MCS rates */
-	oper->vht_basic_mcs_set = 0xfffc;
+	oper->vht_basic_mcs_set = host_to_le16(0xfffc);
 	pos += sizeof(*oper);
 
 	return pos;
+}
+
+
+u16 copy_sta_vht_capab(struct hostapd_data *hapd, struct sta_info *sta,
+		       const u8 *vht_capab, size_t vht_capab_len)
+{
+	/* Disable VHT caps for STAs associated to no-VHT BSSes. */
+	if (!vht_capab ||
+	    vht_capab_len < sizeof(struct ieee80211_vht_capabilities) ||
+	    hapd->conf->disable_11ac) {
+		sta->flags &= ~WLAN_STA_VHT;
+		os_free(sta->vht_capabilities);
+		sta->vht_capabilities = NULL;
+		return WLAN_STATUS_SUCCESS;
+	}
+
+	if (sta->vht_capabilities == NULL) {
+		sta->vht_capabilities =
+			os_zalloc(sizeof(struct ieee80211_vht_capabilities));
+		if (sta->vht_capabilities == NULL)
+			return WLAN_STATUS_UNSPECIFIED_FAILURE;
+	}
+
+	sta->flags |= WLAN_STA_VHT;
+	os_memcpy(sta->vht_capabilities, vht_capab,
+		  sizeof(struct ieee80211_vht_capabilities));
+
+	return WLAN_STATUS_SUCCESS;
 }

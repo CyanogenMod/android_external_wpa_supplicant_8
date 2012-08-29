@@ -12,6 +12,7 @@
 #include "common/defs.h"
 #include "ip_addr.h"
 #include "common/wpa_common.h"
+#include "common/ieee802_11_common.h"
 #include "wps/wps.h"
 
 #define MAX_STA_COUNT 2007
@@ -48,7 +49,7 @@ typedef enum hostap_security_policy {
 } secpolicy;
 
 struct hostapd_ssid {
-	char ssid[HOSTAPD_MAX_SSID_LEN + 1];
+	u8 ssid[HOSTAPD_MAX_SSID_LEN];
 	size_t ssid_len;
 	int ssid_set;
 
@@ -65,6 +66,10 @@ struct hostapd_ssid {
 #define DYNAMIC_VLAN_OPTIONAL 1
 #define DYNAMIC_VLAN_REQUIRED 2
 	int dynamic_vlan;
+#define DYNAMIC_VLAN_NAMING_WITHOUT_DEVICE 0
+#define DYNAMIC_VLAN_NAMING_WITH_DEVICE 1
+#define DYNAMIC_VLAN_NAMING_END 2
+	int vlan_naming;
 #ifdef CONFIG_FULL_DYNAMIC_VLAN
 	char *vlan_tagged_interface;
 #endif /* CONFIG_FULL_DYNAMIC_VLAN */
@@ -132,14 +137,6 @@ struct hostapd_tx_queue_params {
 	int burst; /* maximum burst time in 0.1 ms, i.e., 10 = 1 ms */
 };
 
-struct hostapd_wmm_ac_params {
-	int cwmin;
-	int cwmax;
-	int aifs;
-	int txop_limit; /* in units of 32us */
-	int admission_control_mandatory;
-};
-
 
 #define MAX_ROAMING_CONSORTIUM_LEN 15
 
@@ -148,10 +145,27 @@ struct hostapd_roaming_consortium {
 	u8 oi[MAX_ROAMING_CONSORTIUM_LEN];
 };
 
-struct hostapd_venue_name {
+struct hostapd_lang_string {
 	u8 lang[3];
 	u8 name_len;
 	u8 name[252];
+};
+
+#define MAX_NAI_REALMS 10
+#define MAX_NAI_REALMLEN 255
+#define MAX_NAI_EAP_METHODS 5
+#define MAX_NAI_AUTH_TYPES 4
+struct hostapd_nai_realm_data {
+	u8 encoding;
+	char realm_buf[MAX_NAI_REALMLEN + 1];
+	char *realm[MAX_NAI_REALMS];
+	u8 eap_method_count;
+	struct hostapd_nai_realm_eap {
+		u8 eap_method;
+		u8 num_auths;
+		u8 auth_id[MAX_NAI_AUTH_TYPES];
+		u8 auth_val[MAX_NAI_AUTH_TYPES];
+	} eap_method[MAX_NAI_EAP_METHODS];
 };
 
 /**
@@ -389,16 +403,49 @@ struct hostapd_bss_config {
 
 	/* IEEE 802.11u - Venue Name duples */
 	unsigned int venue_name_count;
-	struct hostapd_venue_name *venue_name;
+	struct hostapd_lang_string *venue_name;
+
+	/* IEEE 802.11u - Network Authentication Type */
+	u8 *network_auth_type;
+	size_t network_auth_type_len;
+
+	/* IEEE 802.11u - IP Address Type Availability */
+	u8 ipaddr_type_availability;
+	u8 ipaddr_type_configured;
+
+	/* IEEE 802.11u - 3GPP Cellular Network */
+	u8 *anqp_3gpp_cell_net;
+	size_t anqp_3gpp_cell_net_len;
+
+	/* IEEE 802.11u - Domain Name */
+	u8 *domain_name;
+	size_t domain_name_len;
+
+	unsigned int nai_realm_count;
+	struct hostapd_nai_realm_data *nai_realm_data;
 
 	u16 gas_comeback_delay;
 	int gas_frag_limit;
+
+#ifdef CONFIG_HS20
+	int hs20;
+	int disable_dgaf;
+	unsigned int hs20_oper_friendly_name_count;
+	struct hostapd_lang_string *hs20_oper_friendly_name;
+	u8 *hs20_wan_metrics;
+	u8 *hs20_connection_capability;
+	size_t hs20_connection_capability_len;
+	u8 *hs20_operating_class;
+	u8 hs20_operating_class_len;
+#endif /* CONFIG_HS20 */
 
 	u8 wps_rf_bands; /* RF bands for WPS (WPS_RF_*) */
 
 #ifdef CONFIG_RADIUS_TEST
 	char *dump_msk_file;
 #endif /* CONFIG_RADIUS_TEST */
+
+	struct wpabuf *vendor_elements;
 };
 
 
@@ -455,7 +502,9 @@ struct hostapd_config {
 	int require_ht;
 	u32 vht_capab;
 	int ieee80211ac;
+	int require_vht;
 	u8 vht_oper_chwidth;
+	u8 vht_oper_centr_freq_seg0_idx;
 };
 
 

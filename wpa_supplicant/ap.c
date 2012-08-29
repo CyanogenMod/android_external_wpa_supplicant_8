@@ -99,6 +99,18 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 
 		if (!no_ht && mode && mode->ht_capab) {
 			conf->ieee80211n = 1;
+#ifdef CONFIG_P2P
+			if (conf->hw_mode == HOSTAPD_MODE_IEEE80211A &&
+			    (mode->ht_capab &
+			     HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET) &&
+			    ssid->ht40)
+				conf->secondary_channel =
+					wpas_p2p_get_ht40_mode(wpa_s, mode,
+							       conf->channel);
+			if (conf->secondary_channel)
+				conf->ht_capab |=
+					HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET;
+#endif /* CONFIG_P2P */
 
 			/*
 			 * white-list capabilities that won't cause issues
@@ -150,7 +162,6 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 	os_memcpy(bss->ssid.ssid, ssid->ssid, ssid->ssid_len);
-	bss->ssid.ssid[ssid->ssid_len] = '\0';
 	bss->ssid.ssid_len = ssid->ssid_len;
 	bss->ssid.ssid_set = 1;
 
@@ -207,6 +218,9 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	}
 	if (pairwise & WPA_CIPHER_TKIP)
 		bss->wpa_group = WPA_CIPHER_TKIP;
+	else if ((pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP)) ==
+		 WPA_CIPHER_GCMP)
+		bss->wpa_group = WPA_CIPHER_GCMP;
 	else
 		bss->wpa_group = WPA_CIPHER_CCMP;
 
@@ -450,6 +464,8 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 
 	if (ssid->pairwise_cipher & WPA_CIPHER_CCMP)
 		wpa_s->pairwise_cipher = WPA_CIPHER_CCMP;
+	else if (ssid->pairwise_cipher & WPA_CIPHER_GCMP)
+		wpa_s->pairwise_cipher = WPA_CIPHER_GCMP;
 	else if (ssid->pairwise_cipher & WPA_CIPHER_TKIP)
 		wpa_s->pairwise_cipher = WPA_CIPHER_TKIP;
 	else if (ssid->pairwise_cipher & WPA_CIPHER_NONE)
@@ -491,6 +507,10 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+	os_memcpy(wpa_s->ap_iface->conf->wmm_ac_params,
+		  wpa_s->conf->wmm_ac_params,
+		  sizeof(wpa_s->conf->wmm_ac_params));
+
 	if (params.uapsd > 0) {
 		conf->bss->wmm_enabled = 1;
 		conf->bss->wmm_uapsd = 1;
@@ -511,7 +531,7 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_P2P */
 
 	hapd_iface->num_bss = conf->num_bss;
-	hapd_iface->bss = os_zalloc(conf->num_bss *
+	hapd_iface->bss = os_calloc(conf->num_bss,
 				    sizeof(struct hostapd_data *));
 	if (hapd_iface->bss == NULL) {
 		wpa_supplicant_ap_deinit(wpa_s);

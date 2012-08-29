@@ -127,6 +127,15 @@ void sme_authenticate(struct wpa_supplicant *wpa_s,
 				"key management and encryption suites");
 			return;
 		}
+	} else if ((ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA) &&
+		   wpa_key_mgmt_wpa_ieee8021x(ssid->key_mgmt)) {
+		/*
+		 * Both WPA and non-WPA IEEE 802.1X enabled in configuration -
+		 * use non-WPA since the scan results did not indicate that the
+		 * AP is using WPA or WPA2.
+		 */
+		wpa_supplicant_set_non_wpa_policy(wpa_s, ssid);
+		wpa_s->sme.assoc_req_ie_len = 0;
 	} else if (wpa_key_mgmt_wpa_any(ssid->key_mgmt)) {
 		wpa_s->sme.assoc_req_ie_len = sizeof(wpa_s->sme.assoc_req_ie);
 		if (wpa_supplicant_set_suites(wpa_s, NULL, ssid,
@@ -802,7 +811,7 @@ static void wpa_setband_scan_freqs_list(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
-	params->freqs = os_zalloc((mode->num_channels + 1) * sizeof(int));
+	params->freqs = os_calloc(mode->num_channels + 1, sizeof(int));
 	if (params->freqs == NULL)
 		return;
 	for (count = 0, i = 0; i < mode->num_channels; i++) {
@@ -843,6 +852,8 @@ void sme_sched_obss_scan(struct wpa_supplicant *wpa_s, int enable)
 	const u8 *ie;
 	struct wpa_bss *bss = wpa_s->current_bss;
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
+	struct hostapd_hw_modes *hw_mode = NULL;
+	int i;
 
 	eloop_cancel_timeout(sme_obss_scan_timeout, wpa_s, NULL);
 	wpa_s->sme.sched_obss_scan = 0;
@@ -853,9 +864,20 @@ void sme_sched_obss_scan(struct wpa_supplicant *wpa_s, int enable)
 	    ssid->mode != IEEE80211_MODE_INFRA)
 		return; /* Not using station SME in wpa_supplicant */
 
-	if (!wpa_s->hw.modes ||
-	    !(wpa_s->hw.modes->ht_capab & HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET))
-		return; /* Driver does not support HT40 */
+	if (!wpa_s->hw.modes)
+		return;
+
+	/* only HT caps in 11g mode are relevant */
+	for (i = 0; i < wpa_s->hw.num_modes; i++) {
+		hw_mode = &wpa_s->hw.modes[i];
+		if (hw_mode->mode == HOSTAPD_MODE_IEEE80211G)
+			break;
+	}
+
+	/* Driver does not support HT40 for 11g or doesn't have 11g. */
+	if (i == wpa_s->hw.num_modes || !hw_mode ||
+	    !(hw_mode->ht_capab & HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET))
+		return;
 
 	if (bss == NULL || bss->freq < 2400 || bss->freq > 2500)
 		return; /* Not associated on 2.4 GHz band */
@@ -938,9 +960,9 @@ static void sme_sa_query_timer(void *eloop_ctx, void *timeout_ctx)
 	    sme_check_sa_query_timeout(wpa_s))
 		return;
 
-	nbuf = os_realloc(wpa_s->sme.sa_query_trans_id,
-			  (wpa_s->sme.sa_query_count + 1) *
-			  WLAN_SA_QUERY_TR_ID_LEN);
+	nbuf = os_realloc_array(wpa_s->sme.sa_query_trans_id,
+				wpa_s->sme.sa_query_count + 1,
+				WLAN_SA_QUERY_TR_ID_LEN);
 	if (nbuf == NULL)
 		return;
 	if (wpa_s->sme.sa_query_count == 0) {
