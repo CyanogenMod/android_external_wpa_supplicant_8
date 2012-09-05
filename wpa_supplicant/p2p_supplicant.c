@@ -621,6 +621,12 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 		 * packets.
 		 */
 		wpa_s->show_group_started = 1;
+#ifdef ANDROID_P2P
+		/* For client Second phase of Group formation (4-way handshake) can be still pending
+		 * So we need to restore wpa_s->global->p2p_group_formation */
+		wpa_s->global->p2p_group_formation = wpa_s;
+#endif
+
 	} else if (ssid && ssid->passphrase == NULL && ssid->psk_set) {
 		char psk[65];
 		wpa_snprintf_hex(psk, sizeof(psk), ssid->psk, 32);
@@ -4881,8 +4887,27 @@ int wpas_p2p_disconnect(struct wpa_supplicant *wpa_s)
 
 int wpas_p2p_in_progress(struct wpa_supplicant *wpa_s)
 {
+#ifdef ANDROID_P2P
+	struct wpa_supplicant *group = wpa_s;
+#endif
+
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return 0;
+
+#ifdef ANDROID_P2P
+	while (group && (group->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)) {
+		if(group->wpa_state == WPA_ASSOCIATED) {
+			/* WPA_ASSOCIATED hasn't moved to WPA_COMPLETED. So it could be in WPS
+			 * or 4Way Hanshake phase. Avoid allowing scan during this time critical
+			 * phase
+			 */
+			wpa_printf(MSG_ERROR, "P2P: WPS/4way handshake in Progress."
+			" Defer SCAN ");
+			return 1;
+		}
+		group = group->next;
+	}
+#endif
 
 	return p2p_in_progress(wpa_s->global->p2p);
 }
