@@ -450,6 +450,13 @@ struct wpa_ssid {
 	int assoc_retry;
 #endif
 
+#ifdef ANDROID_P2P
+	/**
+	 * assoc_retry - Number of times association should be retried.
+	 */
+	int assoc_retry;
+#endif
+
 #ifdef CONFIG_HT_OVERRIDES
 	/**
 	 * disable_ht - Disable HT (IEEE 802.11n) for this network
