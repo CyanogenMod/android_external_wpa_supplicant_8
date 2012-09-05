@@ -443,12 +443,6 @@ struct wpa_ssid {
 	 * WPS or similar so that they may be exported.
 	 */
 	int export_keys;
-#ifdef ANDROID_P2P
-	/**
-	 * assoc_retry - Number of times association should be retried.
-	 */
-	int assoc_retry;
-#endif
 
 #ifdef ANDROID_P2P
 	/**
