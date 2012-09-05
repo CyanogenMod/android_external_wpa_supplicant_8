@@ -1,6 +1,6 @@
 /*
  * EAPOL supplicant state machines
- * Copyright (c) 2004-2008, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -137,46 +137,6 @@ struct eapol_sm {
 
 	Boolean unicast_key_received, broadcast_key_received;
 };
-
-
-#define IEEE8021X_REPLAY_COUNTER_LEN 8
-#define IEEE8021X_KEY_SIGN_LEN 16
-#define IEEE8021X_KEY_IV_LEN 16
-
-#define IEEE8021X_KEY_INDEX_FLAG 0x80
-#define IEEE8021X_KEY_INDEX_MASK 0x03
-
-#ifdef _MSC_VER
-#pragma pack(push, 1)
-#endif /* _MSC_VER */
-
-struct ieee802_1x_eapol_key {
-	u8 type;
-	/* Note: key_length is unaligned */
-	u8 key_length[2];
-	/* does not repeat within the life of the keying material used to
-	 * encrypt the Key field; 64-bit NTP timestamp MAY be used here */
-	u8 replay_counter[IEEE8021X_REPLAY_COUNTER_LEN];
-	u8 key_iv[IEEE8021X_KEY_IV_LEN]; /* cryptographically random number */
-	u8 key_index; /* key flag in the most significant bit:
-		       * 0 = broadcast (default key),
-		       * 1 = unicast (key mapping key); key index is in the
-		       * 7 least significant bits */
-	/* HMAC-MD5 message integrity check computed with MS-MPPE-Send-Key as
-	 * the key */
-	u8 key_signature[IEEE8021X_KEY_SIGN_LEN];
-
-	/* followed by key: if packet body length = 44 + key length, then the
-	 * key field (of key_length bytes) contains the key in encrypted form;
-	 * if packet body length = 44, key field is absent and key_length
-	 * represents the number of least significant octets from
-	 * MS-MPPE-Send-Key attribute to be used as the keying material;
-	 * RC4 key used in encryption = Key-IV + MS-MPPE-Recv-Key */
-} STRUCT_PACKED;
-
-#ifdef _MSC_VER
-#pragma pack(pop)
-#endif /* _MSC_VER */
 
 
 static void eapol_sm_txLogoff(struct eapol_sm *sm);
@@ -664,6 +624,7 @@ struct eap_key_data {
 
 static void eapol_sm_processKey(struct eapol_sm *sm)
 {
+#ifndef CONFIG_FIPS
 	struct ieee802_1x_hdr *hdr;
 	struct ieee802_1x_eapol_key *key;
 	struct eap_key_data keydata;
@@ -671,6 +632,7 @@ static void eapol_sm_processKey(struct eapol_sm *sm)
 	u8 ekey[IEEE8021X_KEY_IV_LEN + IEEE8021X_ENCR_KEY_LEN];
 	int key_len, res, sign_key_len, encr_key_len;
 	u16 rx_key_length;
+	size_t plen;
 
 	wpa_printf(MSG_DEBUG, "EAPOL: processKey");
 	if (sm->last_rx_key == NULL)
@@ -683,9 +645,12 @@ static void eapol_sm_processKey(struct eapol_sm *sm)
 		return;
 	}
 
+	if (sm->last_rx_key_len < sizeof(*hdr) + sizeof(*key))
+		return;
 	hdr = (struct ieee802_1x_hdr *) sm->last_rx_key;
 	key = (struct ieee802_1x_eapol_key *) (hdr + 1);
-	if (sizeof(*hdr) + be_to_host16(hdr->length) > sm->last_rx_key_len) {
+	plen = be_to_host16(hdr->length);
+	if (sizeof(*hdr) + plen > sm->last_rx_key_len || plen < sizeof(*key)) {
 		wpa_printf(MSG_WARNING, "EAPOL: Too short EAPOL-Key frame");
 		return;
 	}
@@ -751,7 +716,7 @@ static void eapol_sm_processKey(struct eapol_sm *sm)
 	}
 	wpa_printf(MSG_DEBUG, "EAPOL: EAPOL-Key key signature verified");
 
-	key_len = be_to_host16(hdr->length) - sizeof(*key);
+	key_len = plen - sizeof(*key);
 	if (key_len > 32 || rx_key_length > 32) {
 		wpa_printf(MSG_WARNING, "EAPOL: Too long key data length %d",
 			   key_len ? key_len : rx_key_length);
@@ -822,6 +787,7 @@ static void eapol_sm_processKey(struct eapol_sm *sm)
 				sm->ctx->eapol_done_cb(sm->ctx->ctx);
 		}
 	}
+#endif /* CONFIG_FIPS */
 }
 
 
@@ -1778,7 +1744,8 @@ static void eapol_sm_set_int(void *ctx, enum eapol_int_var variable,
 	switch (variable) {
 	case EAPOL_idleWhile:
 		sm->idleWhile = value;
-		eapol_enable_timer_tick(sm);
+		if (sm->idleWhile > 0)
+			eapol_enable_timer_tick(sm);
 		break;
 	}
 }
@@ -1945,4 +1912,20 @@ void eapol_sm_deinit(struct eapol_sm *sm)
 	wpabuf_free(sm->eapReqData);
 	os_free(sm->ctx);
 	os_free(sm);
+}
+
+
+void eapol_sm_set_ext_pw_ctx(struct eapol_sm *sm,
+			     struct ext_password_data *ext)
+{
+	if (sm && sm->eap)
+		eap_sm_set_ext_pw_ctx(sm->eap, ext);
+}
+
+
+int eapol_sm_failed(struct eapol_sm *sm)
+{
+	if (sm == NULL)
+		return 0;
+	return !sm->eapSuccess && sm->eapFail;
 }

@@ -711,6 +711,8 @@ void * tls_init(const struct tls_config *conf)
 					   "mode");
 				ERR_load_crypto_strings();
 				ERR_print_errors_fp(stderr);
+				os_free(tls_global);
+				tls_global = NULL;
 				return NULL;
 			} else
 				wpa_printf(MSG_INFO, "Running in FIPS mode");
@@ -719,6 +721,8 @@ void * tls_init(const struct tls_config *conf)
 		if (conf && conf->fips_mode) {
 			wpa_printf(MSG_ERROR, "FIPS mode requested, but not "
 				   "supported");
+			os_free(tls_global);
+			tls_global = NULL;
 			return NULL;
 		}
 #endif /* OPENSSL_FIPS */
@@ -1936,6 +1940,8 @@ static int tls_connection_engine_ca_cert(void *_ssl_ctx,
 	wpa_printf(MSG_DEBUG, "OpenSSL: %s - added CA certificate from engine "
 		   "to certificate store", __func__);
 	SSL_set_verify(conn->ssl, SSL_VERIFY_PEER, tls_verify_cb);
+	conn->ca_cert_verify = 1;
+
 	return 0;
 
 #else /* OPENSSL_NO_ENGINE */
@@ -2099,7 +2105,7 @@ static int tls_connection_private_key(void *_ssl_ctx,
 	ERR_clear_error();
 	SSL_CTX_set_default_passwd_cb(ssl_ctx, NULL);
 	os_free(passwd);
-	
+
 	if (!SSL_check_private_key(conn->ssl)) {
 		tls_show_errors(MSG_INFO, __func__, "Private key failed "
 				"verification");
@@ -2145,7 +2151,7 @@ static int tls_global_private_key(SSL_CTX *ssl_ctx, const char *private_key,
 	os_free(passwd);
 	ERR_clear_error();
 	SSL_CTX_set_default_passwd_cb(ssl_ctx, NULL);
-	
+
 	if (!SSL_CTX_check_private_key(ssl_ctx)) {
 		tls_show_errors(MSG_INFO, __func__,
 				"Private key failed verification");
@@ -2307,6 +2313,11 @@ static int tls_global_dh(SSL_CTX *ssl_ctx, const char *dh_file)
 int tls_connection_get_keys(void *ssl_ctx, struct tls_connection *conn,
 			    struct tls_keys *keys)
 {
+#ifdef CONFIG_FIPS
+	wpa_printf(MSG_ERROR, "OpenSSL: TLS keys cannot be exported in FIPS "
+		   "mode");
+	return -1;
+#else /* CONFIG_FIPS */
 	SSL *ssl;
 
 	if (conn == NULL || keys == NULL)
@@ -2324,6 +2335,7 @@ int tls_connection_get_keys(void *ssl_ctx, struct tls_connection *conn,
 	keys->server_random_len = SSL3_RANDOM_SIZE;
 
 	return 0;
+#endif /* CONFIG_FIPS */
 }
 
 
@@ -2331,6 +2343,19 @@ int tls_connection_prf(void *tls_ctx, struct tls_connection *conn,
 		       const char *label, int server_random_first,
 		       u8 *out, size_t out_len)
 {
+#if OPENSSL_VERSION_NUMBER >= 0x10001000L
+	SSL *ssl;
+	if (conn == NULL)
+		return -1;
+	if (server_random_first)
+		return -1;
+	ssl = conn->ssl;
+	if (SSL_export_keying_material(ssl, out, out_len, label,
+				       os_strlen(label), NULL, 0, 0) == 1) {
+		wpa_printf(MSG_DEBUG, "OpenSSL: Using internal PRF");
+		return 0;
+	}
+#endif
 	return -1;
 }
 
@@ -2763,6 +2788,13 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 		return -1;
 	}
 
+#ifdef SSL_OP_NO_TICKET
+	if (params->flags & TLS_CONN_DISABLE_SESSION_TICKET)
+		SSL_set_options(conn->ssl, SSL_OP_NO_TICKET);
+	else
+		SSL_clear_options(conn->ssl, SSL_OP_NO_TICKET);
+#endif /*  SSL_OP_NO_TICKET */
+
 	conn->flags = params->flags;
 
 	tls_get_errors(tls_ctx);
@@ -2798,6 +2830,13 @@ int tls_global_set_params(void *tls_ctx,
 		return -1;
 	}
 
+#ifdef SSL_OP_NO_TICKET
+	if (params->flags & TLS_CONN_DISABLE_SESSION_TICKET)
+		SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_TICKET);
+	else
+		SSL_CTX_clear_options(ssl_ctx, SSL_OP_NO_TICKET);
+#endif /*  SSL_OP_NO_TICKET */
+
 	return 0;
 }
 
@@ -2807,6 +2846,7 @@ int tls_connection_get_keyblock_size(void *tls_ctx,
 {
 	const EVP_CIPHER *c;
 	const EVP_MD *h;
+	int md_size;
 
 	if (conn == NULL || conn->ssl == NULL ||
 	    conn->ssl->enc_read_ctx == NULL ||
@@ -2820,9 +2860,20 @@ int tls_connection_get_keyblock_size(void *tls_ctx,
 #else
 	h = conn->ssl->read_hash;
 #endif
+	if (h)
+		md_size = EVP_MD_size(h);
+#if OPENSSL_VERSION_NUMBER >= 0x10000000L
+	else if (conn->ssl->s3)
+		md_size = conn->ssl->s3->tmp.new_mac_secret_size;
+#endif
+	else
+		return -1;
 
+	wpa_printf(MSG_DEBUG, "OpenSSL: keyblock size: key_len=%d MD_size=%d "
+		   "IV_len=%d", EVP_CIPHER_key_length(c), md_size,
+		   EVP_CIPHER_iv_length(c));
 	return 2 * (EVP_CIPHER_key_length(c) +
-		    EVP_MD_size(h) +
+		    md_size +
 		    EVP_CIPHER_iv_length(c));
 }
 

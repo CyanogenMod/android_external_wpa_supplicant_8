@@ -31,16 +31,17 @@ LIB_OBJS= \
 	md4-internal.o \
 	md5.o \
 	md5-internal.o \
-	md5-non-fips.o \
 	milenage.o \
 	ms_funcs.o \
 	rc4.o \
 	sha1.o \
 	sha1-internal.o \
 	sha1-pbkdf2.o \
+	sha1-prf.o \
 	sha1-tlsprf.o \
 	sha1-tprf.o \
 	sha256.o \
+	sha256-prf.o \
 	sha256-tlsprf.o \
 	sha256-internal.o
 

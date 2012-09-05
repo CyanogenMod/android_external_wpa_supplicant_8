@@ -1,6 +1,6 @@
 /*
  * wpa_supplicant - Internal definitions
- * Copyright (c) 2003-2010, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -239,6 +239,12 @@ struct wpa_global {
 		WPA_CONC_PREF_STA,
 		WPA_CONC_PREF_P2P
 	} conc_pref;
+
+#ifdef CONFIG_WIFI_DISPLAY
+	int wifi_display;
+#define MAX_WFD_SUBELEMS 10
+	struct wpabuf *wfd_subelem[MAX_WFD_SUBELEMS];
+#endif /* CONFIG_WIFI_DISPLAY */
 };
 
 
@@ -247,6 +253,17 @@ enum offchannel_send_action_result {
 	OFFCHANNEL_SEND_ACTION_NO_ACK /* Frame was sent, but not acknowledged
 				       */,
 	OFFCHANNEL_SEND_ACTION_FAILED /* Frame was not sent due to a failure */
+};
+
+struct wps_ap_info {
+	u8 bssid[ETH_ALEN];
+	enum wps_ap_info_type {
+		WPS_AP_NOT_SEL_REG,
+		WPS_AP_SEL_REG,
+		WPS_AP_SEL_REG_OUR
+	} type;
+	unsigned int tries;
+	struct os_time last_attempt;
 };
 
 /**
@@ -514,23 +531,14 @@ struct wpa_supplicant {
 	 */
 	char cross_connect_uplink[100];
 
-	enum {
-		P2P_GROUP_REMOVAL_UNKNOWN,
-		P2P_GROUP_REMOVAL_REQUESTED,
-		P2P_GROUP_REMOVAL_IDLE_TIMEOUT,
-		P2P_GROUP_REMOVAL_UNAVAILABLE,
-		P2P_GROUP_REMOVAL_GO_ENDING_SESSION,
-#ifdef ANDROID_P2P
-		P2P_GROUP_REMOVAL_FREQ_CONFLICT
-#endif
-	} removal_reason;
-
 	unsigned int p2p_cb_on_scan_complete:1;
+	unsigned int sta_scan_pending:1;
 	unsigned int p2p_auto_join:1;
 	unsigned int p2p_auto_pd:1;
 	unsigned int p2p_persistent_group:1;
 	unsigned int p2p_fallback_to_go_neg:1;
 	unsigned int p2p_pd_before_go_neg:1;
+	unsigned int p2p_go_ht40:1;
 	int p2p_persistent_id;
 	int p2p_go_intent;
 	int p2p_connect_freq;
@@ -546,6 +554,10 @@ struct wpa_supplicant {
 	void *autoscan_priv;
 
 	struct wpa_ssid *connect_without_scan;
+
+	struct wps_ap_info *wps_ap;
+	size_t num_wps_ap;
+	int wps_ap_iter;
 
 	int after_wps;
 	int known_wps_freq;
@@ -564,6 +576,7 @@ struct wpa_supplicant {
 	unsigned int fetch_anqp_in_progress:1;
 	unsigned int network_select:1;
 	unsigned int auto_select:1;
+	unsigned int auto_network_select:1;
 #endif /* CONFIG_INTERWORKING */
 	unsigned int drv_capa_known;
 
@@ -577,6 +590,12 @@ struct wpa_supplicant {
 
 	/* WLAN_REASON_* reason codes. Negative if locally generated. */
 	int disconnect_reason;
+
+	struct ext_password_data *ext_pw;
+
+	struct wpabuf *last_gas_resp;
+	u8 last_gas_addr[ETH_ALEN];
+	u8 last_gas_dialog_token;
 };
 
 
@@ -659,6 +678,9 @@ void wpa_supplicant_clear_status(struct wpa_supplicant *wpa_s);
 void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid);
 int wpas_driver_bss_selection(struct wpa_supplicant *wpa_s);
 int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s);
+void wpas_auth_failed(struct wpa_supplicant *wpa_s);
+void wpas_clear_temp_disabled(struct wpa_supplicant *wpa_s,
+			      struct wpa_ssid *ssid, int clear_failures);
 void wpa_supplicant_proc_40mhz_intolerant(struct wpa_supplicant *wpa_s);
 
 /**
@@ -699,5 +721,7 @@ static inline int network_is_persistent_group(struct wpa_ssid *ssid)
 }
 
 int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+
+int wpas_init_ext_pw(struct wpa_supplicant *wpa_s);
 
 #endif /* WPA_SUPPLICANT_I_H */

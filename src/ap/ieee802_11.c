@@ -311,6 +311,8 @@ static void handle_auth(struct hostapd_data *hapd,
 	int has_psk = 0;
 	u8 resp_ies[2 + WLAN_AUTH_CHALLENGE_LEN];
 	size_t resp_ies_len = 0;
+	char *identity = NULL;
+	char *radius_cui = NULL;
 
 	if (len < IEEE80211_HDRLEN + sizeof(mgmt->u.auth)) {
 		printf("handle_auth - too short payload (len=%lu)\n",
@@ -372,7 +374,7 @@ static void handle_auth(struct hostapd_data *hapd,
 	res = hostapd_allowed_address(hapd, mgmt->sa, (u8 *) mgmt, len,
 				      &session_timeout,
 				      &acct_interim_interval, &vlan_id,
-				      psk, &has_psk);
+				      psk, &has_psk, &identity, &radius_cui);
 
 	if (res == HOSTAPD_ACL_REJECT) {
 		printf("Station " MACSTR " not allowed to authenticate.\n",
@@ -420,6 +422,11 @@ static void handle_auth(struct hostapd_data *hapd,
 		os_free(sta->psk);
 		sta->psk = NULL;
 	}
+
+	sta->identity = identity;
+	identity = NULL;
+	sta->radius_cui = radius_cui;
+	radius_cui = NULL;
 
 	sta->flags &= ~WLAN_STA_PREAUTH;
 	ieee802_1x_notify_pre_auth(sta->eapol_sm, 0);
@@ -482,6 +489,9 @@ static void handle_auth(struct hostapd_data *hapd,
 	}
 
  fail:
+	os_free(identity);
+	os_free(radius_cui);
+
 	send_auth_reply(hapd, mgmt->sa, mgmt->bssid, auth_alg,
 			auth_transaction + 1, resp, resp_ies, resp_ies_len);
 }
@@ -576,35 +586,20 @@ static u16 copy_supp_rates(struct hostapd_data *hapd, struct sta_info *sta,
 		return WLAN_STATUS_UNSPECIFIED_FAILURE;
 	}
 
-	if (elems->supp_rates_len > sizeof(sta->supported_rates)) {
+	if (elems->supp_rates_len + elems->ext_supp_rates_len >
+	    sizeof(sta->supported_rates)) {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG,
-			       "Invalid supported rates element length %d",
-			       elems->supp_rates_len);
+			       "Invalid supported rates element length %d+%d",
+			       elems->supp_rates_len,
+			       elems->ext_supp_rates_len);
 		return WLAN_STATUS_UNSPECIFIED_FAILURE;
 	}
 
-	os_memset(sta->supported_rates, 0, sizeof(sta->supported_rates));
-	os_memcpy(sta->supported_rates, elems->supp_rates,
-		  elems->supp_rates_len);
-	sta->supported_rates_len = elems->supp_rates_len;
-
-	if (elems->ext_supp_rates) {
-		if (elems->supp_rates_len + elems->ext_supp_rates_len >
-		    sizeof(sta->supported_rates)) {
-			hostapd_logger(hapd, sta->addr,
-				       HOSTAPD_MODULE_IEEE80211,
-				       HOSTAPD_LEVEL_DEBUG,
-				       "Invalid supported rates element length"
-				       " %d+%d", elems->supp_rates_len,
-				       elems->ext_supp_rates_len);
-			return WLAN_STATUS_UNSPECIFIED_FAILURE;
-		}
-
-		os_memcpy(sta->supported_rates + elems->supp_rates_len,
-			  elems->ext_supp_rates, elems->ext_supp_rates_len);
-		sta->supported_rates_len += elems->ext_supp_rates_len;
-	}
+	sta->supported_rates_len = merge_byte_arrays(
+		sta->supported_rates, sizeof(sta->supported_rates),
+		elems->supp_rates, elems->supp_rates_len,
+		elems->ext_supp_rates, elems->ext_supp_rates_len);
 
 	return WLAN_STATUS_SUCCESS;
 }
@@ -647,6 +642,20 @@ static u16 check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 		return WLAN_STATUS_ASSOC_DENIED_NO_HT;
 	}
 #endif /* CONFIG_IEEE80211N */
+
+#ifdef CONFIG_IEEE80211AC
+	resp = copy_sta_vht_capab(hapd, sta, elems.vht_capabilities,
+				  elems.vht_capabilities_len);
+	if (resp != WLAN_STATUS_SUCCESS)
+		return resp;
+	if (hapd->iconf->ieee80211ac && hapd->iconf->require_vht &&
+	    !(sta->flags & WLAN_STA_VHT)) {
+		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_INFO, "Station does not support "
+			       "mandatory VHT PHY - reject association");
+		return WLAN_STATUS_UNSPECIFIED_FAILURE;
+	}
+#endif /* CONFIG_IEEE80211AC */
 
 	if ((hapd->conf->wpa & WPA_PROTO_RSN) && elems.rsn_ie) {
 		wpa_ie = elems.rsn_ie;
@@ -771,7 +780,7 @@ static u16 check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 #endif /* CONFIG_IEEE80211R */
 
 #ifdef CONFIG_IEEE80211N
-		if ((sta->flags & WLAN_STA_HT) &&
+		if ((sta->flags & (WLAN_STA_HT | WLAN_STA_VHT)) &&
 		    wpa_auth_get_pairwise(sta->wpa_sm) == WPA_CIPHER_TKIP) {
 			hostapd_logger(hapd, sta->addr,
 				       HOSTAPD_MODULE_IEEE80211,
@@ -874,6 +883,11 @@ static void send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 	p = hostapd_eid_ht_capabilities(hapd, p);
 	p = hostapd_eid_ht_operation(hapd, p);
 #endif /* CONFIG_IEEE80211N */
+
+#ifdef CONFIG_IEEE80211AC
+	p = hostapd_eid_vht_capabilities(hapd, p);
+	p = hostapd_eid_vht_operation(hapd, p);
+#endif /* CONFIG_IEEE80211AC */
 
 	p = hostapd_eid_ext_capab(hapd, p);
 	p = hostapd_eid_bss_max_idle_period(hapd, p);
@@ -1337,7 +1351,10 @@ static void handle_action(struct hostapd_data *hapd,
 		os_memcpy(resp->bssid, hapd->own_addr, ETH_ALEN);
 		resp->u.action.category |= 0x80;
 
-		hostapd_drv_send_mlme(hapd, resp, len, 0);
+		if (hostapd_drv_send_mlme(hapd, resp, len, 0) < 0) {
+			wpa_printf(MSG_ERROR, "IEEE 802.11: Failed to send "
+				   "Action frame");
+		}
 		os_free(resp);
 	}
 }

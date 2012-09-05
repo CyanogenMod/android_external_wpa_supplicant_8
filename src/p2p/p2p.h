@@ -79,6 +79,8 @@ struct p2p_go_neg_results {
 	 */
 	int freq;
 
+	int ht40;
+
 	/**
 	 * ssid - SSID of the group
 	 */
@@ -214,6 +216,11 @@ struct p2p_peer_info {
 	size_t wps_sec_dev_type_list_len;
 
 	struct wpabuf *wps_vendor_ext[P2P_MAX_WPS_VENDOR_EXT];
+
+	/**
+	 * wfd_subelems - Wi-Fi Display subelements from WFD IE(s)
+	 */
+	struct wpabuf *wfd_subelems;
 };
 
 enum p2p_prov_disc_status {
@@ -841,12 +848,13 @@ enum p2p_discovery_type {
  *	containing num_req_dev_types * WPS_DEV_TYPE_LEN bytes; %NULL if no
  *	requested device types.
  * @dev_id: Device ID to search for or %NULL to find all devices
+ * @search_delay: Extra delay in milliseconds between search iterations
  * Returns: 0 on success, -1 on failure
  */
 int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 	     enum p2p_discovery_type type,
 	     unsigned int num_req_dev_types, const u8 *req_dev_types,
-	     const u8 *dev_id);
+	     const u8 *dev_id, unsigned int search_delay);
 
 /**
  * p2p_stop_find - Stop P2P Find (Device Discovery)
@@ -968,6 +976,11 @@ int p2p_prov_disc_req(struct p2p_data *p2p, const u8 *peer_addr,
  */
 void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 		      const struct wpabuf *tlvs);
+
+#ifdef CONFIG_WIFI_DISPLAY
+void * p2p_sd_request_wfd(struct p2p_data *p2p, const u8 *dst,
+			  const struct wpabuf *tlvs);
+#endif /* CONFIG_WIFI_DISPLAY */
 
 /**
  * p2p_sd_cancel_request - Cancel a pending service discovery query
@@ -1728,5 +1741,30 @@ int p2p_search_pending(struct p2p_data *p2p);
 int p2p_other_scan_completed(struct p2p_data *p2p);
 
 const char * p2p_wps_method_text(enum p2p_wps_method method);
+
+/**
+ * p2p_set_config_timeout - Set local config timeouts
+ * @p2p: P2P module context from p2p_init()
+ * @go_timeout: Time in 10 ms units it takes to start the GO mode
+ * @client_timeout: Time in 10 ms units it takes to start the client mode
+ */
+void p2p_set_config_timeout(struct p2p_data *p2p, u8 go_timeout,
+			    u8 client_timeout);
+
+void p2p_increase_search_delay(struct p2p_data *p2p, unsigned int delay);
+
+int p2p_set_wfd_ie_beacon(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_probe_req(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_probe_resp(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_assoc_req(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_invitation(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_prov_disc_req(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_prov_disc_resp(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_ie_go_neg(struct p2p_data *p2p, struct wpabuf *ie);
+int p2p_set_wfd_dev_info(struct p2p_data *p2p, const struct wpabuf *elem);
+int p2p_set_wfd_assoc_bssid(struct p2p_data *p2p, const struct wpabuf *elem);
+int p2p_set_wfd_coupled_sink_info(struct p2p_data *p2p,
+				  const struct wpabuf *elem);
+struct wpabuf * wifi_display_encaps(struct wpabuf *subelems);
 
 #endif /* P2P_H */

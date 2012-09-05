@@ -68,6 +68,11 @@ struct eap_ssl_data {
 	 * ssl_ctx - TLS library context to use for the connection
 	 */
 	void *ssl_ctx;
+
+	/**
+	 * eap_type - EAP method used in Phase 1 (EAP_TYPE_TLS/PEAP/TTLS/FAST)
+	 */
+	u8 eap_type;
 };
 
 
@@ -80,9 +85,12 @@ struct eap_ssl_data {
  /* could be up to 128 bytes, but only the first 64 bytes are used */
 #define EAP_TLS_KEY_LEN 64
 
+/* dummy type used as a flag for UNAUTH-TLS */
+#define EAP_UNAUTH_TLS_TYPE 255
+
 
 int eap_peer_tls_ssl_init(struct eap_sm *sm, struct eap_ssl_data *data,
-			  struct eap_peer_config *config);
+			  struct eap_peer_config *config, u8 eap_type);
 void eap_peer_tls_ssl_deinit(struct eap_sm *sm, struct eap_ssl_data *data);
 u8 * eap_peer_tls_derive_key(struct eap_sm *sm, struct eap_ssl_data *data,
 			     const char *label, size_t len);

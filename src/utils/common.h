@@ -441,7 +441,16 @@ TCHAR * wpa_strdup_tchar(const char *str);
 #define wpa_strdup_tchar(s) strdup((s))
 #endif /* CONFIG_NATIVE_WINDOWS */
 
+void printf_encode(char *txt, size_t maxlen, const u8 *data, size_t len);
+size_t printf_decode(u8 *buf, size_t maxlen, const char *str);
+
 const char * wpa_ssid_txt(const u8 *ssid, size_t ssid_len);
+
+char * wpa_config_parse_string(const char *value, size_t *len);
+int is_hex(const u8 *data, size_t len);
+size_t merge_byte_arrays(u8 *res, size_t res_len,
+			 const u8 *src1, size_t src1_len,
+			 const u8 *src2, size_t src2_len);
 
 static inline int is_zero_ether_addr(const u8 *a)
 {

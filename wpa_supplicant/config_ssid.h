@@ -141,6 +141,14 @@ struct wpa_ssid {
 	char *passphrase;
 
 	/**
+	 * ext_psk - PSK/passphrase name in external storage
+	 *
+	 * If this is set, PSK/passphrase will be fetched from external storage
+	 * when requesting association with the network.
+	 */
+	char *ext_psk;
+
+	/**
 	 * pairwise_cipher - Bitfield of allowed pairwise ciphers, WPA_CIPHER_*
 	 */
 	int pairwise_cipher;
@@ -356,6 +364,8 @@ struct wpa_ssid {
 	 */
 	int frequency;
 
+	int ht40;
+
 	/**
 	 * wpa_ptk_rekey - Maximum lifetime for PTK in seconds
 	 *
@@ -420,6 +430,10 @@ struct wpa_ssid {
 	 * num_p2p_clients - Number of entries in p2p_client_list
 	 */
 	size_t num_p2p_clients;
+
+#ifndef P2P_MAX_STORED_CLIENTS
+#define P2P_MAX_STORED_CLIENTS 100
+#endif /* P2P_MAX_STORED_CLIENTS */
 
 	/**
 	 * p2p_group - Network generated as a P2P group (used internally)
@@ -512,6 +526,16 @@ struct wpa_ssid {
 	 * By default: 2
 	 */
 	int dtim_period;
+
+	/**
+	 * auth_failures - Number of consecutive authentication failures
+	 */
+	unsigned int auth_failures;
+
+	/**
+	 * disabled_until - Network block disabled until this time if non-zero
+	 */
+	struct os_time disabled_until;
 };
 
 #endif /* CONFIG_SSID_H */

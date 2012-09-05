@@ -43,8 +43,10 @@ int wpa_eapol_key_mic(const u8 *key, int ver, const u8 *buf, size_t len,
 	u8 hash[SHA1_MAC_LEN];
 
 	switch (ver) {
+#ifndef CONFIG_FIPS
 	case WPA_KEY_INFO_TYPE_HMAC_MD5_RC4:
 		return hmac_md5(key, 16, buf, len, mic);
+#endif /* CONFIG_FIPS */
 	case WPA_KEY_INFO_TYPE_HMAC_SHA1_AES:
 		if (hmac_sha1(key, 16, buf, len, hash))
 			return -1;
@@ -350,6 +352,8 @@ static int rsn_selector_to_bitfield(const u8 *s)
 	if (RSN_SELECTOR_GET(s) == RSN_CIPHER_SUITE_AES_128_CMAC)
 		return WPA_CIPHER_AES_128_CMAC;
 #endif /* CONFIG_IEEE80211W */
+	if (RSN_SELECTOR_GET(s) == RSN_CIPHER_SUITE_GCMP)
+		return WPA_CIPHER_GCMP;
 	return 0;
 }
 
@@ -906,6 +910,8 @@ const char * wpa_cipher_txt(int cipher)
 		return "CCMP";
 	case WPA_CIPHER_CCMP | WPA_CIPHER_TKIP:
 		return "CCMP+TKIP";
+	case WPA_CIPHER_GCMP:
+		return "GCMP";
 	default:
 		return "UNKNOWN";
 	}

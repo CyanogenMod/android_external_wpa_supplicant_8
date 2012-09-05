@@ -232,6 +232,7 @@ CONFIG_SMARTCARD=y
 # unix = UNIX domain sockets (default for Linux/*BSD)
 # udp = UDP sockets using localhost (127.0.0.1)
 # named_pipe = Windows Named Pipe (default for Windows)
+# udp-remote = UDP sockets with remote access (only for tests systems/purpose)
 # y = use default (backwards compatibility)
 # If this option is commented out, control interface is not included in the
 # build.
@@ -505,10 +506,18 @@ CONFIG_PEERKEY=y
 
 # Autoscan
 # This can be used to enable automatic scan support in wpa_supplicant.
-# See wpa_supplicant.conf for more information on autoscan usage.
+#Â See wpa_supplicant.conf for more information on autoscan usage.
 #
 # Enabling directly a module will enable autoscan support.
 # For exponential module:
 #CONFIG_AUTOSCAN_EXPONENTIAL=y
 # For periodic module:
 #CONFIG_AUTOSCAN_PERIODIC=y
+
+# Password (and passphrase, etc.) backend for external storage
+# These optional mechanisms can be used to add support for storing passwords
+# and other secrets in external (to wpa_supplicant) location. This allows, for
+# example, operating system specific key storage to be used
+#
+# External password backend for testing purposes (developer use)
+#CONFIG_EXT_PASSWORD_TEST=y

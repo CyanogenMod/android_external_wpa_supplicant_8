@@ -166,14 +166,9 @@ static struct hostapd_iface * hostapd_init(const char *config_file)
 	if (hapd_iface == NULL)
 		goto fail;
 
-	hapd_iface->reload_config = hostapd_reload_config;
-	hapd_iface->config_read_cb = hostapd_config_read;
 	hapd_iface->config_fname = os_strdup(config_file);
 	if (hapd_iface->config_fname == NULL)
 		goto fail;
-	hapd_iface->ctrl_iface_init = hostapd_ctrl_iface_init;
-	hapd_iface->ctrl_iface_deinit = hostapd_ctrl_iface_deinit;
-	hapd_iface->for_each_interface = hostapd_for_each_interface;
 
 	conf = hostapd_config_read(hapd_iface->config_fname);
 	if (conf == NULL)
@@ -181,7 +176,7 @@ static struct hostapd_iface * hostapd_init(const char *config_file)
 	hapd_iface->conf = conf;
 
 	hapd_iface->num_bss = conf->num_bss;
-	hapd_iface->bss = os_zalloc(conf->num_bss *
+	hapd_iface->bss = os_calloc(conf->num_bss,
 				    sizeof(struct hostapd_data *));
 	if (hapd_iface->bss == NULL)
 		goto fail;
@@ -248,13 +243,13 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 	}
 	params.bssid = b;
 	params.ifname = hapd->conf->iface;
-	params.ssid = (const u8 *) hapd->conf->ssid.ssid;
+	params.ssid = hapd->conf->ssid.ssid;
 	params.ssid_len = hapd->conf->ssid.ssid_len;
 	params.test_socket = hapd->conf->test_socket;
 	params.use_pae_group_addr = hapd->conf->use_pae_group_addr;
 
 	params.num_bridge = hapd->iface->num_bss;
-	params.bridge = os_zalloc(hapd->iface->num_bss * sizeof(char *));
+	params.bridge = os_calloc(hapd->iface->num_bss, sizeof(char *));
 	if (params.bridge == NULL)
 		return -1;
 	for (i = 0; i < hapd->iface->num_bss; i++) {
@@ -281,21 +276,6 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 	}
 
 	return 0;
-}
-
-
-static void hostapd_interface_deinit_free(struct hostapd_iface *iface)
-{
-	const struct wpa_driver_ops *driver;
-	void *drv_priv;
-	if (iface == NULL)
-		return;
-	driver = iface->bss[0]->driver;
-	drv_priv = iface->bss[0]->drv_priv;
-	hostapd_interface_deinit(iface);
-	if (driver && driver->hapd_deinit && drv_priv)
-		driver->hapd_deinit(drv_priv);
-	hostapd_interface_free(iface);
 }
 
 
@@ -411,7 +391,7 @@ static int hostapd_global_init(struct hapd_interfaces *interfaces,
 		wpa_printf(MSG_ERROR, "No drivers enabled");
 		return -1;
 	}
-	global.drv_priv = os_zalloc(global.drv_count * sizeof(void *));
+	global.drv_priv = os_calloc(global.drv_count, sizeof(void *));
 	if (global.drv_priv == NULL)
 		return -1;
 
@@ -499,13 +479,15 @@ static void usage(void)
 	fprintf(stderr,
 		"\n"
 		"usage: hostapd [-hdBKtv] [-P <PID file>] [-e <entropy file>] "
-		"<configuration file(s)>\n"
+		"\\\n"
+		"         [-g <global ctrl_iface>] <configuration file(s)>\n"
 		"\n"
 		"options:\n"
 		"   -h   show this usage\n"
 		"   -d   show more debug messages (-dd for even more)\n"
 		"   -B   run daemon in the background\n"
 		"   -e   entropy file\n"
+		"   -g   global control interface path\n"
 		"   -P   PID file\n"
 		"   -K   include key data in debug messages\n"
 #ifdef CONFIG_DEBUG_FILE
@@ -527,6 +509,28 @@ static const char * hostapd_msg_ifname_cb(void *ctx)
 }
 
 
+static int hostapd_get_global_ctrl_iface(struct hapd_interfaces *interfaces,
+					 const char *path)
+{
+	char *pos;
+	os_free(interfaces->global_iface_path);
+	interfaces->global_iface_path = os_strdup(path);
+	if (interfaces->global_iface_path == NULL)
+		return -1;
+	pos = os_strrchr(interfaces->global_iface_path, '/');
+	if (pos == NULL) {
+		os_free(interfaces->global_iface_path);
+		interfaces->global_iface_path = NULL;
+		return -1;
+	}
+
+	*pos = '\0';
+	interfaces->global_iface_name = pos + 1;
+
+	return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
 	struct hapd_interfaces interfaces;
@@ -540,8 +544,19 @@ int main(int argc, char *argv[])
 	if (os_program_init())
 		return -1;
 
+	os_memset(&interfaces, 0, sizeof(interfaces));
+	interfaces.reload_config = hostapd_reload_config;
+	interfaces.config_read_cb = hostapd_config_read;
+	interfaces.for_each_interface = hostapd_for_each_interface;
+	interfaces.ctrl_iface_init = hostapd_ctrl_iface_init;
+	interfaces.ctrl_iface_deinit = hostapd_ctrl_iface_deinit;
+	interfaces.driver_init = hostapd_driver_init;
+	interfaces.global_iface_path = NULL;
+	interfaces.global_iface_name = NULL;
+	interfaces.global_ctrl_sock = -1;
+
 	for (;;) {
-		c = getopt(argc, argv, "Bde:f:hKP:tv");
+		c = getopt(argc, argv, "Bde:f:hKP:tvg:");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -576,6 +591,9 @@ int main(int argc, char *argv[])
 			show_version();
 			exit(1);
 			break;
+		case 'g':
+			hostapd_get_global_ctrl_iface(&interfaces, optarg);
+			break;
 
 		default:
 			usage();
@@ -583,7 +601,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (optind == argc)
+	if (optind == argc && interfaces.global_iface_path == NULL)
 		usage();
 
 	wpa_msg_register_ifname_cb(hostapd_msg_ifname_cb);
@@ -592,11 +610,13 @@ int main(int argc, char *argv[])
 		wpa_debug_open_file(log_file);
 
 	interfaces.count = argc - optind;
-	interfaces.iface = os_zalloc(interfaces.count *
-				     sizeof(struct hostapd_iface *));
-	if (interfaces.iface == NULL) {
-		wpa_printf(MSG_ERROR, "malloc failed");
-		return -1;
+	if (interfaces.count) {
+		interfaces.iface = os_calloc(interfaces.count,
+					     sizeof(struct hostapd_iface *));
+		if (interfaces.iface == NULL) {
+			wpa_printf(MSG_ERROR, "malloc failed");
+			return -1;
+		}
 	}
 
 	if (hostapd_global_init(&interfaces, entropy_file))
@@ -611,12 +631,15 @@ int main(int argc, char *argv[])
 			goto out;
 	}
 
+	hostapd_global_ctrl_iface_init(&interfaces);
+
 	if (hostapd_global_run(&interfaces, daemonize, pid_file))
 		goto out;
 
 	ret = 0;
 
  out:
+	hostapd_global_ctrl_iface_deinit(&interfaces);
 	/* Deinitialize all interfaces */
 	for (i = 0; i < interfaces.count; i++)
 		hostapd_interface_deinit_free(interfaces.iface[i]);

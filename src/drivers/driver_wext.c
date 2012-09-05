@@ -40,10 +40,7 @@ static int wpa_driver_wext_get_range(void *priv);
 static int wpa_driver_wext_finish_drv_init(struct wpa_driver_wext_data *drv);
 static void wpa_driver_wext_disconnect(struct wpa_driver_wext_data *drv);
 static int wpa_driver_wext_set_auth_alg(void *priv, int auth_alg);
-#ifdef ANDROID
-extern int wpa_driver_wext_combo_scan(void *priv,
-					struct wpa_driver_scan_params *params);
-#endif
+
 
 int wpa_driver_wext_set_auth_param(struct wpa_driver_wext_data *drv,
 				   int idx, u32 value)
@@ -481,19 +478,10 @@ static void wpa_driver_wext_event_wireless(struct wpa_driver_wext_data *drv,
 				drv->assoc_req_ies = NULL;
 				os_free(drv->assoc_resp_ies);
 				drv->assoc_resp_ies = NULL;
-#ifdef ANDROID
-				if (!drv->skip_disconnect) {
-					drv->skip_disconnect = 1;
-#endif
 				wpa_supplicant_event(drv->ctx, EVENT_DISASSOC,
 						     NULL);
-#ifdef ANDROID
-				}
-#endif
+			
 			} else {
-#ifdef ANDROID
-				drv->skip_disconnect = 0;
-#endif
 				wpa_driver_wext_event_assoc_ies(drv);
 				wpa_supplicant_event(drv->ctx, EVENT_ASSOC,
 						     NULL);
@@ -875,7 +863,6 @@ void * wpa_driver_wext_init(void *ctx, const char *ifname)
 #ifdef ANDROID
 	drv->errors = 0;
 	drv->driver_is_started = TRUE;
-	drv->skip_disconnect = 0;
 	drv->bgscan_enabled = 0;
 #endif /* ANDROID */
 
@@ -1039,13 +1026,6 @@ int wpa_driver_wext_scan(void *priv, struct wpa_driver_scan_params *params)
 	const u8 *ssid = params->ssids[0].ssid;
 	size_t ssid_len = params->ssids[0].ssid_len;
 
-#ifdef ANDROID
-	if (drv->capa.max_scan_ssids > 1) {
-		ret = wpa_driver_wext_combo_scan(priv, params);
-		goto scan_out;
-	}
-#endif
-
 	if (ssid_len > IW_ESSID_MAX_SIZE) {
 		wpa_printf(MSG_DEBUG, "%s: too long SSID (%lu)",
 			   __FUNCTION__, (unsigned long) ssid_len);
@@ -1071,9 +1051,6 @@ int wpa_driver_wext_scan(void *priv, struct wpa_driver_scan_params *params)
 		ret = -1;
 	}
 
-#ifdef ANDROID
-scan_out:
-#endif
 	/* Not all drivers generate "scan completed" wireless event, so try to
 	 * read results after a timeout. */
 	timeout = 10;
@@ -1437,8 +1414,8 @@ static void wpa_driver_wext_add_scan_entry(struct wpa_scan_results *res,
 	if (data->ie)
 		os_memcpy(pos, data->ie, data->ie_len);
 
-	tmp = os_realloc(res->res,
-			 (res->num + 1) * sizeof(struct wpa_scan_res *));
+	tmp = os_realloc_array(res->res, res->num + 1,
+			       sizeof(struct wpa_scan_res *));
 	if (tmp == NULL) {
 		os_free(r);
 		return;
@@ -1608,11 +1585,7 @@ static int wpa_driver_wext_get_range(void *priv)
 		drv->capa.auth = WPA_DRIVER_AUTH_OPEN |
 			WPA_DRIVER_AUTH_SHARED |
 			WPA_DRIVER_AUTH_LEAP;
-#ifdef ANDROID
-		drv->capa.max_scan_ssids = WEXT_CSCAN_AMOUNT;
-#else
 		drv->capa.max_scan_ssids = 1;
-#endif
 
 		wpa_printf(MSG_DEBUG, "  capabilities: key_mgmt 0x%x enc 0x%x "
 			   "flags 0x%x",
@@ -2084,9 +2057,7 @@ int wpa_driver_wext_associate(void *priv,
 	int value;
 
 	wpa_printf(MSG_DEBUG, "%s", __FUNCTION__);
-#ifdef ANDROID
-	drv->skip_disconnect = 0;
-#endif
+
 	if (drv->cfg80211) {
 		/*
 		 * Stop cfg80211 from trying to associate before we are done

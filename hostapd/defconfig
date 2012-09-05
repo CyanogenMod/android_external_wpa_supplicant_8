@@ -167,6 +167,10 @@ CONFIG_IPV6=y
 # automatically create bridge and VLAN interfaces if necessary.
 #CONFIG_FULL_DYNAMIC_VLAN=y
 
+# Use netlink-based kernel API for VLAN operations instead of ioctl()
+# Note: This requires libnl 3.1 or newer.
+#CONFIG_VLAN_NETLINK=y
+
 # Remove support for dumping state into a file on SIGUSR1 signal
 # This can be used to reduce binary size at the cost of disabling a debugging
 # option.
@@ -257,3 +261,9 @@ CONFIG_IPV6=y
 # This can be used to enable functionality to improve interworking with
 # external networks.
 #CONFIG_INTERWORKING=y
+
+# Hotspot 2.0
+#CONFIG_HS20=y
+
+# Enable SQLite database support in hlr_auc_gw
+#CONFIG_SQLITE=y

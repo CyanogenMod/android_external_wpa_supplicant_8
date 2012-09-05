@@ -15,15 +15,55 @@
 #include "p2p.h"
 
 
+#ifdef CONFIG_WIFI_DISPLAY
+static int wfd_wsd_supported(struct wpabuf *wfd)
+{
+	const u8 *pos, *end;
+	u8 subelem;
+	u16 len;
+
+	if (wfd == NULL)
+		return 0;
+
+	pos = wpabuf_head(wfd);
+	end = pos + wpabuf_len(wfd);
+
+	while (pos + 3 <= end) {
+		subelem = *pos++;
+		len = WPA_GET_BE16(pos);
+		pos += 2;
+		if (pos + len > end)
+			break;
+
+		if (subelem == WFD_SUBELEM_DEVICE_INFO && len >= 6) {
+			u16 info = WPA_GET_BE16(pos);
+			return !!(info & 0x0040);
+		}
+
+		pos += len;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_WIFI_DISPLAY */
+
 struct p2p_sd_query * p2p_pending_sd_req(struct p2p_data *p2p,
 					 struct p2p_device *dev)
 {
 	struct p2p_sd_query *q;
+	int wsd = 0;
 
 	if (!(dev->info.dev_capab & P2P_DEV_CAPAB_SERVICE_DISCOVERY))
 		return NULL; /* peer does not support SD */
+#ifdef CONFIG_WIFI_DISPLAY
+	if (wfd_wsd_supported(dev->info.wfd_subelems))
+		wsd = 1;
+#endif /* CONFIG_WIFI_DISPLAY */
 
 	for (q = p2p->sd_queries; q; q = q->next) {
+		/* Use WSD only if the peer indicates support or it */
+		if (q->wsd && !wsd)
+			continue;
 		if (q->for_all_peers && !(dev->flags & P2P_DEV_SD_INFO))
 			return q;
 		if (!q->for_all_peers &&
@@ -420,7 +460,7 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 	if (p2p->state != P2P_SD_DURING_FIND || p2p->sd_peer == NULL ||
 #endif
 	    os_memcmp(sa, p2p->sd_peer->info.p2p_device_addr, ETH_ALEN) != 0) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_INFO,
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Ignore unexpected GAS Initial Response from "
 			MACSTR, MAC2STR(sa));
 		return;
@@ -670,7 +710,7 @@ void p2p_rx_gas_comeback_resp(struct p2p_data *p2p, const u8 *sa,
 	if (p2p->state != P2P_SD_DURING_FIND || p2p->sd_peer == NULL ||
 #endif
 	    os_memcmp(sa, p2p->sd_peer->info.p2p_device_addr, ETH_ALEN) != 0) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_INFO,
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Ignore unexpected GAS Comeback Response from "
 			MACSTR, MAC2STR(sa));
 		return;
@@ -905,6 +945,19 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 
 	return q;
 }
+
+
+#ifdef CONFIG_WIFI_DISPLAY
+void * p2p_sd_request_wfd(struct p2p_data *p2p, const u8 *dst,
+			  const struct wpabuf *tlvs)
+{
+	struct p2p_sd_query *q;
+	q = p2p_sd_request(p2p, dst, tlvs);
+	if (q)
+		q->wsd = 1;
+	return q;
+}
+#endif /* CONFIG_WIFI_DISPLAY */
 
 
 #ifdef ANDROID_P2P

@@ -104,9 +104,9 @@ struct hostapd_config * hostapd_config_defaults(void)
 	const struct hostapd_wmm_ac_params ac_be =
 		{ aCWmin, aCWmax, 3, 0, 0 }; /* best effort traffic */
 	const struct hostapd_wmm_ac_params ac_vi = /* video traffic */
-		{ aCWmin - 1, aCWmin, 2, 3000 / 32, 1 };
+		{ aCWmin - 1, aCWmin, 2, 3000 / 32, 0 };
 	const struct hostapd_wmm_ac_params ac_vo = /* voice traffic */
-		{ aCWmin - 2, aCWmin - 1, 2, 1500 / 32, 1 };
+		{ aCWmin - 2, aCWmin - 1, 2, 1500 / 32, 0 };
 	const struct hostapd_tx_queue_params txq_bk =
 		{ 7, ecw2cw(aCWmin), ecw2cw(aCWmax), 0 };
 	const struct hostapd_tx_queue_params txq_be =
@@ -506,10 +506,23 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 
 	os_free(conf->roaming_consortium);
 	os_free(conf->venue_name);
+	os_free(conf->nai_realm_data);
+	os_free(conf->network_auth_type);
+	os_free(conf->anqp_3gpp_cell_net);
+	os_free(conf->domain_name);
 
 #ifdef CONFIG_RADIUS_TEST
 	os_free(conf->dump_msk_file);
 #endif /* CONFIG_RADIUS_TEST */
+
+#ifdef CONFIG_HS20
+	os_free(conf->hs20_oper_friendly_name);
+	os_free(conf->hs20_wan_metrics);
+	os_free(conf->hs20_connection_capability);
+	os_free(conf->hs20_operating_class);
+#endif /* CONFIG_HS20 */
+
+	wpabuf_free(conf->vendor_elements);
 }
 
 

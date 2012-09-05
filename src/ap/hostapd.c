@@ -39,6 +39,7 @@ static int hostapd_setup_encryption(char *iface, struct hostapd_data *hapd);
 static int hostapd_broadcast_wep_clear(struct hostapd_data *hapd);
 
 extern int wpa_debug_level;
+extern struct wpa_driver_ops *wpa_drivers[];
 
 
 int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
@@ -98,7 +99,7 @@ static void hostapd_reload_bss(struct hostapd_data *hapd)
 	hostapd_update_wps(hapd);
 
 	if (hapd->conf->ssid.ssid_set &&
-	    hostapd_set_ssid(hapd, (u8 *) hapd->conf->ssid.ssid,
+	    hostapd_set_ssid(hapd, hapd->conf->ssid.ssid,
 			     hapd->conf->ssid.ssid_len)) {
 		wpa_printf(MSG_ERROR, "Could not set SSID for kernel driver");
 		/* try to continue */
@@ -113,9 +114,10 @@ int hostapd_reload_config(struct hostapd_iface *iface)
 	struct hostapd_config *newconf, *oldconf;
 	size_t j;
 
-	if (iface->config_read_cb == NULL)
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->config_read_cb == NULL)
 		return -1;
-	newconf = iface->config_read_cb(iface->config_fname);
+	newconf = iface->interfaces->config_read_cb(iface->config_fname);
 	if (newconf == NULL)
 		return -1;
 
@@ -286,8 +288,9 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
  */
 static void hostapd_cleanup(struct hostapd_data *hapd)
 {
-	if (hapd->iface->ctrl_iface_deinit)
-		hapd->iface->ctrl_iface_deinit(hapd);
+	if (hapd->iface->interfaces &&
+	    hapd->iface->interfaces->ctrl_iface_deinit)
+		hapd->iface->interfaces->ctrl_iface_deinit(hapd);
 	hostapd_free_hapd_data(hapd);
 }
 
@@ -679,14 +682,14 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 		set_ssid = 0;
 		conf->ssid.ssid_len = ssid_len;
 		os_memcpy(conf->ssid.ssid, ssid, conf->ssid.ssid_len);
-		conf->ssid.ssid[conf->ssid.ssid_len] = '\0';
 	}
 
 	if (!hostapd_drv_none(hapd)) {
 		wpa_printf(MSG_ERROR, "Using interface %s with hwaddr " MACSTR
-			   " and ssid '%s'",
+			   " and ssid \"%s\"",
 			   hapd->conf->iface, MAC2STR(hapd->own_addr),
-			   hapd->conf->ssid.ssid);
+			   wpa_ssid_txt(hapd->conf->ssid.ssid,
+					hapd->conf->ssid.ssid_len));
 	}
 
 	if (hostapd_setup_wpa_psk(conf)) {
@@ -696,7 +699,7 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 
 	/* Set SSID for the kernel driver (to be used in beacon and probe
 	 * response frames) */
-	if (set_ssid && hostapd_set_ssid(hapd, (u8 *) conf->ssid.ssid,
+	if (set_ssid && hostapd_set_ssid(hapd, conf->ssid.ssid,
 					 conf->ssid.ssid_len)) {
 		wpa_printf(MSG_ERROR, "Could not set SSID for kernel driver");
 		return -1;
@@ -770,8 +773,9 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	}
 #endif /* CONFIG_INTERWORKING */
 
-	if (hapd->iface->ctrl_iface_init &&
-	    hapd->iface->ctrl_iface_init(hapd)) {
+	if (hapd->iface->interfaces &&
+	    hapd->iface->interfaces->ctrl_iface_init &&
+	    hapd->iface->interfaces->ctrl_iface_init(hapd)) {
 		wpa_printf(MSG_ERROR, "Failed to setup control interface");
 		return -1;
 	}
@@ -1043,6 +1047,292 @@ void hostapd_interface_free(struct hostapd_iface *iface)
 		os_free(iface->bss[j]);
 	hostapd_cleanup_iface(iface);
 }
+
+
+#ifdef HOSTAPD
+
+void hostapd_interface_deinit_free(struct hostapd_iface *iface)
+{
+	const struct wpa_driver_ops *driver;
+	void *drv_priv;
+	if (iface == NULL)
+		return;
+	driver = iface->bss[0]->driver;
+	drv_priv = iface->bss[0]->drv_priv;
+	hostapd_interface_deinit(iface);
+	if (driver && driver->hapd_deinit && drv_priv)
+		driver->hapd_deinit(drv_priv);
+	hostapd_interface_free(iface);
+}
+
+
+int hostapd_enable_iface(struct hostapd_iface *hapd_iface)
+{
+	if (hapd_iface->bss[0]->drv_priv != NULL) {
+		wpa_printf(MSG_ERROR, "Interface %s already enabled",
+			   hapd_iface->conf->bss[0].iface);
+		return -1;
+	}
+
+	wpa_printf(MSG_DEBUG, "Enable interface %s",
+		   hapd_iface->conf->bss[0].iface);
+
+	if (hapd_iface->interfaces == NULL ||
+	    hapd_iface->interfaces->driver_init == NULL ||
+	    hapd_iface->interfaces->driver_init(hapd_iface) ||
+	    hostapd_setup_interface(hapd_iface)) {
+		hostapd_interface_deinit_free(hapd_iface);
+		return -1;
+	}
+	return 0;
+}
+
+
+int hostapd_reload_iface(struct hostapd_iface *hapd_iface)
+{
+	size_t j;
+
+	wpa_printf(MSG_DEBUG, "Reload interface %s",
+		   hapd_iface->conf->bss[0].iface);
+	for (j = 0; j < hapd_iface->num_bss; j++) {
+		hostapd_flush_old_stations(hapd_iface->bss[j],
+					   WLAN_REASON_PREV_AUTH_NOT_VALID);
+
+#ifndef CONFIG_NO_RADIUS
+		/* TODO: update dynamic data based on changed configuration
+		 * items (e.g., open/close sockets, etc.) */
+		radius_client_flush(hapd_iface->bss[j]->radius, 0);
+#endif  /* CONFIG_NO_RADIUS */
+
+		hostapd_reload_bss(hapd_iface->bss[j]);
+	}
+	return 0;
+}
+
+
+int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
+{
+	size_t j;
+	struct hostapd_bss_config *bss = hapd_iface->bss[0]->conf;
+	const struct wpa_driver_ops *driver;
+	void *drv_priv;
+
+	if (hapd_iface == NULL)
+		return -1;
+	driver = hapd_iface->bss[0]->driver;
+	drv_priv = hapd_iface->bss[0]->drv_priv;
+
+	/* whatever hostapd_interface_deinit does */
+	for (j = 0; j < hapd_iface->num_bss; j++) {
+		struct hostapd_data *hapd = hapd_iface->bss[j];
+		hostapd_free_stas(hapd);
+		hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
+		hostapd_clear_wep(hapd);
+		hostapd_free_hapd_data(hapd);
+	}
+
+	if (driver && driver->hapd_deinit && drv_priv) {
+		driver->hapd_deinit(drv_priv);
+		hapd_iface->bss[0]->drv_priv = NULL;
+	}
+
+	/* From hostapd_cleanup_iface: These were initialized in
+	 * hostapd_setup_interface and hostapd_setup_interface_complete
+	 */
+	hostapd_cleanup_iface_partial(hapd_iface);
+	bss->wpa = 0;
+	bss->wpa_key_mgmt = -1;
+	bss->wpa_pairwise = -1;
+
+	wpa_printf(MSG_DEBUG, "Interface %s disabled", bss->iface);
+	return 0;
+}
+
+
+static struct hostapd_iface *
+hostapd_iface_alloc(struct hapd_interfaces *interfaces)
+{
+	struct hostapd_iface **iface, *hapd_iface;
+
+	iface = os_realloc_array(interfaces->iface, interfaces->count + 1,
+				 sizeof(struct hostapd_iface *));
+	if (iface == NULL)
+		return NULL;
+	interfaces->iface = iface;
+	hapd_iface = interfaces->iface[interfaces->count] =
+		os_zalloc(sizeof(*hapd_iface));
+	if (hapd_iface == NULL) {
+		wpa_printf(MSG_ERROR, "%s: Failed to allocate memory for "
+			   "the interface", __func__);
+		return NULL;
+	}
+	interfaces->count++;
+	hapd_iface->interfaces = interfaces;
+
+	return hapd_iface;
+}
+
+
+static struct hostapd_config *
+hostapd_config_alloc(struct hapd_interfaces *interfaces, const char *ifname,
+		     const char *ctrl_iface)
+{
+	struct hostapd_bss_config *bss;
+	struct hostapd_config *conf;
+
+	/* Allocates memory for bss and conf */
+	conf = hostapd_config_defaults();
+	if (conf == NULL) {
+		 wpa_printf(MSG_ERROR, "%s: Failed to allocate memory for "
+				"configuration", __func__);
+		return NULL;
+	}
+
+	conf->driver = wpa_drivers[0];
+	if (conf->driver == NULL) {
+		wpa_printf(MSG_ERROR, "No driver wrappers registered!");
+		hostapd_config_free(conf);
+		return NULL;
+	}
+
+	bss = conf->last_bss = conf->bss;
+
+	os_strlcpy(bss->iface, ifname, sizeof(bss->iface));
+	bss->ctrl_interface = os_strdup(ctrl_iface);
+	if (bss->ctrl_interface == NULL) {
+		hostapd_config_free(conf);
+		return NULL;
+	}
+
+	/* Reading configuration file skipped, will be done in SET!
+	 * From reading the configuration till the end has to be done in
+	 * SET
+	 */
+	return conf;
+}
+
+
+static struct hostapd_iface * hostapd_data_alloc(
+	struct hapd_interfaces *interfaces, struct hostapd_config *conf)
+{
+	size_t i;
+	struct hostapd_iface *hapd_iface =
+		interfaces->iface[interfaces->count - 1];
+	struct hostapd_data *hapd;
+
+	hapd_iface->conf = conf;
+	hapd_iface->num_bss = conf->num_bss;
+
+	hapd_iface->bss = os_zalloc(conf->num_bss *
+				    sizeof(struct hostapd_data *));
+	if (hapd_iface->bss == NULL)
+		return NULL;
+
+	for (i = 0; i < conf->num_bss; i++) {
+		hapd = hapd_iface->bss[i] =
+			hostapd_alloc_bss_data(hapd_iface, conf,
+					       &conf->bss[i]);
+		if (hapd == NULL)
+			return NULL;
+		hapd->msg_ctx = hapd;
+	}
+
+	hapd_iface->interfaces = interfaces;
+
+	return hapd_iface;
+}
+
+
+int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
+{
+	struct hostapd_config *conf = NULL;
+	struct hostapd_iface *hapd_iface = NULL;
+	char *ptr;
+	size_t i;
+
+	ptr = os_strchr(buf, ' ');
+	if (ptr == NULL)
+		return -1;
+	*ptr++ = '\0';
+
+	for (i = 0; i < interfaces->count; i++) {
+		if (!os_strcmp(interfaces->iface[i]->conf->bss[0].iface,
+			       buf)) {
+			wpa_printf(MSG_INFO, "Cannot add interface - it "
+				   "already exists");
+			return -1;
+		}
+	}
+
+	hapd_iface = hostapd_iface_alloc(interfaces);
+	if (hapd_iface == NULL) {
+		wpa_printf(MSG_ERROR, "%s: Failed to allocate memory "
+			   "for interface", __func__);
+		goto fail;
+	}
+
+	conf = hostapd_config_alloc(interfaces, buf, ptr);
+	if (conf == NULL) {
+		wpa_printf(MSG_ERROR, "%s: Failed to allocate memory "
+			   "for configuration", __func__);
+		goto fail;
+	}
+
+	hapd_iface = hostapd_data_alloc(interfaces, conf);
+	if (hapd_iface == NULL) {
+		wpa_printf(MSG_ERROR, "%s: Failed to allocate memory "
+			   "for hostapd", __func__);
+		goto fail;
+	}
+
+	if (hapd_iface->interfaces &&
+	    hapd_iface->interfaces->ctrl_iface_init &&
+	    hapd_iface->interfaces->ctrl_iface_init(hapd_iface->bss[0])) {
+		wpa_printf(MSG_ERROR, "%s: Failed to setup control "
+			   "interface", __func__);
+		goto fail;
+	}
+	wpa_printf(MSG_INFO, "Add interface '%s'", conf->bss[0].iface);
+
+	return 0;
+
+fail:
+	if (conf)
+		hostapd_config_free(conf);
+	if (hapd_iface) {
+		os_free(hapd_iface->bss[interfaces->count]);
+		os_free(hapd_iface);
+	}
+	return -1;
+}
+
+
+int hostapd_remove_iface(struct hapd_interfaces *interfaces, char *buf)
+{
+	struct hostapd_iface *hapd_iface;
+	size_t i, k = 0;
+
+	for (i = 0; i < interfaces->count; i++) {
+		hapd_iface = interfaces->iface[i];
+		if (hapd_iface == NULL)
+			return -1;
+		if (!os_strcmp(hapd_iface->conf->bss[0].iface, buf)) {
+			wpa_printf(MSG_INFO, "Remove interface '%s'", buf);
+			hostapd_interface_deinit_free(hapd_iface);
+			k = i;
+			while (k < (interfaces->count - 1)) {
+				interfaces->iface[k] =
+					interfaces->iface[k + 1];
+				k++;
+			}
+			interfaces->count--;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+#endif /* HOSTAPD */
 
 
 /**

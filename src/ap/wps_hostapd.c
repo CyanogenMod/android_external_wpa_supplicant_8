@@ -13,7 +13,6 @@
 #include "utils/uuid.h"
 #include "crypto/dh_groups.h"
 #include "crypto/dh_group5.h"
-#include "crypto/random.h"
 #include "common/wpa_ctrl.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
@@ -77,10 +76,11 @@ static int hostapd_wps_for_each(struct hostapd_data *hapd,
 	struct wps_for_each_data data;
 	data.func = func;
 	data.ctx = ctx;
-	if (iface->for_each_interface == NULL)
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->for_each_interface == NULL)
 		return wps_for_each(iface, &data);
-	return iface->for_each_interface(iface->interfaces, wps_for_each,
-					 &data);
+	return iface->interfaces->for_each_interface(iface->interfaces,
+						     wps_for_each, &data);
 }
 
 
@@ -257,7 +257,8 @@ static void wps_reload_config(void *eloop_data, void *user_ctx)
 	struct hostapd_iface *iface = eloop_data;
 
 	wpa_printf(MSG_DEBUG, "WPS: Reload configuration data");
-	if (iface->reload_config(iface) < 0) {
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->reload_config(iface) < 0) {
 		wpa_printf(MSG_WARNING, "WPS: Failed to reload the updated "
 			   "configuration");
 	}
@@ -344,6 +345,8 @@ static int hapd_wps_cred_cb(struct hostapd_data *hapd, void *ctx)
 	}
 	hapd->wps->wps_state = WPS_STATE_CONFIGURED;
 
+	if (hapd->iface->config_fname == NULL)
+		return 0;
 	len = os_strlen(hapd->iface->config_fname) + 5;
 	tmp_fname = os_malloc(len);
 	if (tmp_fname == NULL)
@@ -371,10 +374,17 @@ static int hapd_wps_cred_cb(struct hostapd_data *hapd, void *ctx)
 
 	fprintf(nconf, "wps_state=2\n");
 
-	fprintf(nconf, "ssid=");
-	for (i = 0; i < cred->ssid_len; i++)
-		fputc(cred->ssid[i], nconf);
-	fprintf(nconf, "\n");
+	if (is_hex(cred->ssid, cred->ssid_len)) {
+		fprintf(nconf, "ssid2=");
+		for (i = 0; i < cred->ssid_len; i++)
+			fprintf(nconf, "%02x", cred->ssid[i]);
+		fprintf(nconf, "\n");
+	} else {
+		fprintf(nconf, "ssid=");
+		for (i = 0; i < cred->ssid_len; i++)
+			fputc(cred->ssid[i], nconf);
+		fprintf(nconf, "\n");
+	}
 
 	if ((cred->auth_type & (WPS_AUTH_WPA2 | WPS_AUTH_WPA2PSK)) &&
 	    (cred->auth_type & (WPS_AUTH_WPA | WPS_AUTH_WPAPSK)))
@@ -464,6 +474,7 @@ static int hapd_wps_cred_cb(struct hostapd_data *hapd, void *ctx)
 			multi_bss = 1;
 		if (!multi_bss &&
 		    (str_starts(buf, "ssid=") ||
+		     str_starts(buf, "ssid2=") ||
 		     str_starts(buf, "auth_algs=") ||
 		     str_starts(buf, "wep_default_key=") ||
 		     str_starts(buf, "wep_key") ||
@@ -710,10 +721,12 @@ static int get_uuid_cb(struct hostapd_iface *iface, void *ctx)
 static const u8 * get_own_uuid(struct hostapd_iface *iface)
 {
 	const u8 *uuid;
-	if (iface->for_each_interface == NULL)
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->for_each_interface == NULL)
 		return NULL;
 	uuid = NULL;
-	iface->for_each_interface(iface->interfaces, get_uuid_cb, &uuid);
+	iface->interfaces->for_each_interface(iface->interfaces, get_uuid_cb,
+					      &uuid);
 	return uuid;
 }
 
@@ -729,10 +742,11 @@ static int count_interface_cb(struct hostapd_iface *iface, void *ctx)
 static int interface_count(struct hostapd_iface *iface)
 {
 	int count = 0;
-	if (iface->for_each_interface == NULL)
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->for_each_interface == NULL)
 		return 0;
-	iface->for_each_interface(iface->interfaces, count_interface_cb,
-				  &count);
+	iface->interfaces->for_each_interface(iface->interfaces,
+					      count_interface_cb, &count);
 	return count;
 }
 

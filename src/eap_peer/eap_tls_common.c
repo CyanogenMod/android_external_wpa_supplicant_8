@@ -16,6 +16,18 @@
 #include "eap_config.h"
 
 
+static struct wpabuf * eap_tls_msg_alloc(EapType type, size_t payload_len,
+					 u8 code, u8 identifier)
+{
+	if (type == EAP_UNAUTH_TLS_TYPE)
+		return eap_msg_alloc(EAP_VENDOR_UNAUTH_TLS,
+				     EAP_VENDOR_TYPE_UNAUTH_TLS, payload_len,
+				     code, identifier);
+	return eap_msg_alloc(EAP_VENDOR_IETF, type, payload_len, code,
+			     identifier);
+}
+
+
 static int eap_tls_check_blob(struct eap_sm *sm, const char **name,
 			      const u8 **data, size_t *data_len)
 {
@@ -48,6 +60,10 @@ static void eap_tls_params_flags(struct tls_connection_params *params,
 		params->flags |= TLS_CONN_ALLOW_SIGN_RSA_MD5;
 	if (os_strstr(txt, "tls_disable_time_checks=1"))
 		params->flags |= TLS_CONN_DISABLE_TIME_CHECKS;
+	if (os_strstr(txt, "tls_disable_session_ticket=1"))
+		params->flags |= TLS_CONN_DISABLE_SESSION_TICKET;
+	if (os_strstr(txt, "tls_disable_session_ticket=0"))
+		params->flags &= ~TLS_CONN_DISABLE_SESSION_TICKET;
 }
 
 
@@ -99,6 +115,18 @@ static int eap_tls_params_from_conf(struct eap_sm *sm,
 				    struct eap_peer_config *config, int phase2)
 {
 	os_memset(params, 0, sizeof(*params));
+	if (sm->workaround && data->eap_type != EAP_TYPE_FAST) {
+		/*
+		 * Some deployed authentication servers seem to be unable to
+		 * handle the TLS Session Ticket extension (they are supposed
+		 * to ignore unrecognized TLS extensions, but end up rejecting
+		 * the ClientHello instead). As a workaround, disable use of
+		 * TLS Sesson Ticket extension for EAP-TLS, EAP-PEAP, and
+		 * EAP-TTLS (EAP-FAST uses session ticket, so any server that
+		 * supports EAP-FAST does not need this workaround).
+		 */
+		params->flags |= TLS_CONN_DISABLE_SESSION_TICKET;
+	}
 	if (phase2) {
 		wpa_printf(MSG_DEBUG, "TLS: using phase2 config options");
 		eap_tls_params_from_conf2(params, config);
@@ -182,13 +210,14 @@ static int eap_tls_init_connection(struct eap_sm *sm,
  * @sm: Pointer to EAP state machine allocated with eap_peer_sm_init()
  * @data: Data for TLS processing
  * @config: Pointer to the network configuration
+ * @eap_type: EAP method used in Phase 1 (EAP_TYPE_TLS/PEAP/TTLS/FAST)
  * Returns: 0 on success, -1 on failure
  *
  * This function is used to initialize shared TLS functionality for EAP-TLS,
  * EAP-PEAP, EAP-TTLS, and EAP-FAST.
  */
 int eap_peer_tls_ssl_init(struct eap_sm *sm, struct eap_ssl_data *data,
-			  struct eap_peer_config *config)
+			  struct eap_peer_config *config, u8 eap_type)
 {
 	struct tls_connection_params params;
 
@@ -196,6 +225,7 @@ int eap_peer_tls_ssl_init(struct eap_sm *sm, struct eap_ssl_data *data,
 		return -1;
 
 	data->eap = sm;
+	data->eap_type = eap_type;
 	data->phase2 = sm->init_phase2;
 	data->ssl_ctx = sm->init_phase2 && sm->ssl_ctx2 ? sm->ssl_ctx2 :
 		sm->ssl_ctx;
@@ -259,7 +289,9 @@ void eap_peer_tls_ssl_deinit(struct eap_sm *sm, struct eap_ssl_data *data)
 u8 * eap_peer_tls_derive_key(struct eap_sm *sm, struct eap_ssl_data *data,
 			     const char *label, size_t len)
 {
+#ifndef CONFIG_FIPS
 	struct tls_keys keys;
+#endif /* CONFIG_FIPS */
 	u8 *rnd = NULL, *out;
 
 	out = os_malloc(len);
@@ -271,6 +303,7 @@ u8 * eap_peer_tls_derive_key(struct eap_sm *sm, struct eap_ssl_data *data,
 	    == 0)
 		return out;
 
+#ifndef CONFIG_FIPS
 	/*
 	 * TLS library did not support key generation, so get the needed TLS
 	 * session parameters and use an internal implementation of TLS PRF to
@@ -299,6 +332,7 @@ u8 * eap_peer_tls_derive_key(struct eap_sm *sm, struct eap_ssl_data *data,
 	return out;
 
 fail:
+#endif /* CONFIG_FIPS */
 	os_free(out);
 	os_free(rnd);
 	return NULL;
@@ -516,9 +550,8 @@ static int eap_tls_process_output(struct eap_ssl_data *data, EapType eap_type,
 		length_included = 1;
 	}
 
-	*out_data = eap_msg_alloc(EAP_VENDOR_IETF, eap_type,
-				  1 + length_included * 4 + len,
-				  EAP_CODE_RESPONSE, id);
+	*out_data = eap_tls_msg_alloc(eap_type, 1 + length_included * 4 + len,
+				      EAP_CODE_RESPONSE, id);
 	if (*out_data == NULL)
 		return -1;
 
@@ -656,8 +689,7 @@ struct wpabuf * eap_peer_tls_build_ack(u8 id, EapType eap_type,
 {
 	struct wpabuf *resp;
 
-	resp = eap_msg_alloc(EAP_VENDOR_IETF, eap_type, 1, EAP_CODE_RESPONSE,
-			     id);
+	resp = eap_tls_msg_alloc(eap_type, 1, EAP_CODE_RESPONSE, id);
 	if (resp == NULL)
 		return NULL;
 	wpa_printf(MSG_DEBUG, "SSL: Building ACK (type=%d id=%d ver=%d)",
@@ -750,7 +782,13 @@ const u8 * eap_peer_tls_process_init(struct eap_sm *sm,
 		return NULL;
 	}
 
-	pos = eap_hdr_validate(EAP_VENDOR_IETF, eap_type, reqData, &left);
+	if (eap_type == EAP_UNAUTH_TLS_TYPE)
+		pos = eap_hdr_validate(EAP_VENDOR_UNAUTH_TLS,
+				       EAP_VENDOR_TYPE_UNAUTH_TLS, reqData,
+				       &left);
+	else
+		pos = eap_hdr_validate(EAP_VENDOR_IETF, eap_type, reqData,
+				       &left);
 	if (pos == NULL) {
 		ret->ignore = TRUE;
 		return NULL;
@@ -946,8 +984,8 @@ int eap_peer_select_phase2_methods(struct eap_peer_config *config,
 				   "method '%s'", start);
 		} else {
 			num_methods++;
-			_methods = os_realloc(methods,
-					      num_methods * sizeof(*methods));
+			_methods = os_realloc_array(methods, num_methods,
+						    sizeof(*methods));
 			if (_methods == NULL) {
 				os_free(methods);
 				os_free(buf);

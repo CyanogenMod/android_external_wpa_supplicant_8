@@ -12,11 +12,13 @@
 #include "drivers/driver.h"
 #include "common/ieee802_11_defs.h"
 #include "wps/wps.h"
+#include "p2p/p2p.h"
 #include "hostapd.h"
 #include "ieee802_11.h"
 #include "sta_info.h"
 #include "ap_config.h"
 #include "p2p_hostapd.h"
+#include "hs20.h"
 #include "ap_drv_ops.h"
 
 
@@ -146,6 +148,30 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 		}
 	}
 #endif /* CONFIG_P2P_MANAGER */
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (hapd->p2p_group) {
+		struct wpabuf *a;
+		a = p2p_group_assoc_resp_ie(hapd->p2p_group, P2P_SC_SUCCESS);
+		if (a && wpabuf_resize(&assocresp, wpabuf_len(a)) == 0)
+			wpabuf_put_buf(assocresp, a);
+		wpabuf_free(a);
+	}
+#endif /* CONFIG_WIFI_DISPLAY */
+
+#ifdef CONFIG_HS20
+	pos = buf;
+	pos = hostapd_eid_hs20_indication(hapd, pos);
+	if (pos != buf) {
+		if (wpabuf_resize(&beacon, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(beacon, buf, pos - buf);
+
+		if (wpabuf_resize(&proberesp, pos - buf) != 0)
+			goto fail;
+		wpabuf_put_data(proberesp, buf, pos - buf);
+	}
+#endif /* CONFIG_HS20 */
 
 	*beacon_ret = beacon;
 	*proberesp_ret = proberesp;
@@ -583,6 +609,16 @@ int hostapd_drv_sta_disassoc(struct hostapd_data *hapd,
 		return 0;
 	return hapd->driver->sta_disassoc(hapd->drv_priv, hapd->own_addr, addr,
 					  reason);
+}
+
+
+int hostapd_drv_wnm_oper(struct hostapd_data *hapd, enum wnm_oper oper,
+			 const u8 *peer, u8 *buf, u16 *buf_len)
+{
+	if (hapd->driver == NULL || hapd->driver->wnm_oper == NULL)
+		return 0;
+	return hapd->driver->wnm_oper(hapd->drv_priv, oper, peer, buf,
+				      buf_len);
 }
 
 

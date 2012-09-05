@@ -70,6 +70,9 @@ static void hostapd_wpa_auth_conf(struct hostapd_bss_config *conf,
 	wconf->pmk_r1_push = conf->pmk_r1_push;
 	wconf->ft_over_ds = conf->ft_over_ds;
 #endif /* CONFIG_IEEE80211R */
+#ifdef CONFIG_HS20
+	wconf->disable_gtk = conf->disable_dgaf;
+#endif /* CONFIG_HS20 */
 }
 
 
@@ -181,9 +184,15 @@ static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
 {
 	struct hostapd_data *hapd = ctx;
 	struct sta_info *sta = ap_get_sta(hapd, addr);
-	if (sta && sta->psk)
-		return sta->psk;
-	return hostapd_get_psk(hapd->conf, addr, prev_psk);
+	const u8 *psk = hostapd_get_psk(hapd->conf, addr, prev_psk);
+	/*
+	 * This is about to iterate over all psks, prev_psk gives the last
+	 * returned psk which should not be returned again.
+	 * logic list (all hostapd_get_psk; sta->psk)
+	 */
+	if (sta && sta->psk && !psk && sta->psk != prev_psk)
+		psk = sta->psk;
+	return psk;
 }
 
 
@@ -294,12 +303,13 @@ static int hostapd_wpa_auth_for_each_auth(
 {
 	struct hostapd_data *hapd = ctx;
 	struct wpa_auth_iface_iter_data data;
-	if (hapd->iface->for_each_interface == NULL)
+	if (hapd->iface->interfaces == NULL ||
+	    hapd->iface->interfaces->for_each_interface == NULL)
 		return -1;
 	data.cb = cb;
 	data.cb_ctx = cb_ctx;
-	return hapd->iface->for_each_interface(hapd->iface->interfaces,
-					       wpa_auth_iface_iter, &data);
+	return hapd->iface->interfaces->for_each_interface(
+		hapd->iface->interfaces, wpa_auth_iface_iter, &data);
 }
 
 
@@ -351,16 +361,17 @@ static int hostapd_wpa_auth_send_ether(void *ctx, const u8 *dst, u16 proto,
 	int ret;
 
 #ifdef CONFIG_IEEE80211R
-	if (proto == ETH_P_RRB && hapd->iface->for_each_interface) {
+	if (proto == ETH_P_RRB && hapd->iface->interfaces &&
+	    hapd->iface->interfaces->for_each_interface) {
 		int res;
 		struct wpa_auth_ft_iface_iter_data idata;
 		idata.src_hapd = hapd;
 		idata.dst = dst;
 		idata.data = data;
 		idata.data_len = data_len;
-		res = hapd->iface->for_each_interface(hapd->iface->interfaces,
-						      hostapd_wpa_auth_ft_iter,
-						      &idata);
+		res = hapd->iface->interfaces->for_each_interface(
+			hapd->iface->interfaces, hostapd_wpa_auth_ft_iter,
+			&idata);
 		if (res == 1)
 			return data_len;
 	}
@@ -425,6 +436,9 @@ hostapd_wpa_auth_add_sta(void *ctx, const u8 *sta_addr)
 	struct hostapd_data *hapd = ctx;
 	struct sta_info *sta;
 
+	if (hostapd_add_sta_node(hapd, sta_addr, WLAN_AUTH_FT) < 0)
+		return NULL;
+
 	sta = ap_sta_add(hapd, sta_addr);
 	if (sta == NULL)
 		return NULL;
@@ -458,6 +472,14 @@ static void hostapd_rrb_receive(void *ctx, const u8 *src_addr, const u8 *buf,
 		      len - sizeof(*ethhdr));
 }
 
+
+static int hostapd_wpa_auth_add_tspec(void *ctx, const u8 *sta_addr,
+				      u8 *tspec_ie, size_t tspec_ielen)
+{
+	struct hostapd_data *hapd = ctx;
+	return hostapd_add_tspec(hapd, sta_addr, tspec_ie, tspec_ielen);
+}
+
 #endif /* CONFIG_IEEE80211R */
 
 
@@ -471,6 +493,8 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
 	hostapd_wpa_auth_conf(hapd->conf, &_conf);
 	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_EAPOL_TX_STATUS)
 		_conf.tx_status = 1;
+	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_AP_MLME)
+		_conf.ap_mlme = 1;
 	os_memset(&cb, 0, sizeof(cb));
 	cb.ctx = hapd;
 	cb.logger = hostapd_wpa_auth_logger;
@@ -489,6 +513,7 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
 #ifdef CONFIG_IEEE80211R
 	cb.send_ft_action = hostapd_wpa_auth_send_ft_action;
 	cb.add_sta = hostapd_wpa_auth_add_sta;
+	cb.add_tspec = hostapd_wpa_auth_add_tspec;
 #endif /* CONFIG_IEEE80211R */
 	hapd->wpa_auth = wpa_init(hapd->own_addr, &_conf, &cb);
 	if (hapd->wpa_auth == NULL) {

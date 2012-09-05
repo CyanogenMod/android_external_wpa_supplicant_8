@@ -134,8 +134,14 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 	struct wpabuf *buf;
 	u8 *len;
 	u8 group_capab;
+	size_t extra = 0;
 
-	buf = wpabuf_alloc(1000);
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		extra = wpabuf_len(p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
+
+	buf = wpabuf_alloc(1000 + extra);
 	if (buf == NULL)
 		return NULL;
 
@@ -161,7 +167,7 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) |
 			      p2p->next_tie_breaker);
 	p2p->next_tie_breaker = !p2p->next_tie_breaker;
-	p2p_buf_add_config_timeout(buf, 100, 20);
+	p2p_buf_add_config_timeout(buf, p2p->go_timeout, p2p->client_timeout);
 	p2p_buf_add_listen_channel(buf, p2p->cfg->country, p2p->cfg->reg_class,
 				   p2p->cfg->channel);
 	if (p2p->ext_listen_interval)
@@ -176,6 +182,11 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 
 	/* WPS IE with Device Password ID attribute */
 	p2p_build_wps_ie(p2p, buf, p2p_wps_method_pw_id(peer->wps_method), 0);
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		wpabuf_put_buf(buf, p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
 
 	return buf;
 }
@@ -246,10 +257,17 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	struct wpabuf *buf;
 	u8 *len;
 	u8 group_capab;
+	size_t extra = 0;
 
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 		"P2P: Building GO Negotiation Response");
-	buf = wpabuf_alloc(1000);
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		extra = wpabuf_len(p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
+
+	buf = wpabuf_alloc(1000 + extra);
 	if (buf == NULL)
 		return NULL;
 
@@ -274,7 +292,7 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY,
 			       group_capab);
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) | tie_breaker);
-	p2p_buf_add_config_timeout(buf, 100, 20);
+	p2p_buf_add_config_timeout(buf, p2p->go_timeout, p2p->client_timeout);
 	if (peer && peer->go_state == REMOTE_GO) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Omit Operating "
 			"Channel attribute");
@@ -307,6 +325,12 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	p2p_build_wps_ie(p2p, buf,
 			 p2p_wps_method_pw_id(peer ? peer->wps_method :
 					      WPS_NOT_READY), 0);
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		wpabuf_put_buf(buf, p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
+
 
 	return buf;
 }
@@ -692,7 +716,7 @@ fail:
 			P2P_PENDING_GO_NEG_RESPONSE_FAILURE;
 	if (p2p_send_action(p2p, freq, sa, p2p->cfg->dev_addr,
 			    p2p->cfg->dev_addr,
-			    wpabuf_head(resp), wpabuf_len(resp), 200) < 0) {
+			    wpabuf_head(resp), wpabuf_len(resp), 250) < 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Failed to send Action frame");
 	}
@@ -710,10 +734,17 @@ static struct wpabuf * p2p_build_go_neg_conf(struct p2p_data *p2p,
 	u8 *len;
 	struct p2p_channels res;
 	u8 group_capab;
+	size_t extra = 0;
 
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 		"P2P: Building GO Negotiation Confirm");
-	buf = wpabuf_alloc(1000);
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		extra = wpabuf_len(p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
+
+	buf = wpabuf_alloc(1000 + extra);
 	if (buf == NULL)
 		return NULL;
 
@@ -751,6 +782,11 @@ static struct wpabuf * p2p_build_go_neg_conf(struct p2p_data *p2p,
 				     p2p->ssid_len);
 	}
 	p2p_buf_update_ie_hdr(buf, len);
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (p2p->wfd_ie_go_neg)
+		wpabuf_put_buf(buf, p2p->wfd_ie_go_neg);
+#endif /* CONFIG_WIFI_DISPLAY */
 
 	return buf;
 }

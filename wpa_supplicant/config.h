@@ -18,6 +18,7 @@
 #define DEFAULT_FAST_REAUTH 1
 #define DEFAULT_P2P_GO_INTENT 7
 #define DEFAULT_P2P_INTRA_BSS 1
+#define DEFAULT_P2P_GO_MAX_INACTIVITY (5 * 60)
 #define DEFAULT_BSS_MAX_COUNT 200
 #define DEFAULT_BSS_EXPIRATION_AGE 180
 #define DEFAULT_BSS_EXPIRATION_SCAN_COUNT 2
@@ -26,6 +27,7 @@
 
 #include "config_ssid.h"
 #include "wps/wps.h"
+#include "common/ieee802_11_common.h"
 
 
 struct wpa_cred {
@@ -79,6 +81,11 @@ struct wpa_cred {
 	 * password - Password for Interworking network selection
 	 */
 	char *password;
+
+	/**
+	 * ext_password - Whether password is a name for external storage
+	 */
+	int ext_password;
 
 	/**
 	 * ca_cert - CA certificate for Interworking network selection
@@ -148,6 +155,47 @@ struct wpa_cred {
 	 * whether the AP is operated by the Home SP.
 	 */
 	char *domain;
+
+	/**
+	 * roaming_consortium - Roaming Consortium OI
+	 *
+	 * If roaming_consortium_len is non-zero, this field contains the
+	 * Roaming Consortium OI that can be used to determine which access
+	 * points support authentication with this credential. This is an
+	 * alternative to the use of the realm parameter. When using Roaming
+	 * Consortium to match the network, the EAP parameters need to be
+	 * pre-configured with the credential since the NAI Realm information
+	 * may not be available or fetched.
+	 */
+	u8 roaming_consortium[15];
+
+	/**
+	 * roaming_consortium_len - Length of roaming_consortium
+	 */
+	size_t roaming_consortium_len;
+
+	/**
+	 * eap_method - EAP method to use
+	 *
+	 * Pre-configured EAP method to use with this credential or %NULL to
+	 * indicate no EAP method is selected, i.e., the method will be
+	 * selected automatically based on ANQP information.
+	 */
+	struct eap_method_type *eap_method;
+
+	/**
+	 * phase1 - Phase 1 (outer authentication) parameters
+	 *
+	 * Pre-configured EAP parameters or %NULL.
+	 */
+	char *phase1;
+
+	/**
+	 * phase2 - Phase 2 (inner authentication) parameters
+	 *
+	 * Pre-configured EAP parameters or %NULL.
+	 */
+	char *phase2;
 };
 
 
@@ -165,6 +213,7 @@ struct wpa_cred {
 #define CFG_CHANGED_P2P_LISTEN_CHANNEL BIT(11)
 #define CFG_CHANGED_P2P_OPER_CHANNEL BIT(12)
 #define CFG_CHANGED_P2P_PREF_CHAN BIT(13)
+#define CFG_CHANGED_EXT_PW_BACKEND BIT(14)
 
 /**
  * struct wpa_config - wpa_supplicant configuration data
@@ -575,6 +624,14 @@ struct wpa_config {
 	int filter_ssids;
 
 	/**
+	 * filter_rssi - RSSI-based scan result filtering
+	 *
+	 * 0 = do not filter scan results
+	 * -n = filter scan results below -n dBm
+	 */
+	int filter_rssi;
+
+	/**
 	 * max_num_sta - Maximum number of STAs in an AP/P2P GO
 	 */
 	unsigned int max_num_sta;
@@ -661,6 +718,35 @@ struct wpa_config {
 	 * wps_nfc_dh_pubkey - NFC Device Password for password token
 	 */
 	struct wpabuf *wps_nfc_dev_pw;
+
+	/**
+	 * ext_password_backend - External password backend or %NULL if none
+	 *
+	 * format: <backend name>[:<optional backend parameters>]
+	 */
+	char *ext_password_backend;
+
+	/*
+	 * p2p_go_max_inactivity - Timeout in seconds to detect STA inactivity
+	 *
+	 * This timeout value is used in P2P GO mode to clean up
+	 * inactive stations.
+	 * By default: 300 seconds.
+	 */
+	int p2p_go_max_inactivity;
+
+	struct hostapd_wmm_ac_params wmm_ac_params[4];
+
+	/**
+	 * auto_interworking - Whether to use network selection automatically
+	 *
+	 * 0 = do not automatically go through Interworking network selection
+	 *     (i.e., require explicit interworking_select command for this)
+	 * 1 = perform Interworking network selection if one or more
+	 *     credentials have been configured and scan did not find a
+	 *     matching network block
+	 */
+	int auto_interworking;
 };
 
 

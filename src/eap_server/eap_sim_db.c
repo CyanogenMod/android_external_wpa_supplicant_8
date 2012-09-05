@@ -340,6 +340,7 @@ static int eap_sim_db_open_socket(struct eap_sim_db_data *data)
 	addr.sun_family = AF_UNIX;
 	os_snprintf(addr.sun_path, sizeof(addr.sun_path),
 		    "/tmp/eap_sim_db_%d-%d", getpid(), counter++);
+	os_free(data->local_sock);
 	data->local_sock = os_strdup(addr.sun_path);
 	if (bind(data->sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		perror("bind(eap_sim_db)");
@@ -407,8 +408,11 @@ void * eap_sim_db_init(const char *config,
 		goto fail;
 
 	if (os_strncmp(data->fname, "unix:", 5) == 0) {
-		if (eap_sim_db_open_socket(data))
-			goto fail;
+		if (eap_sim_db_open_socket(data)) {
+			wpa_printf(MSG_DEBUG, "EAP-SIM DB: External database "
+				   "connection not available - will retry "
+				   "later");
+		}
 	}
 
 	return data;
