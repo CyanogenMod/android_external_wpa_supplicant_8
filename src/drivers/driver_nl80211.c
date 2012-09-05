@@ -7391,6 +7391,8 @@ static int i802_flush(void *priv)
 	return -ENOBUFS;
 }
 
+#endif /* HOSTAPD || CONFIG_AP */
+
 
 static int get_sta_handler(struct nl_msg *msg, void *arg)
 {
@@ -7404,6 +7406,7 @@ static int get_sta_handler(struct nl_msg *msg, void *arg)
 		[NL80211_STA_INFO_TX_BYTES] = { .type = NLA_U32 },
 		[NL80211_STA_INFO_RX_PACKETS] = { .type = NLA_U32 },
 		[NL80211_STA_INFO_TX_PACKETS] = { .type = NLA_U32 },
+		[NL80211_STA_INFO_TX_FAILED] = { .type = NLA_U32 },
 	};
 
 	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
@@ -7439,6 +7442,9 @@ static int get_sta_handler(struct nl_msg *msg, void *arg)
 	if (stats[NL80211_STA_INFO_TX_PACKETS])
 		data->tx_packets =
 			nla_get_u32(stats[NL80211_STA_INFO_TX_PACKETS]);
+	if (stats[NL80211_STA_INFO_TX_FAILED])
+		data->tx_retry_failed =
+			nla_get_u32(stats[NL80211_STA_INFO_TX_FAILED]);
 
 	return NL_SKIP;
 }
@@ -7466,6 +7472,8 @@ static int i802_read_sta_data(void *priv, struct hostap_sta_driver_data *data,
 	return -ENOBUFS;
 }
 
+
+#if defined(HOSTAPD) || defined(CONFIG_AP)
 
 static int i802_set_tx_queue_params(void *priv, int queue, int aifs,
 				    int cw_min, int cw_max, int burst_time)
@@ -9204,7 +9212,6 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 #if defined(HOSTAPD) || defined(CONFIG_AP)
 	.get_seqnum = i802_get_seqnum,
 	.flush = i802_flush,
-	.read_sta_data = i802_read_sta_data,
 	.get_inact_sec = i802_get_inact_sec,
 	.sta_clear_stats = i802_sta_clear_stats,
 	.set_rts = i802_set_rts,
@@ -9214,6 +9221,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.sta_deauth = i802_sta_deauth,
 	.sta_disassoc = i802_sta_disassoc,
 #endif /* HOSTAPD || CONFIG_AP */
+	.read_sta_data = i802_read_sta_data,
 	.set_freq = i802_set_freq,
 	.send_action = wpa_driver_nl80211_send_action,
 	.send_action_cancel_wait = wpa_driver_nl80211_send_action_cancel_wait,
