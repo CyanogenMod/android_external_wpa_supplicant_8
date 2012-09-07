@@ -489,7 +489,7 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 	u8 *_p2p_dev_addr = NULL;
 #endif /* CONFIG_AP */
 
-	if (cmd == NULL || os_strcmp(cmd, "any") == 0) {
+	if (cmd == NULL || os_strcmp(cmd, "any") == 0 || cmd[0] == '\0') {
 		_bssid = NULL;
 #ifdef CONFIG_P2P
 	} else if (os_strncmp(cmd, "p2p_dev_addr=", 13) == 0) {
