@@ -166,10 +166,23 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 			wpa_printf(MSG_DEBUG, "Delaying P2P scan to allow "
 				   "pending station mode scan to be "
 				   "completed on interface %s", ifs->ifname);
+#ifdef ANDROID_P2P
+			ifs->p2p_cb_on_scan_complete = 1;
+#else
 			wpa_s->p2p_cb_on_scan_complete = 1;
+#endif
 			wpa_supplicant_req_scan(ifs, 0, 0);
 			return 1;
 		}
+#ifdef ANDROID_P2P
+		else if(ifs->scanning) {
+			wpa_printf(MSG_DEBUG, "Wait for the STA scan"
+				   "to be "
+				   "completed on interface %s", ifs->ifname);
+			ifs->p2p_cb_on_scan_complete = 1;
+			return 1;
+		}
+#endif
 	}
 
 	os_memset(&params, 0, sizeof(params));
@@ -283,11 +296,7 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 	const char *reason;
 
 	ssid = wpa_s->current_ssid;
-#ifdef ANDROID_P2P
-	if ((ssid == NULL) && (wpa_s->p2p_group_interface == NOT_P2P_GROUP_INTERFACE)) {
-#else
 	if (ssid == NULL) {
-#endif
 		/*
 		 * The current SSID was not known, but there may still be a
 		 * pending P2P group interface waiting for provisioning.
@@ -700,6 +709,7 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 #ifdef ANDROID_P2P
 		/* For client Second phase of Group formation (4-way handshake) can be still pending
 		 * So we need to restore wpa_s->global->p2p_group_formation */
+		wpa_printf(MSG_INFO, "Restoring back wpa_s->global->p2p_group_formation to wpa_s %p\n", wpa_s);
 		wpa_s->global->p2p_group_formation = wpa_s;
 #endif
 
@@ -5198,27 +5208,8 @@ int wpas_p2p_disconnect(struct wpa_supplicant *wpa_s)
 
 int wpas_p2p_in_progress(struct wpa_supplicant *wpa_s)
 {
-#ifdef ANDROID_P2P
-	struct wpa_supplicant *group = wpa_s;
-#endif
-
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return 0;
-
-#ifdef ANDROID_P2P
-	while (group && (group->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)) {
-		if(group->wpa_state == WPA_ASSOCIATED) {
-			/* WPA_ASSOCIATED hasn't moved to WPA_COMPLETED. So it could be in WPS
-			 * or 4Way Hanshake phase. Avoid allowing scan during this time critical
-			 * phase
-			 */
-			wpa_printf(MSG_ERROR, "P2P: WPS/4way handshake in Progress."
-			" Defer SCAN ");
-			return 1;
-		}
-		group = group->next;
-	}
-#endif
 
 	return p2p_in_progress(wpa_s->global->p2p);
 }
