@@ -1187,16 +1187,27 @@ void wpas_dev_found(void *ctx, const u8 *addr,
 #ifndef CONFIG_NO_STDOUT_DEBUG
 	struct wpa_supplicant *wpa_s = ctx;
 	char devtype[WPS_DEV_TYPE_BUFSIZE];
+#define WFD_DEV_INFO_SIZE 9
+	char wfd_dev_info_hex[2 * WFD_DEV_INFO_SIZE + 1];
+
+#ifdef CONFIG_WIFI_DISPLAY
+	if (info->wfd_subelems) {
+		wpa_snprintf_hex(wfd_dev_info_hex, sizeof(wfd_dev_info_hex),
+					wpabuf_head(info->wfd_subelems),
+					WFD_DEV_INFO_SIZE);
+	}
+#endif /* CONFIG_WIFI_DISPLAY */
 
 	wpa_msg(wpa_s, MSG_INFO, P2P_EVENT_DEVICE_FOUND MACSTR
 		" p2p_dev_addr=" MACSTR
 		" pri_dev_type=%s name='%s' config_methods=0x%x "
-		"dev_capab=0x%x group_capab=0x%x",
+		"dev_capab=0x%x group_capab=0x%x%s%s",
 		MAC2STR(addr), MAC2STR(info->p2p_device_addr),
 		wps_dev_type_bin2str(info->pri_dev_type, devtype,
 				     sizeof(devtype)),
 		info->device_name, info->config_methods,
-		info->dev_capab, info->group_capab);
+		info->dev_capab, info->group_capab,
+		wfd_dev_info_hex[0] ? " wfd_dev_info=0x" : "", wfd_dev_info_hex);
 #endif /* CONFIG_NO_STDOUT_DEBUG */
 
 	wpas_notify_p2p_device_found(ctx, info->p2p_device_addr, new_device);
