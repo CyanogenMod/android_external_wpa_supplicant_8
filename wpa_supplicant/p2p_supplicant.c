@@ -1189,6 +1189,7 @@ void wpas_dev_found(void *ctx, const u8 *addr,
 	char devtype[WPS_DEV_TYPE_BUFSIZE];
 #define WFD_DEV_INFO_SIZE 9
 	char wfd_dev_info_hex[2 * WFD_DEV_INFO_SIZE + 1];
+	os_memset(wfd_dev_info_hex, 0, sizeof(wfd_dev_info_hex));
 
 #ifdef CONFIG_WIFI_DISPLAY
 	if (info->wfd_subelems) {
