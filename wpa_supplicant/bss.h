@@ -19,6 +19,25 @@ struct wpa_scan_res;
 #define WPA_BSS_ASSOCIATED		BIT(5)
 #define WPA_BSS_ANQP_FETCH_TRIED	BIT(6)
 
+struct wpa_bss_anqp {
+	unsigned int users;
+#ifdef CONFIG_INTERWORKING
+	struct wpabuf *venue_name;
+	struct wpabuf *network_auth_type;
+	struct wpabuf *roaming_consortium;
+	struct wpabuf *ip_addr_type_availability;
+	struct wpabuf *nai_realm;
+	struct wpabuf *anqp_3gpp;
+	struct wpabuf *domain_name;
+#endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_HS20
+	struct wpabuf *hs20_operator_friendly_name;
+	struct wpabuf *hs20_wan_metrics;
+	struct wpabuf *hs20_connection_capability;
+	struct wpabuf *hs20_operating_class;
+#endif /* CONFIG_HS20 */
+};
+
 /**
  * struct wpa_bss - BSS table
  * @list: List entry for struct wpa_supplicant::bss
@@ -28,6 +47,7 @@ struct wpa_scan_res;
  * @flags: information flags about the BSS/IBSS (WPA_BSS_*)
  * @last_update_idx: Index of the last scan update
  * @bssid: BSSID
+ * @hessid: HESSID
  * @freq: frequency of the channel in MHz (e.g., 2412 = channel 1)
  * @beacon_int: beacon interval in TUs (host byte order)
  * @caps: capability information field in host byte order
@@ -50,6 +70,7 @@ struct wpa_bss {
 	unsigned int last_update_idx;
 	unsigned int flags;
 	u8 bssid[ETH_ALEN];
+	u8 hessid[ETH_ALEN];
 	u8 ssid[32];
 	size_t ssid_len;
 	int freq;
@@ -60,21 +81,7 @@ struct wpa_bss {
 	int level;
 	u64 tsf;
 	struct os_time last_update;
-#ifdef CONFIG_INTERWORKING
-	struct wpabuf *anqp_venue_name;
-	struct wpabuf *anqp_network_auth_type;
-	struct wpabuf *anqp_roaming_consortium;
-	struct wpabuf *anqp_ip_addr_type_availability;
-	struct wpabuf *anqp_nai_realm;
-	struct wpabuf *anqp_3gpp;
-	struct wpabuf *anqp_domain_name;
-#endif /* CONFIG_INTERWORKING */
-#ifdef CONFIG_HS20
-	struct wpabuf *hs20_operator_friendly_name;
-	struct wpabuf *hs20_wan_metrics;
-	struct wpabuf *hs20_connection_capability;
-	struct wpabuf *hs20_operating_class;
-#endif /* CONFIG_HS20 */
+	struct wpa_bss_anqp *anqp;
 	size_t ie_len;
 	size_t beacon_ie_len;
 	/* followed by ie_len octets of IEs */
@@ -103,5 +110,6 @@ struct wpabuf * wpa_bss_get_vendor_ie_multi(const struct wpa_bss *bss,
 					    u32 vendor_type);
 int wpa_bss_get_max_rate(const struct wpa_bss *bss);
 int wpa_bss_get_bit_rates(const struct wpa_bss *bss, u8 **rates);
+struct wpa_bss_anqp * wpa_bss_anqp_alloc(void);
 
 #endif /* BSS_H */
