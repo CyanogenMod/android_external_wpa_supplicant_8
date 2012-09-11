@@ -62,11 +62,7 @@
 #endif /* P2P_MAX_INITIAL_CONN_WAIT */
 
 #ifndef P2P_CONCURRENT_SEARCH_DELAY
-#ifdef ANDROID_P2P
-#define P2P_CONCURRENT_SEARCH_DELAY 0
-#else
 #define P2P_CONCURRENT_SEARCH_DELAY 500
-#endif
 #endif /* P2P_CONCURRENT_SEARCH_DELAY */
 
 enum p2p_group_removal_reason {
@@ -1200,7 +1196,6 @@ void wpas_dev_found(void *ctx, const u8 *addr,
 #define WFD_DEV_INFO_SIZE 9
 	char wfd_dev_info_hex[2 * WFD_DEV_INFO_SIZE + 1];
 	os_memset(wfd_dev_info_hex, 0, sizeof(wfd_dev_info_hex));
-
 #ifdef CONFIG_WIFI_DISPLAY
 	if (info->wfd_subelems) {
 		wpa_snprintf_hex(wfd_dev_info_hex, sizeof(wfd_dev_info_hex),
@@ -5340,7 +5335,12 @@ unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s)
 		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
 		if (!rn2 || os_strcmp(rn, rn2) != 0)
 			continue;
+#ifdef ANDROID_P2P
+		/* We need not delay the p2p_scan if STA is already connected */
+		if (ifs->wpa_state > WPA_SCANNING && ifs->wpa_state < WPA_COMPLETED) {
+#else
 		if (ifs->wpa_state > WPA_SCANNING) {
+#endif
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Use %u ms search "
 				"delay due to concurrent operation on "
 				"interface %s",
@@ -5377,7 +5377,7 @@ int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s, int freq)
 			 * P2P Client, remove the interface depending up on the connection
 			 * priority */
 			if(!wpas_is_p2p_prioritized(wpa_s)) {
-				/* STA connection has priority over existing 
+				/* STA connection has priority over existing
 				 * P2P connection. So remove the interface */
 				wpa_printf(MSG_DEBUG, "P2P: Removing P2P connection due to Single channel"
 						"concurrent mode frequency conflict");
