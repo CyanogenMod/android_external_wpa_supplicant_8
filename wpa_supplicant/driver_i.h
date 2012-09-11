@@ -467,7 +467,8 @@ static inline int wpa_drv_pktcnt_poll(struct wpa_supplicant *wpa_s,
 				      struct hostap_sta_driver_data *sta)
 {
 	if (wpa_s->driver->read_sta_data)
-		return wpa_s->driver->read_sta_data(wpa_s->drv_priv, sta, wpa_s->bssid);
+		return wpa_s->driver->read_sta_data(wpa_s->drv_priv, sta,
+						    wpa_s->bssid);
 	return -1;
 }
 
