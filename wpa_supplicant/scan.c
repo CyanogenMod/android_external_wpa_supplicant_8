@@ -691,7 +691,7 @@ scan:
 	if (ret) {
 		wpa_msg(wpa_s, MSG_WARNING, "Failed to initiate AP scan");
 #ifdef ANDROID_P2P
-		/* Restore back the wpa_s->scan_req if we failed the scan becoz of any reason */
+		/* Restore back the wpa_s->scan_req if we failed the scan because of any reason */
 		wpa_msg(wpa_s, MSG_DEBUG, "Restoring back the wpa_s->scan_req "
 			"to the original value %d", scan_req);
 		wpa_s->scan_req = scan_req;
