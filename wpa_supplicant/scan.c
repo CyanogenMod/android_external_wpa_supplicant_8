@@ -690,6 +690,12 @@ scan:
 
 	if (ret) {
 		wpa_msg(wpa_s, MSG_WARNING, "Failed to initiate AP scan");
+#ifdef ANDROID_P2P
+		/* Restore back the wpa_s->scan_req if we failed the scan becoz of any reason */
+		wpa_msg(wpa_s, MSG_DEBUG, "Restoring back the wpa_s->scan_req "
+			"to the original value %d", scan_req);
+		wpa_s->scan_req = scan_req;
+#endif
 		if (prev_state != wpa_s->wpa_state)
 			wpa_supplicant_set_state(wpa_s, prev_state);
 		wpa_supplicant_req_scan(wpa_s, 1, 0);
