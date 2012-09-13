@@ -175,7 +175,7 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 			if (ifend != NULL)
 				*ifend++ = '\0';
 			else
-				ifend = "";
+				*(ifname - 1) = '\0';
 			wpa_printf(MSG_DEBUG, "Found %s", ifname);
 			for (wpa_s = wpa_s->global->ifaces; wpa_s; wpa_s = wpa_s->next) {
 				if (os_strcmp(wpa_s->ifname, ifname + 10) == 0)
@@ -185,8 +185,9 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 				wpa_printf(MSG_ERROR, "P2P: %s does not exist", ifname);
 				wpa_s = eloop_ctx;
 			}
-			os_memmove(ifname, ifend, strlen(ifend) + 1);
-			wpa_printf(MSG_INFO, "wpa_s %p cmd %s", wpa_s, buf);
+			if (ifend != NULL)
+				os_memmove(ifname, ifend, strlen(ifend) + 1);
+			wpa_printf(MSG_INFO, "wpa_s->ifname %s cmd %s", wpa_s ? wpa_s->ifname : "NULL", buf);
 		}
 #endif /* defined CONFIG_P2P && defined ANDROID_P2P */
 		reply = wpa_supplicant_ctrl_iface_process(wpa_s, buf,
