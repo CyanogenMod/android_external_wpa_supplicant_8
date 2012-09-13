@@ -3552,12 +3552,6 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	int ht40;
 
 	id = atoi(cmd);
-	pos = os_strstr(cmd, " peer=");
-	if (pos) {
-		pos += 6;
-		if (hwaddr_aton(pos, peer))
-			return -1;
-	}
 	ssid = wpa_config_get_network(wpa_s->conf, id);
 	if (ssid == NULL || ssid->disabled != 2) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Could not find SSID id=%d "
@@ -3571,6 +3565,13 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 		pos += 6;
 		freq = atoi(pos);
 		if (freq <= 0)
+			return -1;
+	}
+
+	pos = os_strstr(cmd, " peer=");
+	if (pos) {
+		pos += 6;
+		if (hwaddr_aton(pos, peer))
 			return -1;
 	}
 
