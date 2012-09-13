@@ -1203,7 +1203,6 @@ void wpas_dev_found(void *ctx, const u8 *addr,
 					WFD_DEV_INFO_SIZE);
 	}
 #endif /* CONFIG_WIFI_DISPLAY */
-
 	wpa_msg(wpa_s, MSG_INFO, P2P_EVENT_DEVICE_FOUND MACSTR
 		" p2p_dev_addr=" MACSTR
 		" pri_dev_type=%s name='%s' config_methods=0x%x "
@@ -2199,6 +2198,18 @@ static void wpas_prov_disc_fail(void *ctx, const u8 *peer,
 		return;
 	}
 
+#ifdef ANDROID_P2P
+	/* If provision discovery failed it is safe to cancel the timer here and
+	 * also do not start the join */
+	if (wpa_s->pending_pd_before_join &&
+	    (os_memcmp(peer, wpa_s->pending_join_dev_addr, ETH_ALEN) == 0 ||
+	     os_memcmp(peer, wpa_s->pending_join_iface_addr, ETH_ALEN) == 0)) {
+		wpa_s->pending_pd_before_join = 0;
+		wpa_printf(MSG_DEBUG, "P2P: Do not Start pending "
+			   "join-existing-group operation");
+		eloop_cancel_timeout(wpas_p2p_pd_before_join_timeout, wpa_s, NULL);
+	}
+#endif /* ANDROID_P2P */
 	wpa_msg(wpa_s, MSG_INFO, P2P_EVENT_PROV_DISC_FAILURE
 		" p2p_dev_addr=" MACSTR " status=%d",
 		MAC2STR(peer), status);
