@@ -453,7 +453,13 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
 		return;
 	}
-
+#ifdef ANDROID
+	if (wpa_s->scanning) {
+		/* If we are already in scanning state, we shall ignore this new scan request*/
+		wpa_dbg(wpa_s, MSG_DEBUG, "Skip scan - already scanning");
+		return;
+	}
+#endif
 	if (!wpa_supplicant_enabled_networks(wpa_s) &&
 	    !wpa_s->scan_req) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks - do not scan");
