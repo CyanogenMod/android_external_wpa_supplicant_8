@@ -16,9 +16,11 @@ CFLAGS += -DCONFIG_SHA256
 
 LIB_OBJS= \
 	aes-cbc.o \
+	aes-ccm.o \
 	aes-ctr.o \
 	aes-eax.o \
 	aes-encblock.o \
+	aes-gcm.o \
 	aes-internal.o \
 	aes-internal-dec.o \
 	aes-internal-enc.o \
