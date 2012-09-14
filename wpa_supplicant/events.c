@@ -1033,7 +1033,7 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 }
 
 
-/* Return < 0 if no scan results could be fetched or if scan results should not
+/* Return != 0 if no scan results could be fetched or if scan results should not
  * be shared with other virtual interfaces. */
 #ifdef ANDROID_P2P
 static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
@@ -1191,6 +1191,11 @@ int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 			return -1;
 		}
 		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
+		/*
+		 * Do not notify other virtual radios of scan results since we do not
+		 * want them to start other associations at the same time.
+		 */
+		return 1;
 	} else {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No suitable network found");
 		ssid = wpa_supplicant_pick_new_network(wpa_s);
@@ -1227,7 +1232,7 @@ int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 				wpa_s->network_select = 1;
 				wpa_s->auto_network_select = 1;
 				interworking_start_fetch_anqp(wpa_s);
-				return 0;
+				return 1;
 			}
 #endif /* CONFIG_INTERWORKING */
 			if (wpa_supplicant_req_sched_scan(wpa_s))
@@ -1245,14 +1250,16 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
 #ifdef ANDROID_P2P
-	if (_wpa_supplicant_event_scan_results(wpa_s, data, 0) < 0) {
+	if (_wpa_supplicant_event_scan_results(wpa_s, data, 0) != 0) {
 #else
-	if (_wpa_supplicant_event_scan_results(wpa_s, data) < 0) {
+	if (_wpa_supplicant_event_scan_results(wpa_s, data) != 0) {
 #endif
 		/*
 		 * If no scan results could be fetched, then no need to
 		 * notify those interfaces that did not actually request
-		 * this scan.
+		 * this scan. Similarly, if scan results started a new operation on this
+		 * interface, do not notify other interfaces to avoid concurrent
+		 * operations during a connection attempt.
 		 */
 		return;
 	}
