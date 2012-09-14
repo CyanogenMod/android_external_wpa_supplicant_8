@@ -5346,12 +5346,7 @@ unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s)
 		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
 		if (!rn2 || os_strcmp(rn, rn2) != 0)
 			continue;
-#ifdef ANDROID_P2P
-		/* We need not delay the p2p_scan if STA is already connected */
-		if (ifs->wpa_state > WPA_SCANNING && ifs->wpa_state < WPA_COMPLETED) {
-#else
 		if (ifs->wpa_state > WPA_SCANNING) {
-#endif
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Use %u ms search "
 				"delay due to concurrent operation on "
 				"interface %s",
