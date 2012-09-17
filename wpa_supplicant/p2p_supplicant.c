@@ -78,9 +78,7 @@ enum p2p_group_removal_reason {
 #endif
 };
 
-#ifdef ANDROID_P2P
-static int wpas_global_scan_in_progress(struct wpa_supplicant *wpa_s);
-#endif
+
 static void wpas_p2p_long_listen_timeout(void *eloop_ctx, void *timeout_ctx);
 static struct wpa_supplicant *
 wpas_p2p_get_group_iface(struct wpa_supplicant *wpa_s, int addr_allocated,
@@ -100,22 +98,6 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s);
 static void wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
 					int group_added);
 
-#ifdef ANDROID_P2P
-static int wpas_global_scan_in_progress(struct wpa_supplicant *wpa_s)
-{
-	struct wpa_supplicant *iface = NULL;
-
-	for (iface = wpa_s->global->ifaces; iface; iface = iface->next) {
-		if(iface->scanning  || iface->wpa_state == WPA_SCANNING) {
-			wpa_printf(MSG_DEBUG, "P2P: Scan in progress on %s,"
-			"defer P2P SEARCH", iface->ifname);
-			return 1;
-		}
-	}
-
-	return 0;
-}
-#endif
 
 static void wpas_p2p_scan_res_handler(struct wpa_supplicant *wpa_s,
 				      struct wpa_scan_results *scan_res)
@@ -162,23 +144,10 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 			wpa_printf(MSG_DEBUG, "Delaying P2P scan to allow "
 				   "pending station mode scan to be "
 				   "completed on interface %s", ifs->ifname);
-#ifdef ANDROID_P2P
-			ifs->p2p_cb_on_scan_complete = 1;
-#else
-			wpa_s->p2p_cb_on_scan_complete = 1;
-#endif
+			wpa_s->global->p2p_cb_on_scan_complete = 1;
 			wpa_supplicant_req_scan(ifs, 0, 0);
 			return 1;
 		}
-#ifdef ANDROID_P2P
-		else if(ifs->scanning) {
-			wpa_printf(MSG_DEBUG, "Wait for the STA scan"
-				   "to be "
-				   "completed on interface %s", ifs->ifname);
-			ifs->p2p_cb_on_scan_complete = 1;
-			return 1;
-		}
-#endif
 	}
 
 	os_memset(&params, 0, sizeof(params));
@@ -234,7 +203,7 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 	if (ret) {
 		if (wpa_s->scanning ||
 		    wpa_s->scan_res_handler == wpas_p2p_scan_res_handler) {
-			wpa_s->p2p_cb_on_scan_complete = 1;
+			wpa_s->global->p2p_cb_on_scan_complete = 1;
 			ret = 1;
 		}
 	} else
@@ -4287,7 +4256,7 @@ void wpas_p2p_stop_find(struct wpa_supplicant *wpa_s)
 	wpa_s->p2p_long_listen = 0;
 	eloop_cancel_timeout(wpas_p2p_long_listen_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_p2p_join_scan, wpa_s, NULL);
-	wpa_s->p2p_cb_on_scan_complete = 0;
+	wpa_s->global->p2p_cb_on_scan_complete = 0;
 
 	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_MGMT) {
 		wpa_drv_p2p_stop_find(wpa_s);
@@ -4620,9 +4589,9 @@ void wpas_p2p_completed(struct wpa_supplicant *wpa_s)
 	wpas_notify_p2p_group_started(wpa_s, ssid, network_id, 1);
 
 done:
-	if (wpa_s->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
+	if (wpa_s->global->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
 	    wpa_s->global->p2p != NULL) {
-		wpa_s->p2p_cb_on_scan_complete = 0;
+		wpa_s->global->p2p_cb_on_scan_complete = 0;
 		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
 				"continued after successful connection");
