@@ -174,7 +174,13 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 		p2p_buf_add_ext_listen_timing(buf, p2p->ext_listen_period,
 					      p2p->ext_listen_interval);
 	p2p_buf_add_intended_addr(buf, p2p->intended_addr);
-	p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
+	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Force channel list %d", p2p->op_channel);
+		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country, p2p->op_reg_class,
+				p2p->op_channel);
+	} else {
+		p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
+	}
 	p2p_buf_add_device_info(buf, p2p, peer);
 	p2p_buf_add_operating_channel(buf, p2p->cfg->country,
 				      p2p->op_reg_class, p2p->op_channel);
@@ -294,26 +300,40 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) | tie_breaker);
 	p2p_buf_add_config_timeout(buf, p2p->go_timeout, p2p->client_timeout);
 	if (peer && peer->go_state == REMOTE_GO) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Omit Operating "
-			"Channel attribute");
+		if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Forcing a channel ");
+			p2p_buf_add_operating_channel(buf, p2p->cfg->country,
+				p2p->op_reg_class, p2p->op_channel);
+		} else {
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Omit Operating "
+				"Channel attribute");
+		}
 	} else {
 		p2p_buf_add_operating_channel(buf, p2p->cfg->country,
 					      p2p->op_reg_class,
 					      p2p->op_channel);
 	}
 	p2p_buf_add_intended_addr(buf, p2p->intended_addr);
-	if (status || peer == NULL) {
-		p2p_buf_add_channel_list(buf, p2p->cfg->country,
-					 &p2p->channels);
-	} else if (peer->go_state == REMOTE_GO) {
-		p2p_buf_add_channel_list(buf, p2p->cfg->country,
-					 &p2p->channels);
+
+	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Force channel list %d", p2p->op_channel);
+		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country, p2p->op_reg_class,
+				p2p->op_channel);
 	} else {
-		struct p2p_channels res;
-		p2p_channels_intersect(&p2p->channels, &peer->channels,
-				       &res);
-		p2p_buf_add_channel_list(buf, p2p->cfg->country, &res);
+		if (status || peer == NULL) {
+			p2p_buf_add_channel_list(buf, p2p->cfg->country,
+						 &p2p->channels);
+		} else if (peer->go_state == REMOTE_GO) {
+			p2p_buf_add_channel_list(buf, p2p->cfg->country,
+						 &p2p->channels);
+		} else {
+			struct p2p_channels res;
+			p2p_channels_intersect(&p2p->channels, &peer->channels,
+					       &res);
+			p2p_buf_add_channel_list(buf, p2p->cfg->country, &res);
+		}
 	}
+
 	p2p_buf_add_device_info(buf, p2p, peer);
 	if (peer && peer->go_state == LOCAL_GO) {
 		p2p_buf_add_group_id(buf, p2p->cfg->dev_addr, p2p->ssid,
@@ -1167,6 +1187,16 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 		return;
 #endif /* CONFIG_P2P_STRICT */
 	}
+
+	if (msg.operating_channel) {
+		dev->oper_freq = p2p_channel_to_freq((const char *)
+						     msg.operating_channel,
+						     msg.operating_channel[3],
+						     msg.operating_channel[4]);
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Peer operating "
+			"channel preference: %d MHz", dev->oper_freq);
+	} else
+		dev->oper_freq = 0;
 
 	if (!msg.channel_list) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
