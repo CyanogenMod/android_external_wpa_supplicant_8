@@ -66,7 +66,13 @@ static struct wpabuf * p2p_build_invitation_req(struct p2p_data *p2p,
 				      p2p->op_reg_class, p2p->op_channel);
 	if (p2p->inv_bssid_set)
 		p2p_buf_add_group_bssid(buf, p2p->inv_bssid);
-	p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
+	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Forcing channel list %d", p2p->op_channel);
+		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country, p2p->op_reg_class,
+			p2p->op_channel);
+	} else {
+		p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
+	}
 	if (go_dev_addr)
 		dev_addr = go_dev_addr;
 	else if (p2p->inv_role == P2P_INVITE_ROLE_CLIENT)
@@ -133,8 +139,14 @@ static struct wpabuf * p2p_build_invitation_resp(struct p2p_data *p2p,
 					      reg_class, channel);
 	if (group_bssid)
 		p2p_buf_add_group_bssid(buf, group_bssid);
-	if (channels)
-		p2p_buf_add_channel_list(buf, p2p->cfg->country, channels);
+	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && channel) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Forcing channel list %d", channel);
+		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country,
+			reg_class, channel);
+	} else {
+		if (channels)
+			p2p_buf_add_channel_list(buf, p2p->cfg->country, channels);
+	}
 	p2p_buf_update_ie_hdr(buf, len);
 
 #ifdef CONFIG_WIFI_DISPLAY

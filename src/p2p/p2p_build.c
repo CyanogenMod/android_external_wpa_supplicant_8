@@ -135,6 +135,27 @@ void p2p_buf_add_channel_list(struct wpabuf *buf, const char *country,
 	wpa_printf(MSG_DEBUG, "P2P: * Channel List");
 }
 
+/* Adds a given channel as the only channel in channel list attribute */
+void p2p_buf_add_oper_as_channel_list(struct wpabuf *buf, const char *country,
+		      u8 reg_class, u8 channel)
+{
+	u8 *len;
+	u8 channel_list[1];
+	channel_list[0] = channel;
+
+	/* Channel List */
+	wpabuf_put_u8(buf, P2P_ATTR_CHANNEL_LIST);
+	len = wpabuf_put(buf, 2); /* IE length to be filled */
+	wpabuf_put_data(buf, country, 3); /* Country String */
+
+	wpabuf_put_u8(buf, reg_class);
+	wpabuf_put_u8(buf, 1);
+	wpabuf_put_data(buf, channel_list, 1);
+
+	/* Update attribute length */
+	WPA_PUT_LE16(len, (u8 *) wpabuf_put(buf, 0) - len - 2);
+	wpa_printf(MSG_DEBUG, "P2P: * Oper as Channel List %u", channel);
+}
 
 void p2p_buf_add_status(struct wpabuf *buf, u8 status)
 {
