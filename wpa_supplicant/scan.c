@@ -83,15 +83,21 @@ static int wpas_wps_in_use(struct wpa_supplicant *wpa_s,
 int wpa_supplicant_enabled_networks(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid = wpa_s->conf->ssid;
-	int count = 0;
+	int count = 0, disabled = 0;
 	while (ssid) {
 		if (!wpas_network_disabled(wpa_s, ssid))
 			count++;
+		else
+			disabled++;
 		ssid = ssid->next;
 	}
 	if (wpa_s->conf->cred && wpa_s->conf->interworking &&
 	    wpa_s->conf->auto_interworking)
 		count++;
+	if (count == 0 && disabled > 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks (%d disabled "
+			"networks)", disabled);
+	}
 	return count;
 }
 
@@ -450,6 +456,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 	if (wpa_s->disconnected && !wpa_s->scan_req) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Disconnected - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
 		return;
 	}
@@ -464,6 +471,9 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	    !wpa_s->scan_req) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_INACTIVE);
+#ifdef CONFIG_P2P
+		wpa_s->sta_scan_pending = 0;
+#endif /* CONFIG_P2P */
 		return;
 	}
 
