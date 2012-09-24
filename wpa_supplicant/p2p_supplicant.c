@@ -4431,7 +4431,9 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 {
 	enum p2p_invite_role role;
 	u8 *bssid = NULL;
+#ifdef ANDROID_P2P
 	int force_freq = 0, oper_freq = 0;
+#endif
 
 	wpa_s->p2p_persistent_go_freq = freq;
 	wpa_s->p2p_go_ht40 = !!ht40;
@@ -4459,6 +4461,7 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 	}
 	wpa_s->pending_invite_ssid_id = ssid->id;
 
+#ifdef ANDROID_P2P
 	if (wpa_s->current_ssid && wpa_drv_get_bssid(wpa_s, bssid) == 0 &&
 	    wpa_s->assoc_freq)
 		oper_freq = wpa_s->assoc_freq;
@@ -4506,7 +4509,7 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 			   "interface", oper_freq);
 		force_freq = oper_freq;
 	}
-
+#endif
 	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_MGMT)
 		return wpa_drv_p2p_invite(wpa_s, peer_addr, role, bssid,
 					  ssid->ssid, ssid->ssid_len,
@@ -4515,8 +4518,13 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return -1;
 
+#ifdef ANDROID_P2P
 	return p2p_invite(wpa_s->global->p2p, peer_addr, role, bssid,
 			  ssid->ssid, ssid->ssid_len, force_freq, go_dev_addr, 1);
+#else
+	return p2p_invite(wpa_s->global->p2p, peer_addr, role, bssid,
+			  ssid->ssid, ssid->ssid_len, freq, go_dev_addr, 1);
+#endif
 }
 
 
