@@ -3547,11 +3547,18 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	char *pos;
 	int id;
 	struct wpa_ssid *ssid;
-	u8 peer[ETH_ALEN];
+	u8 *_peer = NULL, peer[ETH_ALEN];
 	int freq = 0;
 	int ht40;
 
 	id = atoi(cmd);
+	pos = os_strstr(cmd, " peer=");
+	if (pos) {
+		pos += 6;
+		if (hwaddr_aton(pos, peer))
+			return -1;
+		_peer = peer;
+	}
 	ssid = wpa_config_get_network(wpa_s->conf, id);
 	if (ssid == NULL || ssid->disabled != 2) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Could not find SSID id=%d "
@@ -3568,17 +3575,9 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 			return -1;
 	}
 
-	pos = os_strstr(cmd, " peer=");
-	if (pos) {
-		pos += 6;
-		if (hwaddr_aton(pos, peer))
-			return -1;
-	}
-
 	ht40 = os_strstr(cmd, " ht40") != NULL;
 
-	return wpas_p2p_invite(wpa_s, pos ? peer : NULL, ssid, NULL, freq,
-			       ht40);
+	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, ht40);
 }
 
 
@@ -4402,6 +4401,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 			level = MSG_EXCESSIVE;
 		wpa_hexdump_ascii(level, "RX ctrl_iface",
 				  (const u8 *) buf, os_strlen(buf));
+		wpa_dbg(wpa_s, level, "Control interface command '%s'", buf);
 	}
 
 	reply = os_malloc(reply_size);

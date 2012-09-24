@@ -2678,10 +2678,10 @@ static int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	}
 #else
 	/*
-	 * If poll command is supported mac80211 is new enough to
-	 * have everything we need to not need monitor interfaces.
+	 * If poll command and tx status are supported, mac80211 is new enough
+	 * to have everything we need to not need monitor interfaces.
 	 */
-	drv->use_monitor = !info.poll_command_supported;
+	drv->use_monitor = !info.poll_command_supported || !info.data_tx_status;
 #endif
 
 	if (drv->device_ap_sme && drv->use_monitor) {
@@ -6423,8 +6423,8 @@ static int wpa_driver_nl80211_hapd_send_eapol(
 	pos = (u8 *) (hdr + 1);
 
 	if (qos) {
-		/* add an empty QoS header if needed */
-		pos[0] = 0;
+		/* Set highest priority in QoS header */
+		pos[0] = 7;
 		pos[1] = 0;
 		pos += 2;
 	}
@@ -7729,6 +7729,10 @@ static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
 		}
 		return i802_set_sta_vlan(priv, addr, name, 0);
 	} else {
+		if (bridge_ifname)
+			linux_br_del_if(drv->global->ioctl_sock, bridge_ifname,
+					name);
+
 		i802_set_sta_vlan(priv, addr, bss->ifname, 0);
 		return wpa_driver_nl80211_if_remove(priv, WPA_IF_AP_VLAN,
 						    name);
@@ -8096,7 +8100,12 @@ static int wpa_driver_nl80211_if_remove(void *priv,
 	if (ifindex <= 0)
 		return -1;
 
+	nl80211_remove_iface(drv, ifindex);
+
 #ifdef HOSTAPD
+	if (type != WPA_IF_AP_BSS)
+		return 0;
+
 	if (bss->added_if_into_bridge) {
 		if (linux_br_del_if(drv->global->ioctl_sock, bss->brname,
 				    bss->ifname) < 0)
@@ -8110,13 +8119,6 @@ static int wpa_driver_nl80211_if_remove(void *priv,
 				   "bridge %s: %s",
 				   bss->brname, strerror(errno));
 	}
-#endif /* HOSTAPD */
-
-	nl80211_remove_iface(drv, ifindex);
-
-#ifdef HOSTAPD
-	if (type != WPA_IF_AP_BSS)
-		return 0;
 
 	if (bss != &drv->first_bss) {
 		struct i802_bss *tbss;

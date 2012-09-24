@@ -1506,13 +1506,6 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 	int new_assoc = 1;
 	struct ieee80211_ht_capabilities ht_cap;
 
-	if (!ok) {
-		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
-			       HOSTAPD_LEVEL_DEBUG,
-			       "did not acknowledge association response");
-		return;
-	}
-
 	if (len < IEEE80211_HDRLEN + (reassoc ? sizeof(mgmt->u.reassoc_resp) :
 				      sizeof(mgmt->u.assoc_resp))) {
 		printf("handle_assoc_cb(reassoc=%d) - too short payload "
@@ -1520,17 +1513,25 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 		return;
 	}
 
-	if (reassoc)
-		status = le_to_host16(mgmt->u.reassoc_resp.status_code);
-	else
-		status = le_to_host16(mgmt->u.assoc_resp.status_code);
-
 	sta = ap_get_sta(hapd, mgmt->da);
 	if (!sta) {
 		printf("handle_assoc_cb: STA " MACSTR " not found\n",
 		       MAC2STR(mgmt->da));
 		return;
 	}
+
+	if (!ok) {
+		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_DEBUG,
+			       "did not acknowledge association response");
+		sta->flags &= ~WLAN_STA_ASSOC_REQ_OK;
+		return;
+	}
+
+	if (reassoc)
+		status = le_to_host16(mgmt->u.reassoc_resp.status_code);
+	else
+		status = le_to_host16(mgmt->u.assoc_resp.status_code);
 
 	if (status != WLAN_STATUS_SUCCESS)
 		goto fail;
@@ -1830,6 +1831,9 @@ void ieee802_11_rx_from_unknown(struct hostapd_data *hapd, const u8 *src,
 
 	sta = ap_get_sta(hapd, src);
 	if (sta && (sta->flags & WLAN_STA_ASSOC)) {
+		if (!hapd->conf->wds_sta)
+			return;
+
 		if (wds && !(sta->flags & WLAN_STA_WDS)) {
 			wpa_printf(MSG_DEBUG, "Enable 4-address WDS mode for "
 				   "STA " MACSTR " (aid %u)",
