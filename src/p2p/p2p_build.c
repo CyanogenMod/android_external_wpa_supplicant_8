@@ -135,6 +135,7 @@ void p2p_buf_add_channel_list(struct wpabuf *buf, const char *country,
 	wpa_printf(MSG_DEBUG, "P2P: * Channel List");
 }
 
+#ifdef ANDROID_P2P
 /* Adds a given channel as the only channel in channel list attribute */
 void p2p_buf_add_oper_as_channel_list(struct wpabuf *buf, const char *country,
 		      u8 reg_class, u8 channel)
@@ -156,6 +157,7 @@ void p2p_buf_add_oper_as_channel_list(struct wpabuf *buf, const char *country,
 	WPA_PUT_LE16(len, (u8 *) wpabuf_put(buf, 0) - len - 2);
 	wpa_printf(MSG_DEBUG, "P2P: * Oper as Channel List %u", channel);
 }
+#endif
 
 void p2p_buf_add_status(struct wpabuf *buf, u8 status)
 {
