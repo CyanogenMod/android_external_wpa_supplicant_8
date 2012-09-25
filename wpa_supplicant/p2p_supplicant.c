@@ -377,6 +377,7 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 		wpa_config_remove_network(wpa_s->conf, id);
 		wpa_supplicant_clear_status(wpa_s);
 		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_s->sta_scan_pending = 0;
 	} else {
 		wpa_printf(MSG_DEBUG, "P2P: Temporary group network not "
 			   "found");
@@ -2322,8 +2323,9 @@ static void wpas_invitation_received(void *ctx, const u8 *sa, const u8 *bssid,
 			   " was accepted; op_freq=%d MHz",
 			   MAC2STR(sa), op_freq);
 		if (s) {
+			int go = s->mode == WPAS_MODE_P2P_GO;
 			wpas_p2p_group_add_persistent(
-				wpa_s, s, s->mode == WPAS_MODE_P2P_GO, 0, 0);
+				wpa_s, s, go, go ? op_freq : 0, 0);
 		} else if (bssid) {
 			wpas_p2p_join(wpa_s, bssid, go_dev_addr,
 				      wpa_s->p2p_wps_method, 0);
