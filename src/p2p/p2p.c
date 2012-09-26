@@ -1185,9 +1185,15 @@ static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
 			 * are multichannel concurrent, we have to poplulate the
 			 * p2p_channels with list of channels that we support.
 			 */
+#ifdef ANDROID_P2P
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Full channel list");
+#endif
 			os_memcpy(&p2p->channels, &p2p->cfg->channels,
 				sizeof(struct p2p_channels));
 		} else {
+#ifdef ANDROID_P2P
+			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Single channel list %d", p2p->op_channel);
+#endif
 			p2p->channels.reg_classes = 1;
 			p2p->channels.reg_class[0].channels = 1;
 			p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
@@ -1280,9 +1286,9 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 		"P2P: Request to start group negotiation - peer=" MACSTR
 		"  GO Intent=%d  Intended Interface Address=" MACSTR
-		" wps_method=%d persistent_group=%d pd_before_go_neg=%d",
+		" wps_method=%d persistent_group=%d pd_before_go_neg=%d force_freq %d",
 		MAC2STR(peer_addr), go_intent, MAC2STR(own_interface_addr),
-		wps_method, persistent_group, pd_before_go_neg);
+		wps_method, persistent_group, pd_before_go_neg, force_freq);
 
 	if (p2p_prepare_channel(p2p, force_freq) < 0)
 		return -1;

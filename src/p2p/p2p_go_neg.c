@@ -174,17 +174,7 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 		p2p_buf_add_ext_listen_timing(buf, p2p->ext_listen_period,
 					      p2p->ext_listen_interval);
 	p2p_buf_add_intended_addr(buf, p2p->intended_addr);
-#ifdef ANDROID_P2P
-	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Force channel list %d", p2p->op_channel);
-		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country, p2p->op_reg_class,
-				p2p->op_channel);
-	} else {
-#endif
-		p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
-#ifdef ANDROID_P2P
-	}
-#endif
+	p2p_buf_add_channel_list(buf, p2p->cfg->country, &p2p->channels);
 	p2p_buf_add_device_info(buf, p2p, peer);
 	p2p_buf_add_operating_channel(buf, p2p->cfg->country,
 				      p2p->op_reg_class, p2p->op_channel);
@@ -304,18 +294,8 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) | tie_breaker);
 	p2p_buf_add_config_timeout(buf, p2p->go_timeout, p2p->client_timeout);
 	if (peer && peer->go_state == REMOTE_GO) {
-#ifdef ANDROID_P2P
-		if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Forcing a channel ");
-			p2p_buf_add_operating_channel(buf, p2p->cfg->country,
-				p2p->op_reg_class, p2p->op_channel);
-		} else {
-#endif
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Omit Operating "
-				"Channel attribute");
-#ifdef ANDROID_P2P
-		}
-#endif
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Omit Operating "
+			"Channel attribute");
 	} else {
 		p2p_buf_add_operating_channel(buf, p2p->cfg->country,
 					      p2p->op_reg_class,
@@ -323,28 +303,18 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	}
 	p2p_buf_add_intended_addr(buf, p2p->intended_addr);
 
-#ifdef ANDROID_P2P
-	if (p2p->cfg->p2p_concurrency == P2P_SINGLE_CHANNEL_CONCURRENT && p2p->op_channel) {
-		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Force channel list %d", p2p->op_channel);
-		p2p_buf_add_oper_as_channel_list(buf, p2p->cfg->country, p2p->op_reg_class,
-				p2p->op_channel);
+	if (status || peer == NULL) {
+		p2p_buf_add_channel_list(buf, p2p->cfg->country,
+					 &p2p->channels);
+	} else if (peer->go_state == REMOTE_GO) {
+		p2p_buf_add_channel_list(buf, p2p->cfg->country,
+					 &p2p->channels);
 	} else {
-#endif
-		if (status || peer == NULL) {
-			p2p_buf_add_channel_list(buf, p2p->cfg->country,
-						 &p2p->channels);
-		} else if (peer->go_state == REMOTE_GO) {
-			p2p_buf_add_channel_list(buf, p2p->cfg->country,
-						 &p2p->channels);
-		} else {
-			struct p2p_channels res;
-			p2p_channels_intersect(&p2p->channels, &peer->channels,
-					       &res);
-			p2p_buf_add_channel_list(buf, p2p->cfg->country, &res);
-		}
-#ifdef ANDROID_P2P
+		struct p2p_channels res;
+		p2p_channels_intersect(&p2p->channels, &peer->channels,
+				       &res);
+		p2p_buf_add_channel_list(buf, p2p->cfg->country, &res);
 	}
-#endif
 
 	p2p_buf_add_device_info(buf, p2p, peer);
 	if (peer && peer->go_state == LOCAL_GO) {
