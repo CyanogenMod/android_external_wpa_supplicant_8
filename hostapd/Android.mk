@@ -20,11 +20,11 @@ ifdef CONFIG_DRIVER_NL80211
 ifeq ($(BOARD_WLAN_DEVICE),qcwcn)
   L_CFLAGS += -DANDROID_QCOM_P2P_PATCH
 else
-ifneq ($(BOARD_WLAN_DEVICE), wl12xx_mac80211)
+ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
   L_CFLAGS += -DANDROID_BRCM_P2P_PATCH
 endif
 endif # QCWCN
-endif # CONFIG_DRIVER_NL80211
+endif # BCMDHD
 
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
