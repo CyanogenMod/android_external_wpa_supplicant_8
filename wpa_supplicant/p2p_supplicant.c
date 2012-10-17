@@ -2399,9 +2399,15 @@ static void wpas_invitation_result(void *ctx, int status, const u8 *bssid)
 	 * the persistent group so that we will remain on the current channel to
 	 * acknowledge any possible retransmission from the peer.
 	 */
+#ifndef ANDROID_P2P
 	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: 50 ms wait on current channel before "
 		"starting persistent group");
 	os_sleep(0, 50000);
+#else
+	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: 100 ms wait on current channel before "
+		"starting persistent group");
+	os_sleep(0, 100000);
+#endif
 
 	wpas_p2p_group_add_persistent(wpa_s, ssid,
 				      ssid->mode == WPAS_MODE_P2P_GO,
