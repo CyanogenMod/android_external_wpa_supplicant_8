@@ -2532,7 +2532,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			sme_event_assoc_reject(wpa_s, data);
 #ifdef ANDROID_P2P
 #ifdef CONFIG_P2P
-		else if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE) {
+		else {
 			if(!wpa_s->current_ssid) {
 				wpa_printf(MSG_ERROR, "current_ssid == NULL");
 				break;
@@ -2541,9 +2541,10 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			 * waiting for  the authentication timeout. Cancel the
 			 * authentication timeout and retry the assoc.
 			 */
-			if(wpa_s->current_ssid->assoc_retry++ < 5) {
+			if(wpa_s->current_ssid->assoc_retry++ < 10) {
 				wpa_printf(MSG_ERROR, "Retrying assoc: %d ",
 								wpa_s->current_ssid->assoc_retry);
+
 				wpa_supplicant_cancel_auth_timeout(wpa_s);
 
 				/* Clear the states */
@@ -2551,8 +2552,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 
 				wpa_s->reassociate = 1;
-				wpa_supplicant_req_scan(wpa_s, 1, 0);
-			} else {
+				if (wpa_s->p2p_group_interface == NOT_P2P_GROUP_INTERFACE) {
+					wpa_blacklist_add(wpa_s, data->assoc_reject.bssid);
+					wpa_supplicant_req_scan(wpa_s, 0, 0);
+				} else {
+					wpa_supplicant_req_scan(wpa_s, 1, 0);
+				}
+			} else if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE) {
 				/* If we ASSOC_REJECT's hits threshold, disable the 
 			 	 * network
 			 	 */
