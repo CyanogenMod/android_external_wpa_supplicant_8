@@ -2553,7 +2553,10 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 
 				wpa_s->reassociate = 1;
 				if (wpa_s->p2p_group_interface == NOT_P2P_GROUP_INTERFACE) {
-					wpa_blacklist_add(wpa_s, data->assoc_reject.bssid);
+					const u8 *bl_bssid = data->assoc_reject.bssid;
+					if (!bl_bssid || is_zero_ether_addr(bl_bssid))
+						bl_bssid = wpa_s->pending_bssid;
+					wpa_blacklist_add(wpa_s, bl_bssid);
 					wpa_supplicant_req_scan(wpa_s, 0, 0);
 				} else {
 					wpa_supplicant_req_scan(wpa_s, 1, 0);
