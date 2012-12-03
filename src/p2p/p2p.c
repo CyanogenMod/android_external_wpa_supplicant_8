@@ -256,7 +256,7 @@ void p2p_go_neg_failed(struct p2p_data *p2p, struct p2p_device *peer,
 }
 
 
-static void p2p_listen_in_find(struct p2p_data *p2p)
+static void p2p_listen_in_find(struct p2p_data *p2p, int dev_disc)
 {
 	unsigned int r, tu;
 	int freq;
@@ -277,6 +277,19 @@ static void p2p_listen_in_find(struct p2p_data *p2p)
 	os_get_random((u8 *) &r, sizeof(r));
 	tu = (r % ((p2p->max_disc_int - p2p->min_disc_int) + 1) +
 	      p2p->min_disc_int) * 100;
+	if (p2p->max_disc_tu >= 0 && tu > (unsigned int) p2p->max_disc_tu)
+		tu = p2p->max_disc_tu;
+	if (!dev_disc && tu < 100)
+		tu = 100; /* Need to wait in non-device discovery use cases */
+	if (p2p->cfg->max_listen && 1024 * tu / 1000 > p2p->cfg->max_listen)
+		tu = p2p->cfg->max_listen * 1000 / 1024;
+
+	if (tu == 0) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Skip listen state "
+			"since duration was 0 TU");
+		p2p_set_timeout(p2p, 0, 0);
+		return;
+	}
 
 	p2p->pending_listen_freq = freq;
 	p2p->pending_listen_sec = 0;
@@ -1153,15 +1166,17 @@ void p2p_stop_find(struct p2p_data *p2p)
 }
 
 
-static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
+static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq,
+			       unsigned int pref_freq)
 {
-	if (force_freq) {
+	if (force_freq || pref_freq) {
 		u8 op_reg_class, op_channel;
-		if (p2p_freq_to_channel(p2p->cfg->country, force_freq,
+		unsigned int freq = force_freq ? force_freq : pref_freq;
+		if (p2p_freq_to_channel(p2p->cfg->country, freq,
 					&op_reg_class, &op_channel) < 0) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Unsupported frequency %u MHz",
-				force_freq);
+				freq);
 			return -1;
 		}
 		if (!p2p_channels_includes(&p2p->cfg->channels, op_reg_class,
@@ -1169,37 +1184,21 @@ static int p2p_prepare_channel(struct p2p_data *p2p, unsigned int force_freq)
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Frequency %u MHz (oper_class %u "
 				"channel %u) not allowed for P2P",
-				force_freq, op_reg_class, op_channel);
+				freq, op_reg_class, op_channel);
 			return -1;
 		}
 		p2p->op_reg_class = op_reg_class;
 		p2p->op_channel = op_channel;
-#ifndef ANDROID_P2P
-		p2p->channels.reg_classes = 1;
-		p2p->channels.reg_class[0].channels = 1;
-		p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
-		p2p->channels.reg_class[0].channel[0] = p2p->op_channel;
-#else
-		if(p2p->cfg->p2p_concurrency == P2P_MULTI_CHANNEL_CONCURRENT) {
-			/* We we are requesting for a preferred channel. But since
-			 * are multichannel concurrent, we have to poplulate the
-			 * p2p_channels with list of channels that we support.
-			 */
-#ifdef ANDROID_P2P
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Full channel list");
-#endif
-			os_memcpy(&p2p->channels, &p2p->cfg->channels,
-				sizeof(struct p2p_channels));
-		} else {
-#ifdef ANDROID_P2P
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "Single channel list %d", p2p->op_channel);
-#endif
+		if (force_freq) {
 			p2p->channels.reg_classes = 1;
 			p2p->channels.reg_class[0].channels = 1;
-			p2p->channels.reg_class[0].reg_class = p2p->op_reg_class;
+			p2p->channels.reg_class[0].reg_class =
+				p2p->op_reg_class;
 			p2p->channels.reg_class[0].channel[0] = p2p->op_channel;
+		} else {
+			os_memcpy(&p2p->channels, &p2p->cfg->channels,
+				  sizeof(struct p2p_channels));
 		}
-#endif
 	} else {
 		u8 op_reg_class, op_channel;
 
@@ -1279,18 +1278,18 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 		int go_intent, const u8 *own_interface_addr,
 		unsigned int force_freq, int persistent_group,
 		const u8 *force_ssid, size_t force_ssid_len,
-		int pd_before_go_neg)
+		int pd_before_go_neg, unsigned int pref_freq)
 {
 	struct p2p_device *dev;
 
 	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 		"P2P: Request to start group negotiation - peer=" MACSTR
 		"  GO Intent=%d  Intended Interface Address=" MACSTR
-		" wps_method=%d persistent_group=%d pd_before_go_neg=%d force_freq %d",
+		" wps_method=%d persistent_group=%d pd_before_go_neg=%d",
 		MAC2STR(peer_addr), go_intent, MAC2STR(own_interface_addr),
-		wps_method, persistent_group, pd_before_go_neg, force_freq);
+		wps_method, persistent_group, pd_before_go_neg);
 
-	if (p2p_prepare_channel(p2p, force_freq) < 0)
+	if (p2p_prepare_channel(p2p, force_freq, pref_freq) < 0)
 		return -1;
 
 	dev = p2p_get_device(p2p, peer_addr);
@@ -1390,7 +1389,8 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 		  enum p2p_wps_method wps_method,
 		  int go_intent, const u8 *own_interface_addr,
 		  unsigned int force_freq, int persistent_group,
-		  const u8 *force_ssid, size_t force_ssid_len)
+		  const u8 *force_ssid, size_t force_ssid_len,
+		  unsigned int pref_freq)
 {
 	struct p2p_device *dev;
 
@@ -1401,7 +1401,7 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 		MAC2STR(peer_addr), go_intent, MAC2STR(own_interface_addr),
 		wps_method, persistent_group);
 
-	if (p2p_prepare_channel(p2p, force_freq) < 0)
+	if (p2p_prepare_channel(p2p, force_freq, pref_freq) < 0)
 		return -1;
 
 	dev = p2p_get_device(p2p, peer_addr);
@@ -2416,6 +2416,7 @@ struct p2p_data * p2p_init(const struct p2p_config *cfg)
 	p2p->min_disc_int = 1;
 #endif
 	p2p->max_disc_int = 3;
+	p2p->max_disc_tu = -1;
 
 	os_get_random(&p2p->next_tie_breaker, 1);
 	p2p->next_tie_breaker &= 0x01;
@@ -2712,7 +2713,7 @@ void p2p_continue_find(struct p2p_data *p2p)
 		}
 	}
 
-	p2p_listen_in_find(p2p);
+	p2p_listen_in_find(p2p, 1);
 }
 
 
@@ -2758,8 +2759,7 @@ static void p2p_retry_pd(struct p2p_data *p2p)
 
 	/*
 	 * Retry the prov disc req attempt only for the peer that the user had
-	 * requested for and provided a join has not been initiated on it
-	 * in the meantime.
+	 * requested.
 	 */
 
 	dl_list_for_each(dev, &p2p->devices, struct p2p_device, list) {
@@ -2768,15 +2768,14 @@ static void p2p_retry_pd(struct p2p_data *p2p)
 			continue;
 		if (!dev->req_config_methods)
 			continue;
-		if (dev->flags & P2P_DEV_PD_FOR_JOIN)
-			continue;
 
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Send "
 			"pending Provision Discovery Request to "
 			MACSTR " (config methods 0x%x)",
 			MAC2STR(dev->info.p2p_device_addr),
 			dev->req_config_methods);
-		p2p_send_prov_disc_req(p2p, dev, 0, 0);
+		p2p_send_prov_disc_req(p2p, dev,
+				       dev->flags & P2P_DEV_PD_FOR_JOIN, 0);
 		return;
 	}
 }
@@ -3198,7 +3197,7 @@ static void p2p_timeout_connect(struct p2p_data *p2p)
 		return;
 	}
 	p2p_set_state(p2p, P2P_CONNECT_LISTEN);
-	p2p_listen_in_find(p2p);
+	p2p_listen_in_find(p2p, 0);
 }
 
 
@@ -3262,7 +3261,7 @@ static void p2p_timeout_wait_peer_idle(struct p2p_data *p2p)
 		"P2P: Go to Listen state while waiting for the peer to become "
 		"ready for GO Negotiation");
 	p2p_set_state(p2p, P2P_WAIT_PEER_CONNECT);
-	p2p_listen_in_find(p2p);
+	p2p_listen_in_find(p2p, 0);
 }
 
 
@@ -3307,9 +3306,23 @@ static void p2p_timeout_prov_disc_req(struct p2p_data *p2p)
 		p2p->pd_retries--;
 		p2p_retry_pd(p2p);
 	} else {
+		struct p2p_device *dev;
+		int for_join = 0;
+
+		dl_list_for_each(dev, &p2p->devices, struct p2p_device, list) {
+			if (os_memcmp(p2p->pending_pd_devaddr,
+				      dev->info.p2p_device_addr, ETH_ALEN) != 0)
+				continue;
+			if (dev->req_config_methods &&
+			    (dev->flags & P2P_DEV_PD_FOR_JOIN))
+				for_join = 1;
+		}
+
 		if (p2p->cfg->prov_disc_fail)
 			p2p->cfg->prov_disc_fail(p2p->cfg->cb_ctx,
 						 p2p->pending_pd_devaddr,
+						 for_join ?
+						 P2P_PROV_DISC_TIMEOUT_JOIN :
 						 P2P_PROV_DISC_TIMEOUT);
 		p2p_reset_pending_pd(p2p);
 	}
@@ -3330,7 +3343,7 @@ static void p2p_timeout_invite(struct p2p_data *p2p)
 		p2p_set_timeout(p2p, 0, 100000);
 		return;
 	}
-	p2p_listen_in_find(p2p);
+	p2p_listen_in_find(p2p, 0);
 }
 
 
@@ -4384,3 +4397,20 @@ int p2p_set_wfd_coupled_sink_info(struct p2p_data *p2p,
 }
 
 #endif /* CONFIG_WIFI_DISPLAY */
+
+
+int p2p_set_disc_int(struct p2p_data *p2p, int min_disc_int, int max_disc_int,
+		     int max_disc_tu)
+{
+	if (min_disc_int > max_disc_int || min_disc_int < 0 || max_disc_int < 0)
+		return -1;
+
+	p2p->min_disc_int = min_disc_int;
+	p2p->max_disc_int = max_disc_int;
+	p2p->max_disc_tu = max_disc_tu;
+	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Set discoverable interval: "
+		"min=%d max=%d max_tu=%d", min_disc_int, max_disc_int,
+		max_disc_tu);
+
+	return 0;
+}

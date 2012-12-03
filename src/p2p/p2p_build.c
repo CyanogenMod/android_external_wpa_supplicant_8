@@ -136,6 +136,7 @@ void p2p_buf_add_channel_list(struct wpabuf *buf, const char *country,
 		    len + 2, (u8 *) wpabuf_put(buf, 0) - len - 2);
 }
 
+
 void p2p_buf_add_status(struct wpabuf *buf, u8 status)
 {
 	/* Status */

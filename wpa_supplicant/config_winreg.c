@@ -202,6 +202,7 @@ static int wpa_config_read_global_os_version(struct wpa_config *config,
 static int wpa_config_read_global(struct wpa_config *config, HKEY hk)
 {
 	int errors = 0;
+	int val;
 
 	wpa_config_read_reg_dword(hk, TEXT("ap_scan"), &config->ap_scan);
 	wpa_config_read_reg_dword(hk, TEXT("fast_reauth"),
@@ -270,6 +271,10 @@ static int wpa_config_read_global(struct wpa_config *config, HKEY hk)
 				  (int *) &config->max_num_sta);
 	wpa_config_read_reg_dword(hk, TEXT("disassoc_low_ack"),
 				  (int *) &config->disassoc_low_ack);
+
+	wpa_config_read_reg_dword(hk, TEXT("okc"), &config->okc);
+	wpa_config_read_reg_dword(hk, TEXT("pmf"), &val);
+	config->pmf = val;
 
 	return errors ? -1 : 0;
 }
@@ -609,6 +614,9 @@ static int wpa_config_write_global(struct wpa_config *config, HKEY hk)
 	wpa_config_write_reg_dword(hk, TEXT("disassoc_low_ack"),
 				   config->disassoc_low_ack, 0);
 
+	wpa_config_write_reg_dword(hk, TEXT("okc"), config->okc, 0);
+	wpa_config_write_reg_dword(hk, TEXT("pmf"), config->pmf, 0);
+
 	return 0;
 }
 
@@ -904,11 +912,13 @@ static int wpa_config_write_network(HKEY hk, struct wpa_ssid *ssid, int id)
 	INT_DEFe(fragment_size, DEFAULT_FRAGMENT_SIZE);
 #endif /* IEEE8021X_EAPOL */
 	INT(mode);
-	INT(proactive_key_caching);
+	write_int(netw, "proactive_key_caching", ssid->proactive_key_caching,
+		  -1);
 	INT(disabled);
 	INT(peerkey);
 #ifdef CONFIG_IEEE80211W
-	INT(ieee80211w);
+	write_int(netw, "ieee80211w", ssid->ieee80211w,
+		  MGMT_FRAME_PROTECTION_DEFAULT);
 #endif /* CONFIG_IEEE80211W */
 	STR(id_str);
 

@@ -523,23 +523,6 @@ static int wps_process_pubkey(struct wps_data *wps, const u8 *pk,
 		return -1;
 	}
 
-#ifdef CONFIG_WPS_OOB
-	if (wps->dev_pw_id != DEV_PW_DEFAULT &&
-	    wps->wps->oob_conf.pubkey_hash) {
-		const u8 *addr[1];
-		u8 hash[WPS_HASH_LEN];
-
-		addr[0] = pk;
-		sha256_vector(1, addr, &pk_len, hash);
-		if (os_memcmp(hash,
-			      wpabuf_head(wps->wps->oob_conf.pubkey_hash),
-			      WPS_OOB_PUBKEY_HASH_LEN) != 0) {
-			wpa_printf(MSG_ERROR, "WPS: Public Key hash error");
-			return -1;
-		}
-	}
-#endif /* CONFIG_WPS_OOB */
-
 	wpabuf_free(wps->dh_pubkey_r);
 	wps->dh_pubkey_r = wpabuf_alloc_copy(pk, pk_len);
 	if (wps->dh_pubkey_r == NULL)
@@ -665,6 +648,7 @@ static int wps_process_cred_e(struct wps_data *wps, const u8 *cred,
 {
 	struct wps_parse_attr attr;
 	struct wpabuf msg;
+	int ret = 0;
 
 	wpa_printf(MSG_DEBUG, "WPS: Received Credential");
 	os_memset(&wps->cred, 0, sizeof(wps->cred));
@@ -714,12 +698,12 @@ static int wps_process_cred_e(struct wps_data *wps, const u8 *cred,
 	if (wps->wps->cred_cb) {
 		wps->cred.cred_attr = cred - 4;
 		wps->cred.cred_attr_len = cred_len + 4;
-		wps->wps->cred_cb(wps->wps->cb_ctx, &wps->cred);
+		ret = wps->wps->cred_cb(wps->wps->cb_ctx, &wps->cred);
 		wps->cred.cred_attr = NULL;
 		wps->cred.cred_attr_len = 0;
 	}
 
-	return 0;
+	return ret;
 }
 
 

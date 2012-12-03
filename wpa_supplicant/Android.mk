@@ -31,6 +31,7 @@ endif
 
 ifeq ($(BOARD_WLAN_DEVICE), bcmdhd)
 L_CFLAGS += -DANDROID_P2P
+L_CFLAGS += -DP2P_CONCURRENT_SEARCH_DELAY=0
 endif
 
 ifeq ($(BOARD_WLAN_DEVICE), qcwcn)
@@ -193,6 +194,10 @@ NEED_SHA256=y
 NEED_AES_OMAC1=y
 endif
 
+ifdef CONFIG_SAE
+L_CFLAGS += -DCONFIG_SAE
+endif
+
 ifdef CONFIG_IEEE80211V
 L_CFLAGS += -DCONFIG_IEEE80211V
 OBJS += wnm_sta.c
@@ -330,6 +335,17 @@ OBJS += src/eap_peer/eap_tls.c
 OBJS_h += src/eap_server/eap_server_tls.c
 endif
 TLS_FUNCS=y
+CONFIG_IEEE8021X_EAPOL=y
+endif
+
+ifdef CONFIG_EAP_UNAUTH_TLS
+# EAP-UNAUTH-TLS
+L_CFLAGS += -DEAP_UNAUTH_TLS
+ifndef CONFIG_EAP_UNAUTH_TLS
+OBJS += src/eap_peer/eap_tls.c
+OBJS_h += src/eap_server/eap_server_tls.c
+TLS_FUNCS=y
+endif
 CONFIG_IEEE8021X_EAPOL=y
 endif
 
@@ -599,25 +615,10 @@ NEED_80211_COMMON=y
 NEED_AES_CBC=y
 NEED_MODEXP=y
 
-ifdef CONFIG_WPS_UFD
-L_CFLAGS += -DCONFIG_WPS_UFD
-OBJS += src/wps/wps_ufd.c
-NEED_WPS_OOB=y
-endif
-
 ifdef CONFIG_WPS_NFC
 L_CFLAGS += -DCONFIG_WPS_NFC
 OBJS += src/wps/ndef.c
-OBJS += src/wps/wps_nfc.c
 NEED_WPS_OOB=y
-ifdef CONFIG_WPS_NFC_PN531
-PN531_PATH ?= /usr/local/src/nfc
-L_CFLAGS += -DCONFIG_WPS_NFC_PN531
-L_CFLAGS += -I${PN531_PATH}/inc
-OBJS += src/wps/wps_nfc_pn531.c
-LIBS += ${PN531_PATH}/lib/wpsnfc.dll
-LIBS += ${PN531_PATH}/lib/libnfc_mapping_pn53x.dll
-endif
 endif
 
 ifdef NEED_WPS_OOB
@@ -743,6 +744,7 @@ OBJS += src/ap/ieee802_11_shared.c
 OBJS += src/ap/drv_callbacks.c
 OBJS += src/ap/ap_drv_ops.c
 OBJS += src/ap/beacon.c
+OBJS += src/ap/eap_user_db.c
 ifdef CONFIG_IEEE80211N
 OBJS += src/ap/ieee802_11_ht.c
 endif
@@ -910,6 +912,10 @@ OBJS += src/crypto/fips_prf_openssl.c
 endif
 LIBS += -lcrypto
 LIBS_p += -lcrypto
+ifdef CONFIG_TLS_ADD_DL
+LIBS += -ldl
+LIBS_p += -ldl
+endif
 endif
 
 ifeq ($(CONFIG_TLS), gnutls)

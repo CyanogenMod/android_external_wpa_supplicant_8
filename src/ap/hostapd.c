@@ -273,6 +273,11 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 #ifdef CONFIG_INTERWORKING
 	gas_serv_deinit(hapd);
 #endif /* CONFIG_INTERWORKING */
+
+#ifdef CONFIG_SQLITE
+	os_free(hapd->tmp_eap_user.identity);
+	os_free(hapd->tmp_eap_user.password);
+#endif /* CONFIG_SQLITE */
 }
 
 
@@ -1113,12 +1118,13 @@ int hostapd_reload_iface(struct hostapd_iface *hapd_iface)
 int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 {
 	size_t j;
-	struct hostapd_bss_config *bss = hapd_iface->bss[0]->conf;
+	struct hostapd_bss_config *bss;
 	const struct wpa_driver_ops *driver;
 	void *drv_priv;
 
 	if (hapd_iface == NULL)
 		return -1;
+	bss = hapd_iface->bss[0]->conf;
 	driver = hapd_iface->bss[0]->driver;
 	drv_priv = hapd_iface->bss[0]->drv_priv;
 
@@ -1373,8 +1379,10 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	/* Start accounting here, if IEEE 802.1X and WPA are not used.
 	 * IEEE 802.1X/WPA code will start accounting after the station has
 	 * been authorized. */
-	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa)
+	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa) {
+		os_get_time(&sta->connected_time);
 		accounting_sta_start(hapd, sta);
+	}
 
 	/* Start IEEE 802.1X authentication process for new stations */
 	ieee802_1x_new_station(hapd, sta);

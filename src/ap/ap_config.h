@@ -96,6 +96,11 @@ struct hostapd_vlan {
 };
 
 #define PMK_LEN 32
+struct hostapd_sta_wpa_psk_short {
+	struct hostapd_sta_wpa_psk_short *next;
+	u8 psk[PMK_LEN];
+};
+
 struct hostapd_wpa_psk {
 	struct hostapd_wpa_psk *next;
 	int group;
@@ -192,6 +197,7 @@ struct hostapd_bss_config {
 	int eap_server; /* Use internal EAP server instead of external
 			 * RADIUS server */
 	struct hostapd_eap_user *eap_user;
+	char *eap_user_sqlite;
 	char *eap_sim_db;
 	struct hostapd_ip_addr own_ip_addr;
 	char *nas_identifier;
@@ -505,6 +511,7 @@ struct hostapd_config {
 	int require_vht;
 	u8 vht_oper_chwidth;
 	u8 vht_oper_centr_freq_seg0_idx;
+	u8 vht_oper_centr_freq_seg1_idx;
 };
 
 
@@ -523,9 +530,6 @@ const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
 int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
 const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 					int vlan_id);
-const struct hostapd_eap_user *
-hostapd_get_eap_user(const struct hostapd_bss_config *conf, const u8 *identity,
-		     size_t identity_len, int phase2);
 struct hostapd_radius_attr *
 hostapd_config_get_radius_attr(struct hostapd_radius_attr *attr, u8 type);
 

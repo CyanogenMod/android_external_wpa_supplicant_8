@@ -211,7 +211,7 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 		else
 			return -1;
 		return p2p_prov_disc_req(p2p, dev->info.p2p_device_addr,
-					 config_method, 0, 0);
+					 config_method, 0, 0, 1);
 	}
 
 	freq = dev->listen_freq > 0 ? dev->listen_freq : dev->oper_freq;
@@ -302,7 +302,6 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 					      p2p->op_channel);
 	}
 	p2p_buf_add_intended_addr(buf, p2p->intended_addr);
-
 	if (status || peer == NULL) {
 		p2p_buf_add_channel_list(buf, p2p->cfg->country,
 					 &p2p->channels);
@@ -315,7 +314,6 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 				       &res);
 		p2p_buf_add_channel_list(buf, p2p->cfg->country, &res);
 	}
-
 	p2p_buf_add_device_info(buf, p2p, peer);
 	if (peer && peer->go_state == LOCAL_GO) {
 		p2p_buf_add_group_id(buf, p2p->cfg->dev_addr, p2p->ssid,

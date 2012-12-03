@@ -504,6 +504,12 @@ static int wpa_config_parse_key_mgmt(const struct parse_data *data,
 		else if (os_strcmp(start, "WPS") == 0)
 			val |= WPA_KEY_MGMT_WPS;
 #endif /* CONFIG_WPS */
+#ifdef CONFIG_SAE
+		else if (os_strcmp(start, "SAE") == 0)
+			val |= WPA_KEY_MGMT_SAE;
+		else if (os_strcmp(start, "FT-SAE") == 0)
+			val |= WPA_KEY_MGMT_FT_SAE;
+#endif /* CONFIG_SAE */
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -2035,6 +2041,10 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->ampdu_factor = DEFAULT_AMPDU_FACTOR;
 	ssid->ampdu_density = DEFAULT_AMPDU_DENSITY;
 #endif /* CONFIG_HT_OVERRIDES */
+	ssid->proactive_key_caching = -1;
+#ifdef CONFIG_IEEE80211W
+	ssid->ieee80211w = MGMT_FRAME_PROTECTION_DEFAULT;
+#endif /* CONFIG_IEEE80211W */
 }
 
 
@@ -3000,6 +3010,9 @@ static const struct global_parse_data global_fields[] = {
 	{ INT_RANGE(p2p_intra_bss, 0, 1), CFG_CHANGED_P2P_INTRA_BSS },
 	{ INT(p2p_group_idle), 0 },
 	{ FUNC(p2p_pref_chan), CFG_CHANGED_P2P_PREF_CHAN },
+	{ INT(p2p_go_ht40), 0 },
+	{ INT(p2p_disabled), 0 },
+	{ INT(p2p_no_group_iface), 0 },
 #endif /* CONFIG_P2P */
 	{ FUNC(country), CFG_CHANGED_COUNTRY },
 	{ INT(bss_max_count), 0 },
@@ -3024,6 +3037,8 @@ static const struct global_parse_data global_fields[] = {
 	{ STR(ext_password_backend), CFG_CHANGED_EXT_PW_BACKEND },
 	{ INT(p2p_go_max_inactivity), 0 },
 	{ INT_RANGE(auto_interworking, 0, 1), 0 },
+	{ INT(okc), 0 },
+	{ INT(pmf), 0 },
 };
 
 #undef FUNC

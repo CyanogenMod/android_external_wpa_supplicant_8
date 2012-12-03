@@ -87,6 +87,7 @@ OBJS += src/ap/utils.c
 OBJS += src/ap/authsrv.c
 OBJS += src/ap/ieee802_1x.c
 OBJS += src/ap/ap_config.c
+OBJS += src/ap/eap_user_db.c
 OBJS += src/ap/ieee802_11_auth.c
 OBJS += src/ap/sta_info.c
 OBJS += src/ap/wpa_auth.c
@@ -213,6 +214,10 @@ OBJS += src/ap/wpa_auth_ft.c
 NEED_SHA256=y
 NEED_AES_OMAC1=y
 NEED_AES_UNWRAP=y
+endif
+
+ifdef CONFIG_SAE
+L_CFLAGS += -DCONFIG_SAE
 endif
 
 ifdef CONFIG_IEEE80211V
@@ -402,25 +407,10 @@ NEED_AES_CBC=y
 NEED_MODEXP=y
 CONFIG_EAP=y
 
-ifdef CONFIG_WPS_UFD
-L_CFLAGS += -DCONFIG_WPS_UFD
-OBJS += src/wps/wps_ufd.c
-NEED_WPS_OOB=y
-endif
-
 ifdef CONFIG_WPS_NFC
 L_CFLAGS += -DCONFIG_WPS_NFC
 OBJS += src/wps/ndef.c
-OBJS += src/wps/wps_nfc.c
 NEED_WPS_OOB=y
-ifdef CONFIG_WPS_NFC_PN531
-PN531_PATH ?= /usr/local/src/nfc
-L_CFLAGS += -DCONFIG_WPS_NFC_PN531
-L_CFLAGS += -I${PN531_PATH}/inc
-OBJS += src/wps/wps_nfc_pn531.c
-LIBS += ${PN531_PATH}/lib/wpsnfc.dll
-LIBS += ${PN531_PATH}/lib/libnfc_mapping_pn53x.dll
-endif
 endif
 
 ifdef NEED_WPS_OOB
@@ -536,10 +526,6 @@ ifeq ($(CONFIG_TLS), gnutls)
 ifdef TLS_FUNCS
 OBJS += src/crypto/tls_gnutls.c
 LIBS += -lgnutls -lgpg-error
-ifdef CONFIG_GNUTLS_EXTRA
-L_CFLAGS += -DCONFIG_GNUTLS_EXTRA
-LIBS += -lgnutls-extra
-endif
 endif
 OBJS += src/crypto/crypto_gnutls.c
 HOBJS += src/crypto/crypto_gnutls.c

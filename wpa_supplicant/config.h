@@ -747,6 +747,50 @@ struct wpa_config {
 	 *     matching network block
 	 */
 	int auto_interworking;
+
+	/**
+	 * p2p_go_ht40 - Default mode for HT40 enable when operating as GO.
+	 *
+	 * This will take effect for p2p_group_add, p2p_connect, and p2p_invite.
+	 * Note that regulatory constraints and driver capabilities are
+	 * consulted anyway, so setting it to 1 can't do real harm.
+	 * By default: 0 (disabled)
+	 */
+	int p2p_go_ht40;
+
+	/**
+	 * p2p_disabled - Whether P2P operations are disabled for this interface
+	 */
+	int p2p_disabled;
+
+	/**
+	 * p2p_no_group_iface - Whether group interfaces can be used
+	 *
+	 * By default, wpa_supplicant will create a separate interface for P2P
+	 * group operations if the driver supports this. This functionality can
+	 * be disabled by setting this parameter to 1. In that case, the same
+	 * interface that was used for the P2P management operations is used
+	 * also for the group operation.
+	 */
+	int p2p_no_group_iface;
+
+	/**
+	 * okc - Whether to enable opportunistic key caching by default
+	 *
+	 * By default, OKC is disabled unless enabled by the per-network
+	 * proactive_key_caching=1 parameter. okc=1 can be used to change this
+	 * default behavior.
+	 */
+	int okc;
+
+	/**
+	 * pmf - Whether to enable/require PMF by default
+	 *
+	 * By default, PMF is disabled unless enabled by the per-network
+	 * ieee80211w=1 or ieee80211w=2 parameter. pmf=1/2 can be used to change
+	 * this default behavior.
+	 */
+	enum mfp_options pmf;
 };
 
 

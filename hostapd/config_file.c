@@ -200,6 +200,12 @@ static int hostapd_config_read_eap_user(const char *fname,
 	if (!fname)
 		return 0;
 
+	if (os_strncmp(fname, "sqlite:", 7) == 0) {
+		os_free(conf->eap_user_sqlite);
+		conf->eap_user_sqlite = os_strdup(fname + 7);
+		return 0;
+	}
+
 	f = fopen(fname, "r");
 	if (!f) {
 		wpa_printf(MSG_ERROR, "EAP user file '%s' not found.", fname);
@@ -624,6 +630,12 @@ static int hostapd_config_parse_key_mgmt(int line, const char *value)
 		else if (os_strcmp(start, "WPA-EAP-SHA256") == 0)
 			val |= WPA_KEY_MGMT_IEEE8021X_SHA256;
 #endif /* CONFIG_IEEE80211W */
+#ifdef CONFIG_SAE
+		else if (os_strcmp(start, "SAE") == 0)
+			val |= WPA_KEY_MGMT_SAE;
+		else if (os_strcmp(start, "FT-SAE") == 0)
+			val |= WPA_KEY_MGMT_FT_SAE;
+#endif /* CONFIG_SAE */
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -2512,6 +2524,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		} else if (os_strcmp(buf, "vht_oper_centr_freq_seg0_idx") == 0)
 		{
 			conf->vht_oper_centr_freq_seg0_idx = atoi(pos);
+		} else if (os_strcmp(buf, "vht_oper_centr_freq_seg1_idx") == 0)
+		{
+			conf->vht_oper_centr_freq_seg1_idx = atoi(pos);
 #endif /* CONFIG_IEEE80211AC */
 		} else if (os_strcmp(buf, "max_listen_interval") == 0) {
 			bss->max_listen_interval = atoi(pos);

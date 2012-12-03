@@ -95,7 +95,8 @@ struct sta_info {
 	struct hostapd_ssid *ssid_probe; /* SSID selection based on ProbeReq */
 
 	int vlan_id;
-	u8 *psk; /* PSK from RADIUS authentication server */
+	 /* PSKs from RADIUS authentication server */
+	struct hostapd_sta_wpa_psk_short *psk;
 
 	char *identity; /* User-Name from RADIUS */
 	char *radius_cui; /* Chargeable-User-Identity from RADIUS */
@@ -121,6 +122,14 @@ struct sta_info {
 
 	struct wpabuf *wps_ie; /* WPS IE from (Re)Association Request */
 	struct wpabuf *p2p_ie; /* P2P IE from (Re)Association Request */
+	struct wpabuf *hs20_ie; /* HS 2.0 IE from (Re)Association Request */
+
+	struct os_time connected_time;
+
+#ifdef CONFIG_SAE
+	enum { SAE_INIT, SAE_COMMIT, SAE_CONFIRM } sae_state;
+	u16 sae_send_confirm;
+#endif /* CONFIG_SAE */
 };
 
 

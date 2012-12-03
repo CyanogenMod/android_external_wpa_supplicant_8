@@ -244,6 +244,7 @@ struct wpa_driver_nl80211_data {
 	unsigned int scan_for_auth:1;
 	unsigned int retry_auth:1;
 	unsigned int use_monitor:1;
+	unsigned int ignore_next_local_disconnect:1;
 
 	u64 remain_on_chan_cookie;
 	u64 send_action_cookie;
@@ -1038,6 +1039,7 @@ static void mlme_event_auth(struct wpa_driver_nl80211_data *drv,
 	const struct ieee80211_mgmt *mgmt;
 	union wpa_event_data event;
 
+	wpa_printf(MSG_DEBUG, "nl80211: Authenticate event");
 	mgmt = (const struct ieee80211_mgmt *) frame;
 	if (len < 24 + sizeof(mgmt->u.auth)) {
 		wpa_printf(MSG_DEBUG, "nl80211: Too short association event "
@@ -1049,6 +1051,8 @@ static void mlme_event_auth(struct wpa_driver_nl80211_data *drv,
 	os_memset(&event, 0, sizeof(event));
 	os_memcpy(event.auth.peer, mgmt->sa, ETH_ALEN);
 	event.auth.auth_type = le_to_host16(mgmt->u.auth.auth_alg);
+	event.auth.auth_transaction =
+		le_to_host16(mgmt->u.auth.auth_transaction);
 	event.auth.status_code = le_to_host16(mgmt->u.auth.status_code);
 	if (len > 24 + sizeof(mgmt->u.auth)) {
 		event.auth.ies = mgmt->u.auth.variable;
@@ -1097,6 +1101,7 @@ static void mlme_event_assoc(struct wpa_driver_nl80211_data *drv,
 	union wpa_event_data event;
 	u16 status;
 
+	wpa_printf(MSG_DEBUG, "nl80211: Associate event");
 	mgmt = (const struct ieee80211_mgmt *) frame;
 	if (len < 24 + sizeof(mgmt->u.assoc_resp)) {
 		wpa_printf(MSG_DEBUG, "nl80211: Too short association event "
@@ -1153,6 +1158,11 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 		return;
 	}
 
+	if (cmd == NL80211_CMD_CONNECT)
+		wpa_printf(MSG_DEBUG, "nl80211: Connect event");
+	else if (cmd == NL80211_CMD_ROAM)
+		wpa_printf(MSG_DEBUG, "nl80211: Roam event");
+
 	os_memset(&event, 0, sizeof(event));
 	if (cmd == NL80211_CMD_CONNECT &&
 	    nla_get_u16(status) != WLAN_STATUS_SUCCESS) {
@@ -1191,6 +1201,7 @@ static void mlme_event_disconnect(struct wpa_driver_nl80211_data *drv,
 				  struct nlattr *by_ap)
 {
 	union wpa_event_data data;
+	unsigned int locally_generated = by_ap == NULL;
 
 	if (drv->capa.flags & WPA_DRIVER_FLAGS_SME) {
 		/*
@@ -1202,6 +1213,19 @@ static void mlme_event_disconnect(struct wpa_driver_nl80211_data *drv,
 		return;
 	}
 
+	if (drv->ignore_next_local_disconnect) {
+		drv->ignore_next_local_disconnect = 0;
+		if (locally_generated) {
+			wpa_printf(MSG_DEBUG, "nl80211: Ignore disconnect "
+				   "event triggered during reassociation");
+			return;
+		}
+		wpa_printf(MSG_WARNING, "nl80211: Was expecting local "
+			   "disconnect but got another disconnect "
+			   "event first");
+	}
+
+	wpa_printf(MSG_DEBUG, "nl80211: Disconnect event");
 	drv->associated = 0;
 	os_memset(&data, 0, sizeof(data));
 	if (reason)
@@ -1279,6 +1303,7 @@ static void mlme_event_mgmt(struct wpa_driver_nl80211_data *drv,
 	u16 fc, stype;
 	int ssi_signal = 0;
 
+	wpa_printf(MSG_DEBUG, "nl80211: Frame event");
 	mgmt = (const struct ieee80211_mgmt *) frame;
 	if (len < 24) {
 		wpa_printf(MSG_DEBUG, "nl80211: Too short action frame");
@@ -1321,6 +1346,7 @@ static void mlme_event_mgmt_tx_status(struct wpa_driver_nl80211_data *drv,
 	const struct ieee80211_hdr *hdr;
 	u16 fc;
 
+	wpa_printf(MSG_DEBUG, "nl80211: Frame TX status event");
 	if (!is_ap_interface(drv->nlmode)) {
 		u64 cookie_val;
 
@@ -1359,6 +1385,11 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 	union wpa_event_data event;
 	const u8 *bssid = NULL;
 	u16 reason_code = 0;
+
+	if (type == EVENT_DEAUTH)
+		wpa_printf(MSG_DEBUG, "nl80211: Deauthenticate event");
+	else
+		wpa_printf(MSG_DEBUG, "nl80211: Disassociate event");
 
 	mgmt = (const struct ieee80211_mgmt *) frame;
 	if (len >= 24) {
@@ -1419,6 +1450,11 @@ static void mlme_event_unprot_disconnect(struct wpa_driver_nl80211_data *drv,
 	const struct ieee80211_mgmt *mgmt;
 	union wpa_event_data event;
 	u16 reason_code = 0;
+
+	if (type == EVENT_UNPROT_DEAUTH)
+		wpa_printf(MSG_DEBUG, "nl80211: Unprot Deauthenticate event");
+	else
+		wpa_printf(MSG_DEBUG, "nl80211: Unprot Disassociate event");
 
 	if (len < 24)
 		return;
@@ -2046,6 +2082,8 @@ static void nl80211_pmksa_candidate_event(struct wpa_driver_nl80211_data *drv,
 	};
 	union wpa_event_data data;
 
+	wpa_printf(MSG_DEBUG, "nl80211: PMKSA candidate event");
+
 	if (!tb[NL80211_ATTR_PMKSA_CANDIDATE])
 		return;
 	if (nla_parse_nested(cand, MAX_NL80211_PMKSA_CANDIDATE,
@@ -2071,6 +2109,8 @@ static void nl80211_client_probe_event(struct wpa_driver_nl80211_data *drv,
 {
 	union wpa_event_data data;
 
+	wpa_printf(MSG_DEBUG, "nl80211: Probe client event");
+
 	if (!tb[NL80211_ATTR_MAC] || !tb[NL80211_ATTR_ACK])
 		return;
 
@@ -2079,6 +2119,43 @@ static void nl80211_client_probe_event(struct wpa_driver_nl80211_data *drv,
 		  nla_data(tb[NL80211_ATTR_MAC]), ETH_ALEN);
 
 	wpa_supplicant_event(drv->ctx, EVENT_DRIVER_CLIENT_POLL_OK, &data);
+}
+
+
+static void nl80211_tdls_oper_event(struct wpa_driver_nl80211_data *drv,
+				    struct nlattr **tb)
+{
+	union wpa_event_data data;
+
+	wpa_printf(MSG_DEBUG, "nl80211: TDLS operation event");
+
+	if (!tb[NL80211_ATTR_MAC] || !tb[NL80211_ATTR_TDLS_OPERATION])
+		return;
+
+	os_memset(&data, 0, sizeof(data));
+	os_memcpy(data.tdls.peer, nla_data(tb[NL80211_ATTR_MAC]), ETH_ALEN);
+	switch (nla_get_u8(tb[NL80211_ATTR_TDLS_OPERATION])) {
+	case NL80211_TDLS_SETUP:
+		wpa_printf(MSG_DEBUG, "nl80211: TDLS setup request for peer "
+			   MACSTR, MAC2STR(data.tdls.peer));
+		data.tdls.oper = TDLS_REQUEST_SETUP;
+		break;
+	case NL80211_TDLS_TEARDOWN:
+		wpa_printf(MSG_DEBUG, "nl80211: TDLS teardown request for peer "
+			   MACSTR, MAC2STR(data.tdls.peer));
+		data.tdls.oper = TDLS_REQUEST_TEARDOWN;
+		break;
+	default:
+		wpa_printf(MSG_DEBUG, "nl80211: Unsupported TDLS operatione "
+			   "event");
+		return;
+	}
+	if (tb[NL80211_ATTR_REASON_CODE]) {
+		data.tdls.reason_code =
+			nla_get_u16(tb[NL80211_ATTR_REASON_CODE]);
+	}
+
+	wpa_supplicant_event(drv->ctx, EVENT_TDLS, &data);
 }
 
 
@@ -2213,6 +2290,9 @@ static void do_process_drv_event(struct wpa_driver_nl80211_data *drv,
 		break;
 	case NL80211_CMD_PROBE_CLIENT:
 		nl80211_client_probe_event(drv, tb);
+		break;
+	case NL80211_CMD_TDLS_OPER:
+		nl80211_tdls_oper_event(drv, tb);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG, "nl80211: Ignored unknown event "
@@ -2587,6 +2667,12 @@ broken_combination:
 
 		if (flags & NL80211_FEATURE_INACTIVITY_TIMER)
 			capa->flags |= WPA_DRIVER_FLAGS_INACTIVITY_TIMER;
+
+		if (flags & NL80211_FEATURE_SAE)
+			capa->flags |= WPA_DRIVER_FLAGS_SAE;
+
+		if (flags & NL80211_FEATURE_NEED_OBSS_SCAN)
+			capa->flags |= WPA_DRIVER_FLAGS_OBSS_SCAN;
 	}
 
 	if (tb[NL80211_ATTR_PROBE_RESP_OFFLOAD]) {
@@ -4227,6 +4313,14 @@ static int wpa_driver_nl80211_set_key(const char *ifname, void *priv,
 			NLA_PUT_U32(msg, NL80211_ATTR_KEY_CIPHER,
 				    WLAN_CIPHER_SUITE_AES_CMAC);
 			break;
+		case WPA_ALG_SMS4:
+			NLA_PUT_U32(msg, NL80211_ATTR_KEY_CIPHER,
+				    WLAN_CIPHER_SUITE_SMS4);
+			break;
+		case WPA_ALG_KRK:
+			NLA_PUT_U32(msg, NL80211_ATTR_KEY_CIPHER,
+				    WLAN_CIPHER_SUITE_KRK);
+			break;
 		default:
 			wpa_printf(MSG_ERROR, "%s: Unsupported encryption "
 				   "algorithm %d", __func__, alg);
@@ -4464,7 +4558,8 @@ static int wpa_driver_nl80211_mlme(struct wpa_driver_nl80211_data *drv,
 
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	NLA_PUT_U16(msg, NL80211_ATTR_REASON_CODE, reason_code);
-	NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, addr);
+	if (addr)
+		NLA_PUT(msg, NL80211_ATTR_MAC, ETH_ALEN, addr);
 	if (local_state_change)
 		NLA_PUT_FLAG(msg, NL80211_ATTR_LOCAL_STATE_CHANGE);
 
@@ -4485,12 +4580,13 @@ nla_put_failure:
 
 
 static int wpa_driver_nl80211_disconnect(struct wpa_driver_nl80211_data *drv,
-					 const u8 *addr, int reason_code)
+					 int reason_code)
 {
-	wpa_printf(MSG_DEBUG, "%s(addr=" MACSTR " reason_code=%d)",
-		   __func__, MAC2STR(addr), reason_code);
+	wpa_printf(MSG_DEBUG, "%s(reason_code=%d)", __func__, reason_code);
 	drv->associated = 0;
-	return wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DISCONNECT,
+	drv->ignore_next_local_disconnect = 0;
+	/* Disconnect command doesn't need BSSID - it uses cached value */
+	return wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
 				       reason_code, 0);
 }
 
@@ -4501,27 +4597,13 @@ static int wpa_driver_nl80211_deauthenticate(void *priv, const u8 *addr,
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_SME))
-		return wpa_driver_nl80211_disconnect(drv, addr, reason_code);
+		return wpa_driver_nl80211_disconnect(drv, reason_code);
 	wpa_printf(MSG_DEBUG, "%s(addr=" MACSTR " reason_code=%d)",
 		   __func__, MAC2STR(addr), reason_code);
 	drv->associated = 0;
 	if (drv->nlmode == NL80211_IFTYPE_ADHOC)
 		return nl80211_leave_ibss(drv);
 	return wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DEAUTHENTICATE,
-				       reason_code, 0);
-}
-
-
-static int wpa_driver_nl80211_disassociate(void *priv, const u8 *addr,
-					   int reason_code)
-{
-	struct i802_bss *bss = priv;
-	struct wpa_driver_nl80211_data *drv = bss->drv;
-	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_SME))
-		return wpa_driver_nl80211_disconnect(drv, addr, reason_code);
-	wpa_printf(MSG_DEBUG, "%s", __func__);
-	drv->associated = 0;
-	return wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DISASSOCIATE,
 				       reason_code, 0);
 }
 
@@ -4642,6 +4724,12 @@ retry:
 	wpa_hexdump(MSG_DEBUG, "  * IEs", params->ie, params->ie_len);
 	if (params->ie)
 		NLA_PUT(msg, NL80211_ATTR_IE, params->ie_len, params->ie);
+	if (params->sae_data) {
+		wpa_hexdump(MSG_DEBUG, "  * SAE data", params->sae_data,
+			    params->sae_data_len);
+		NLA_PUT(msg, NL80211_ATTR_SAE_DATA, params->sae_data_len,
+			params->sae_data);
+	}
 	if (params->auth_alg & WPA_AUTH_ALG_OPEN)
 		type = NL80211_AUTHTYPE_OPEN_SYSTEM;
 	else if (params->auth_alg & WPA_AUTH_ALG_SHARED)
@@ -4650,6 +4738,8 @@ retry:
 		type = NL80211_AUTHTYPE_NETWORK_EAP;
 	else if (params->auth_alg & WPA_AUTH_ALG_FT)
 		type = NL80211_AUTHTYPE_FT;
+	else if (params->auth_alg & WPA_AUTH_ALG_SAE)
+		type = NL80211_AUTHTYPE_SAE;
 	else
 		goto nla_put_failure;
 	wpa_printf(MSG_DEBUG, "  * Auth Type %d", type);
@@ -5267,7 +5357,7 @@ static int wpa_driver_nl80211_send_mntr(struct wpa_driver_nl80211_data *drv,
 
 	if (noack)
 		txflags |= IEEE80211_RADIOTAP_F_TX_NOACK;
-	*(le16 *) &rtap_hdr[12] = host_to_le16(txflags);
+	WPA_PUT_LE16(&rtap_hdr[12], txflags);
 
 	res = sendmsg(drv->monitor_sock, &msg, 0);
 	if (res < 0) {
@@ -6648,56 +6738,7 @@ nla_put_failure:
 }
 
 
-static unsigned int nl80211_get_assoc_bssid(struct wpa_driver_nl80211_data *drv,
-					    u8 *bssid)
-{
-	struct nl_msg *msg;
-	int ret;
-	struct nl80211_bss_info_arg arg;
-
-	os_memset(&arg, 0, sizeof(arg));
-	msg = nlmsg_alloc();
-	if (!msg)
-		goto nla_put_failure;
-
-	nl80211_cmd(drv, msg, NLM_F_DUMP, NL80211_CMD_GET_SCAN);
-	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
-
-	arg.drv = drv;
-	ret = send_and_recv_msgs(drv, msg, bss_info_handler, &arg);
-	msg = NULL;
-	if (ret == 0) {
-		if (is_zero_ether_addr(arg.assoc_bssid))
-			return -ENOTCONN;
-		os_memcpy(bssid, arg.assoc_bssid, ETH_ALEN);
-		return 0;
-	}
-	wpa_printf(MSG_DEBUG, "nl80211: Scan result fetch failed: ret=%d "
-		   "(%s)", ret, strerror(-ret));
-nla_put_failure:
-	nlmsg_free(msg);
-	return drv->assoc_freq;
-}
-
-
-static int nl80211_disconnect(struct wpa_driver_nl80211_data *drv,
-			      const u8 *bssid)
-{
-	u8 addr[ETH_ALEN];
-
-	if (bssid == NULL) {
-		int res = nl80211_get_assoc_bssid(drv, addr);
-		if (res)
-			return res;
-		bssid = addr;
-	}
-
-	return wpa_driver_nl80211_disconnect(drv, bssid,
-					     WLAN_REASON_PREV_AUTH_NOT_VALID);
-}
-
-
-static int wpa_driver_nl80211_connect(
+static int wpa_driver_nl80211_try_connect(
 	struct wpa_driver_nl80211_data *drv,
 	struct wpa_driver_associate_params *params)
 {
@@ -6788,6 +6829,9 @@ skip_auth_type:
 		int cipher;
 
 		switch (params->pairwise_suite) {
+		case CIPHER_SMS4:
+			cipher = WLAN_CIPHER_SUITE_SMS4;
+			break;
 		case CIPHER_WEP40:
 			cipher = WLAN_CIPHER_SUITE_WEP40;
 			break;
@@ -6812,6 +6856,9 @@ skip_auth_type:
 		int cipher;
 
 		switch (params->group_suite) {
+		case CIPHER_SMS4:
+			cipher = WLAN_CIPHER_SUITE_SMS4;
+			break;
 		case CIPHER_WEP40:
 			cipher = WLAN_CIPHER_SUITE_WEP40;
 			break;
@@ -6833,10 +6880,14 @@ skip_auth_type:
 	}
 
 	if (params->key_mgmt_suite == KEY_MGMT_802_1X ||
-	    params->key_mgmt_suite == KEY_MGMT_PSK) {
+	    params->key_mgmt_suite == KEY_MGMT_PSK ||
+	    params->key_mgmt_suite == KEY_MGMT_CCKM) {
 		int mgmt = WLAN_AKM_SUITE_PSK;
 
 		switch (params->key_mgmt_suite) {
+		case KEY_MGMT_CCKM:
+			mgmt = WLAN_AKM_SUITE_CCKM;
+			break;
 		case KEY_MGMT_802_1X:
 			mgmt = WLAN_AKM_SUITE_8021X;
 			break;
@@ -6867,14 +6918,6 @@ skip_auth_type:
 	if (ret) {
 		wpa_printf(MSG_DEBUG, "nl80211: MLME connect failed: ret=%d "
 			   "(%s)", ret, strerror(-ret));
-		/*
-		 * cfg80211 does not currently accept new connection if we are
-		 * already connected. As a workaround, force disconnection and
-		 * try again once the driver indicates it completed
-		 * disconnection.
-		 */
-		if (ret == -EALREADY)
-			nl80211_disconnect(drv, params->bssid);
 		goto nla_put_failure;
 	}
 	ret = 0;
@@ -6884,6 +6927,31 @@ nla_put_failure:
 	nlmsg_free(msg);
 	return ret;
 
+}
+
+
+static int wpa_driver_nl80211_connect(
+	struct wpa_driver_nl80211_data *drv,
+	struct wpa_driver_associate_params *params)
+{
+	int ret = wpa_driver_nl80211_try_connect(drv, params);
+	if (ret == -EALREADY) {
+		/*
+		 * cfg80211 does not currently accept new connections if
+		 * we are already connected. As a workaround, force
+		 * disconnection and try again.
+		 */
+		wpa_printf(MSG_DEBUG, "nl80211: Explicitly "
+			   "disconnecting before reassociation "
+			   "attempt");
+		if (wpa_driver_nl80211_disconnect(
+			    drv, WLAN_REASON_PREV_AUTH_NOT_VALID))
+			return -1;
+		/* Ignore the next local disconnect message. */
+		drv->ignore_next_local_disconnect = 1;
+		ret = wpa_driver_nl80211_try_connect(drv, params);
+	}
+	return ret;
 }
 
 
@@ -9186,7 +9254,6 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.stop_sched_scan = wpa_driver_nl80211_stop_sched_scan,
 	.get_scan_results2 = wpa_driver_nl80211_get_scan_results,
 	.deauthenticate = wpa_driver_nl80211_deauthenticate,
-	.disassociate = wpa_driver_nl80211_disassociate,
 	.authenticate = wpa_driver_nl80211_authenticate,
 	.associate = wpa_driver_nl80211_associate,
 	.global_init = nl80211_global_init,

@@ -783,7 +783,7 @@ static void wpa_report_ie_mismatch(struct wpa_sm *sm,
 			    rsn_ie, rsn_ie_len);
 	}
 
-	wpa_sm_disassociate(sm, WLAN_REASON_IE_IN_4WAY_DIFFERS);
+	wpa_sm_deauthenticate(sm, WLAN_REASON_IE_IN_4WAY_DIFFERS);
 }
 
 
@@ -1836,6 +1836,10 @@ static u32 wpa_key_mgmt_suite(struct wpa_sm *sm)
 	case WPA_KEY_MGMT_PSK_SHA256:
 		return RSN_AUTH_KEY_MGMT_PSK_SHA256;
 #endif /* CONFIG_IEEE80211W */
+	case WPA_KEY_MGMT_CCKM:
+		return (sm->proto == WPA_PROTO_RSN ?
+			RSN_AUTH_KEY_MGMT_CCKM:
+			WPA_AUTH_KEY_MGMT_CCKM);
 	case WPA_KEY_MGMT_WPA_NONE:
 		return WPA_AUTH_KEY_MGMT_NONE;
 	default:
@@ -1931,25 +1935,40 @@ int wpa_sm_get_mib(struct wpa_sm *sm, char *buf, size_t buflen)
 
 
 static void wpa_sm_pmksa_free_cb(struct rsn_pmksa_cache_entry *entry,
-				 void *ctx, int replace)
+				 void *ctx, enum pmksa_free_reason reason)
 {
 	struct wpa_sm *sm = ctx;
+	int deauth = 0;
 
-	if (sm->cur_pmksa == entry ||
+	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "RSN: PMKSA cache entry free_cb: "
+		MACSTR " reason=%d", MAC2STR(entry->aa), reason);
+
+	if (sm->cur_pmksa == entry) {
+		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
+			"RSN: %s current PMKSA entry",
+			reason == PMKSA_REPLACE ? "replaced" : "removed");
+		pmksa_cache_clear_current(sm);
+
+		/*
+		 * If an entry is simply being replaced, there's no need to
+		 * deauthenticate because it will be immediately re-added.
+		 * This happens when EAP authentication is completed again
+		 * (reauth or failed PMKSA caching attempt).
+		 */
+		if (reason != PMKSA_REPLACE)
+			deauth = 1;
+	}
+
+	if (reason == PMKSA_EXPIRE &&
 	    (sm->pmk_len == entry->pmk_len &&
 	     os_memcmp(sm->pmk, entry->pmk, sm->pmk_len) == 0)) {
 		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
-			"RSN: removed current PMKSA entry");
-		sm->cur_pmksa = NULL;
+			"RSN: deauthenticating due to expired PMK");
+		pmksa_cache_clear_current(sm);
+		deauth = 1;
+	}
 
-		if (replace) {
-			/* A new entry is being added, so no need to
-			 * deauthenticate in this case. This happens when EAP
-			 * authentication is completed again (reauth or failed
-			 * PMKSA caching attempt). */
-			return;
-		}
-
+	if (deauth) {
 		os_memset(sm->pmk, 0, sizeof(sm->pmk));
 		wpa_sm_deauthenticate(sm, WLAN_REASON_UNSPECIFIED);
 	}
@@ -2080,6 +2099,7 @@ void wpa_sm_notify_assoc(struct wpa_sm *sm, const u8 *bssid)
 void wpa_sm_notify_disassoc(struct wpa_sm *sm)
 {
 	rsn_preauth_deinit(sm);
+	pmksa_cache_clear_current(sm);
 	if (wpa_sm_get_state(sm) == WPA_4WAY_HANDSHAKE)
 		sm->dot11RSNA4WayHandshakeFailures++;
 #ifdef CONFIG_TDLS
@@ -2372,6 +2392,22 @@ int wpa_sm_get_status(struct wpa_sm *sm, char *buf, size_t buflen,
 	if (ret < 0 || ret >= end - pos)
 		return pos - buf;
 	pos += ret;
+
+	if (sm->mfp != NO_MGMT_FRAME_PROTECTION && sm->ap_rsn_ie) {
+		struct wpa_ie_data rsn;
+		if (wpa_parse_wpa_ie_rsn(sm->ap_rsn_ie, sm->ap_rsn_ie_len, &rsn)
+		    >= 0 &&
+		    rsn.capabilities & (WPA_CAPABILITY_MFPR |
+					WPA_CAPABILITY_MFPC)) {
+			ret = os_snprintf(pos, end - pos, "pmf=%d\n",
+					  (rsn.capabilities &
+					   WPA_CAPABILITY_MFPR) ? 2 : 1);
+			if (ret < 0 || ret >= end - pos)
+				return pos - buf;
+			pos += ret;
+		}
+	}
+
 	return pos - buf;
 }
 

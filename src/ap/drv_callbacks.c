@@ -109,6 +109,15 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 	}
 #endif /* CONFIG_P2P */
 
+#ifdef CONFIG_HS20
+	wpabuf_free(sta->hs20_ie);
+	if (elems.hs20 && elems.hs20_len > 4) {
+		sta->hs20_ie = wpabuf_alloc_copy(elems.hs20 + 4,
+						 elems.hs20_len - 4);
+	} else
+		sta->hs20_ie = NULL;
+#endif /* CONFIG_HS20 */
+
 	if (hapd->conf->wpa) {
 		if (ie == NULL || ielen == 0) {
 #ifdef CONFIG_WPS
@@ -672,12 +681,15 @@ static void hostapd_event_eapol_rx(struct hostapd_data *hapd, const u8 *src,
 				   const u8 *data, size_t data_len)
 {
 	struct hostapd_iface *iface = hapd->iface;
+	struct sta_info *sta;
 	size_t j;
 
 	for (j = 0; j < iface->num_bss; j++) {
-		if (ap_get_sta(iface->bss[j], src)) {
-			hapd = iface->bss[j];
-			break;
+		if ((sta = ap_get_sta(iface->bss[j], src))) {
+			if (sta->flags & WLAN_STA_ASSOC) {
+				hapd = iface->bss[j];
+				break;
+			}
 		}
 	}
 

@@ -1950,6 +1950,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_global_properties[] = {
 	  wpas_dbus_getter_eap_methods,
 	  NULL
 	},
+	{ "Capabilities", WPAS_DBUS_NEW_INTERFACE, "as",
+	  wpas_dbus_getter_global_capabilities,
+	  NULL
+	},
 	{ NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -2230,6 +2234,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_bss_properties[] = {
 	},
 	{ "RSN", WPAS_DBUS_NEW_IFACE_BSS, "a{sv}",
 	  wpas_dbus_getter_bss_rsn,
+	  NULL
+	},
+	{ "WPS", WPAS_DBUS_NEW_IFACE_BSS, "a{sv}",
+	  wpas_dbus_getter_bss_wps,
 	  NULL
 	},
 	{ "IEs", WPAS_DBUS_NEW_IFACE_BSS, "ay",

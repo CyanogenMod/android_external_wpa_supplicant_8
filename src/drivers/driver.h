@@ -41,7 +41,7 @@ struct hostapd_channel_data {
 	/**
 	 * freq - Frequency in MHz
 	 */
-	short freq;
+	int freq;
 
 	/**
 	 * flag - Channel flags (HOSTAPD_CHAN_*)
@@ -313,6 +313,9 @@ struct wpa_driver_auth_params {
 	 * p2p - Whether this connection is a P2P group
 	 */
 	int p2p;
+
+	const u8 *sae_data;
+	size_t sae_data_len;
 
 };
 
@@ -758,6 +761,7 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_CAPA_KEY_MGMT_WPA_NONE	0x00000010
 #define WPA_DRIVER_CAPA_KEY_MGMT_FT		0x00000020
 #define WPA_DRIVER_CAPA_KEY_MGMT_FT_PSK		0x00000040
+#define WPA_DRIVER_CAPA_KEY_MGMT_WAPI_PSK	0x00000080
 	unsigned int key_mgmt;
 
 #define WPA_DRIVER_CAPA_ENC_WEP40	0x00000001
@@ -834,6 +838,10 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_INACTIVITY_TIMER		0x00800000
 /* Driver expects user space implementation of MLME in AP mode */
 #define WPA_DRIVER_FLAGS_AP_MLME			0x01000000
+/* Driver supports SAE with user space SME */
+#define WPA_DRIVER_FLAGS_SAE				0x02000000
+/* Driver makes use of OBSS scan mechanism in wpa_supplicant */
+#define WPA_DRIVER_FLAGS_OBSS_SCAN			0x04000000
 	unsigned int flags;
 
 	int max_scan_ssids;
@@ -1193,17 +1201,6 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*deauthenticate)(void *priv, const u8 *addr, int reason_code);
-
-	/**
-	 * disassociate - Request driver to disassociate
-	 * @priv: private driver interface data
-	 * @addr: peer address (BSSID of the AP)
-	 * @reason_code: 16-bit reason code to be sent in the disassociation
-	 *	frame
-	 *
-	 * Returns: 0 on success, -1 on failure
-	 */
-	int (*disassociate)(void *priv, const u8 *addr, int reason_code);
 
 	/**
 	 * associate - Request driver to associate

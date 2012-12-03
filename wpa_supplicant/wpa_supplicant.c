@@ -190,7 +190,7 @@ static void wpa_supplicant_timeout(void *eloop_ctx, void *timeout_ctx)
 		MAC2STR(bssid));
 	wpa_blacklist_add(wpa_s, bssid);
 	wpa_sm_notify_disassoc(wpa_s->wpa);
-	wpa_supplicant_disassociate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+	wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 	wpa_s->reassociate = 1;
 
 	/*
@@ -470,6 +470,11 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->bssid_filter);
 	wpa_s->bssid_filter = NULL;
 
+	os_free(wpa_s->disallow_aps_bssid);
+	wpa_s->disallow_aps_bssid = NULL;
+	os_free(wpa_s->disallow_aps_ssid);
+	wpa_s->disallow_aps_ssid = NULL;
+
 	wnm_bss_keep_alive_deinit(wpa_s);
 
 	ext_password_deinit(wpa_s->ext_pw);
@@ -666,6 +671,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 			ssid && ssid->id_str ? ssid->id_str : "");
 #endif /* CONFIG_CTRL_IFACE || !CONFIG_NO_STDOUT_DEBUG */
 		wpas_clear_temp_disabled(wpa_s, ssid, 1);
+		wpa_s->extra_blacklist_count = 0;
 		wpa_s->new_connection = 0;
 		wpa_s->reassociated_connection = 1;
 		wpa_drv_set_operstate(wpa_s, 1);
@@ -931,7 +937,9 @@ static int wpa_supplicant_suites_from_ai(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211W
 	if (!(ie->capabilities & WPA_CAPABILITY_MFPC) &&
-	    ssid->ieee80211w == MGMT_FRAME_PROTECTION_REQUIRED) {
+	    (ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
+	     wpa_s->conf->pmf : ssid->ieee80211w) ==
+	    MGMT_FRAME_PROTECTION_REQUIRED) {
 		wpa_msg(wpa_s, MSG_INFO, "WPA: Driver associated with an AP "
 			"that does not support management frame protection - "
 			"reject");
@@ -1074,6 +1082,10 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	}
 
 	sel = ie.key_mgmt & ssid->key_mgmt;
+#ifdef CONFIG_SAE
+	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_SAE))
+		sel &= ~(WPA_KEY_MGMT_SAE | WPA_KEY_MGMT_FT_SAE);
+#endif /* CONFIG_SAE */
 	if (0) {
 #ifdef CONFIG_IEEE80211R
 	} else if (sel & WPA_KEY_MGMT_FT_IEEE8021X) {
@@ -1083,6 +1095,14 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 		wpa_s->key_mgmt = WPA_KEY_MGMT_FT_PSK;
 		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using KEY_MGMT FT/PSK");
 #endif /* CONFIG_IEEE80211R */
+#ifdef CONFIG_SAE
+	} else if (sel & WPA_KEY_MGMT_SAE) {
+		wpa_s->key_mgmt = WPA_KEY_MGMT_SAE;
+		wpa_dbg(wpa_s, MSG_DEBUG, "RSN: using KEY_MGMT SAE");
+	} else if (sel & WPA_KEY_MGMT_FT_SAE) {
+		wpa_s->key_mgmt = WPA_KEY_MGMT_FT_SAE;
+		wpa_dbg(wpa_s, MSG_DEBUG, "RSN: using KEY_MGMT FT/SAE");
+#endif /* CONFIG_SAE */
 #ifdef CONFIG_IEEE80211W
 	} else if (sel & WPA_KEY_MGMT_IEEE8021X_SHA256) {
 		wpa_s->key_mgmt = WPA_KEY_MGMT_IEEE8021X_SHA256;
@@ -1115,7 +1135,8 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211W
 	sel = ie.mgmt_group_cipher;
-	if (ssid->ieee80211w == NO_MGMT_FRAME_PROTECTION ||
+	if ((ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
+	     wpa_s->conf->pmf : ssid->ieee80211w) == NO_MGMT_FRAME_PROTECTION ||
 	    !(ie.capabilities & WPA_CAPABILITY_MFPC))
 		sel = 0;
 	if (sel & WPA_CIPHER_AES_128_CMAC) {
@@ -1128,7 +1149,9 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	}
 	wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_MGMT_GROUP,
 			 wpa_s->mgmt_group_cipher);
-	wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_MFP, ssid->ieee80211w);
+	wpa_sm_set_param(wpa_s->wpa, WPA_PARAM_MFP,
+			 (ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
+			  wpa_s->conf->pmf : ssid->ieee80211w));
 #endif /* CONFIG_IEEE80211W */
 
 	if (wpa_sm_set_assoc_wpa_ie_default(wpa_s->wpa, wpa_ie, wpa_ie_len)) {
@@ -1309,7 +1332,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		   (ssid->key_mgmt & WPA_KEY_MGMT_WPS)) {
 		/* Use ap_scan==1 style network selection to find the network
 		 */
-		wpa_s->scan_req = 2;
+		wpa_s->scan_req = MANUAL_SCAN_REQ;
 		wpa_s->reassociate = 1;
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
 		return;
@@ -1347,7 +1370,9 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		    wpa_bss_get_ie(bss, WLAN_EID_RSN)) &&
 	    wpa_key_mgmt_wpa(ssid->key_mgmt)) {
 		int try_opportunistic;
-		try_opportunistic = ssid->proactive_key_caching &&
+		try_opportunistic = (ssid->proactive_key_caching < 0 ?
+				     wpa_s->conf->okc :
+				     ssid->proactive_key_caching) &&
 			(ssid->proto & WPA_PROTO_RSN);
 		if (pmksa_cache_set_current(wpa_s->wpa, NULL, bss->bssid,
 					    wpa_s->current_ssid,
@@ -1552,8 +1577,10 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	params.drop_unencrypted = use_crypt;
 
 #ifdef CONFIG_IEEE80211W
-	params.mgmt_frame_protection = ssid->ieee80211w;
-	if (ssid->ieee80211w != NO_MGMT_FRAME_PROTECTION && bss) {
+	params.mgmt_frame_protection =
+		ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
+		wpa_s->conf->pmf : ssid->ieee80211w;
+	if (params.mgmt_frame_protection != NO_MGMT_FRAME_PROTECTION && bss) {
 		const u8 *rsn = wpa_bss_get_ie(bss, WLAN_EID_RSN);
 		struct wpa_ie_data ie;
 		if (rsn && wpa_parse_wpa_ie(rsn, 2 + rsn[1], &ie) == 0 &&
@@ -1590,16 +1617,8 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		((freq = wpa_drv_shared_freq(wpa_s)) > 0) && (freq != params.freq)) {
 		wpa_printf(MSG_DEBUG, "Shared interface with conflicting frequency found (%d != %d)"
 																, freq, params.freq);
-		if (wpas_p2p_handle_frequency_conflicts(wpa_s, params.freq) < 0) {
-			/* Handling conflicts failed. Disable the current connect req and
-			 * notify the userspace to take appropriate action */
-			wpa_printf(MSG_DEBUG, "proiritize is not set. Notifying user space to handle the case");
-			wpa_supplicant_disable_network(wpa_s, ssid);
-			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_FREQ_CONFLICT
-				" id=%d", ssid->id);
-			os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
+		if (wpas_p2p_handle_frequency_conflicts(wpa_s, params.freq, ssid) < 0) 
 			return;
-		}
 	}
 #endif
 	ret = wpa_drv_associate(wpa_s, &params);
@@ -1694,33 +1713,6 @@ static void wpa_supplicant_clear_connection(struct wpa_supplicant *wpa_s,
 
 
 /**
- * wpa_supplicant_disassociate - Disassociate the current connection
- * @wpa_s: Pointer to wpa_supplicant data
- * @reason_code: IEEE 802.11 reason code for the disassociate frame
- *
- * This function is used to request %wpa_supplicant to disassociate with the
- * current AP.
- */
-void wpa_supplicant_disassociate(struct wpa_supplicant *wpa_s,
-				 int reason_code)
-{
-	u8 *addr = NULL;
-	union wpa_event_data event;
-
-	if (!is_zero_ether_addr(wpa_s->bssid)) {
-		wpa_drv_disassociate(wpa_s, wpa_s->bssid, reason_code);
-		addr = wpa_s->bssid;
-		os_memset(&event, 0, sizeof(event));
-		event.disassoc_info.reason_code = (u16) reason_code;
-		event.disassoc_info.locally_generated = 1;
-		wpa_supplicant_event(wpa_s, EVENT_DISASSOC, &event);
-	}
-
-	wpa_supplicant_clear_connection(wpa_s, addr);
-}
-
-
-/**
  * wpa_supplicant_deauthenticate - Deauthenticate the current connection
  * @wpa_s: Pointer to wpa_supplicant data
  * @reason_code: IEEE 802.11 reason code for the deauthenticate frame
@@ -1733,14 +1725,38 @@ void wpa_supplicant_deauthenticate(struct wpa_supplicant *wpa_s,
 {
 	u8 *addr = NULL;
 	union wpa_event_data event;
+	int zero_addr = 0;
 
-	if (!is_zero_ether_addr(wpa_s->bssid)) {
-		wpa_drv_deauthenticate(wpa_s, wpa_s->bssid, reason_code);
+	wpa_dbg(wpa_s, MSG_DEBUG, "Request to deauthenticate - bssid=" MACSTR
+		" pending_bssid=" MACSTR " reason=%d state=%s",
+		MAC2STR(wpa_s->bssid), MAC2STR(wpa_s->pending_bssid),
+		reason_code, wpa_supplicant_state_txt(wpa_s->wpa_state));
+
+	if (!is_zero_ether_addr(wpa_s->bssid))
 		addr = wpa_s->bssid;
+	else if (!is_zero_ether_addr(wpa_s->pending_bssid) &&
+		 (wpa_s->wpa_state == WPA_AUTHENTICATING ||
+		  wpa_s->wpa_state == WPA_ASSOCIATING))
+		addr = wpa_s->pending_bssid;
+	else if (wpa_s->wpa_state == WPA_ASSOCIATING) {
+		/*
+		 * When using driver-based BSS selection, we may not know the
+		 * BSSID with which we are currently trying to associate. We
+		 * need to notify the driver of this disconnection even in such
+		 * a case, so use the all zeros address here.
+		 */
+		addr = wpa_s->bssid;
+		zero_addr = 1;
+	}
+
+	if (addr) {
+		wpa_drv_deauthenticate(wpa_s, addr, reason_code);
 		os_memset(&event, 0, sizeof(event));
 		event.deauth_info.reason_code = (u16) reason_code;
 		event.deauth_info.locally_generated = 1;
 		wpa_supplicant_event(wpa_s, EVENT_DEAUTH, &event);
+		if (zero_addr)
+			addr = NULL;
 	}
 
 	wpa_supplicant_clear_connection(wpa_s, addr);
@@ -1831,11 +1847,11 @@ void wpa_supplicant_disable_network(struct wpa_supplicant *wpa_s,
 					wpa_s, other_ssid);
 		}
 		if (wpa_s->current_ssid)
-			wpa_supplicant_disassociate(
+			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 	} else if (ssid->disabled != 2) {
 		if (ssid == wpa_s->current_ssid)
-			wpa_supplicant_disassociate(
+			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 
 		was_disabled = ssid->disabled;
@@ -1861,7 +1877,7 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 	int disconnected = 0;
 
 	if (ssid && ssid != wpa_s->current_ssid && wpa_s->current_ssid) {
-		wpa_supplicant_disassociate(
+		wpa_supplicant_deauthenticate(
 			wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		disconnected = 1;
 	}
@@ -2419,7 +2435,7 @@ static struct wpa_supplicant * wpa_supplicant_alloc(void)
 	wpa_s = os_zalloc(sizeof(*wpa_s));
 	if (wpa_s == NULL)
 		return NULL;
-	wpa_s->scan_req = 1;
+	wpa_s->scan_req = INITIAL_SCAN_REQ;
 	wpa_s->scan_interval = 5;
 	wpa_s->new_connection = 1;
 	wpa_s->parent = wpa_s;
@@ -3452,6 +3468,12 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 		}
 	}
 
+	/*
+	 * Add previous failure count in case the temporary blacklist was
+	 * cleared due to no other BSSes being available.
+	 */
+	count += wpa_s->extra_blacklist_count;
+
 	switch (count) {
 	case 1:
 		timeout = 100;
@@ -3462,9 +3484,16 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	case 3:
 		timeout = 1000;
 		break;
-	default:
+	case 4:
 		timeout = 5000;
+		break;
+	default:
+		timeout = 10000;
+		break;
 	}
+
+	wpa_dbg(wpa_s, MSG_DEBUG, "Blacklist count %d --> request scan in %d "
+		"ms", count, timeout);
 
 	/*
 	 * TODO: if more than one possible AP is available in scan results,
@@ -3671,4 +3700,59 @@ void wpas_clear_temp_disabled(struct wpa_supplicant *wpa_s,
 	ssid->disabled_until.usec = 0;
 	if (clear_failures)
 		ssid->auth_failures = 0;
+}
+
+
+int disallowed_bssid(struct wpa_supplicant *wpa_s, const u8 *bssid)
+{
+	size_t i;
+
+	if (wpa_s->disallow_aps_bssid == NULL)
+		return 0;
+
+	for (i = 0; i < wpa_s->disallow_aps_bssid_count; i++) {
+		if (os_memcmp(wpa_s->disallow_aps_bssid + i * ETH_ALEN,
+			      bssid, ETH_ALEN) == 0)
+			return 1;
+	}
+
+	return 0;
+}
+
+
+int disallowed_ssid(struct wpa_supplicant *wpa_s, const u8 *ssid,
+		    size_t ssid_len)
+{
+	size_t i;
+
+	if (wpa_s->disallow_aps_ssid == NULL || ssid == NULL)
+		return 0;
+
+	for (i = 0; i < wpa_s->disallow_aps_ssid_count; i++) {
+		struct wpa_ssid_value *s = &wpa_s->disallow_aps_ssid[i];
+		if (ssid_len == s->ssid_len &&
+		    os_memcmp(ssid, s->ssid, ssid_len) == 0)
+			return 1;
+	}
+
+	return 0;
+}
+
+
+/**
+ * wpas_request_connection - Request a new connection
+ * @wpa_s: Pointer to the network interface
+ *
+ * This function is used to request a new connection to be found. It will mark
+ * the interface to allow reassociation and request a new scan to find a
+ * suitable network to connect to.
+ */
+void wpas_request_connection(struct wpa_supplicant *wpa_s)
+{
+	wpa_s->normal_scans = 0;
+	wpa_supplicant_reinit_autoscan(wpa_s);
+	wpa_s->extra_blacklist_count = 0;
+	wpa_s->disconnected = 0;
+	wpa_s->reassociate = 1;
+	wpa_supplicant_req_scan(wpa_s, 0, 0);
 }

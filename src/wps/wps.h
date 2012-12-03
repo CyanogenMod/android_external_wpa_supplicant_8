@@ -42,6 +42,7 @@ struct wps_parse_attr;
  * @cred_attr: Unparsed Credential attribute data (used only in cred_cb());
  *	this may be %NULL, if not used
  * @cred_attr_len: Length of cred_attr in octets
+ * @ap_channel: AP channel
  */
 struct wps_credential {
 	u8 ssid[32];
@@ -54,6 +55,7 @@ struct wps_credential {
 	u8 mac_addr[ETH_ALEN];
 	const u8 *cred_attr;
 	size_t cred_attr_len;
+	u16 ap_channel;
 };
 
 #define WPS_DEV_TYPE_LEN 8
@@ -99,17 +101,6 @@ struct wps_device_data {
 	struct wpabuf *vendor_ext[MAX_WPS_VENDOR_EXTENSIONS];
 
 	int p2p;
-};
-
-struct oob_conf_data {
-	enum {
-		OOB_METHOD_UNKNOWN = 0,
-		OOB_METHOD_DEV_PWD_E,
-		OOB_METHOD_DEV_PWD_R,
-		OOB_METHOD_CRED,
-	} oob_method;
-	struct wpabuf *dev_password;
-	struct wpabuf *pubkey_hash;
 };
 
 /**
@@ -617,16 +608,6 @@ struct wps_context {
 	struct wps_device_data dev;
 
 	/**
-	 * oob_conf - OOB Config data
-	 */
-	struct oob_conf_data oob_conf;
-
-	/**
-	 * oob_dev_pw_id - OOB Device password id
-	 */
-	u16 oob_dev_pw_id;
-
-	/**
 	 * dh_ctx - Context data for Diffie-Hellman operation
 	 */
 	void *dh_ctx;
@@ -764,23 +745,6 @@ struct wps_context {
 	struct wpabuf *ap_nfc_dev_pw;
 };
 
-struct oob_device_data {
-	char *device_name;
-	char *device_path;
-	void * (*init_func)(struct wps_context *, struct oob_device_data *,
-			    int);
-	struct wpabuf * (*read_func)(void *);
-	int (*write_func)(void *, struct wpabuf *);
-	void (*deinit_func)(void *);
-};
-
-struct oob_nfc_device_data {
-	int (*init_func)(char *);
-	void * (*read_func)(size_t *);
-	int (*write_func)(void *, size_t);
-	void (*deinit_func)(void);
-};
-
 struct wps_registrar *
 wps_registrar_init(struct wps_context *wps,
 		   const struct wps_registrar_config *cfg);
@@ -819,11 +783,6 @@ unsigned int wps_generate_pin(void);
 int wps_pin_str_valid(const char *pin);
 void wps_free_pending_msgs(struct upnp_pending_message *msgs);
 
-struct oob_device_data * wps_get_oob_device(char *device_type);
-struct oob_nfc_device_data * wps_get_oob_nfc_device(char *device_name);
-int wps_get_oob_method(char *method);
-int wps_process_oob(struct wps_context *wps, struct oob_device_data *oob_dev,
-		    int registrar);
 struct wpabuf * wps_get_oob_cred(struct wps_context *wps);
 int wps_oob_use_cred(struct wps_context *wps, struct wps_parse_attr *attr);
 int wps_attr_text(struct wpabuf *data, char *buf, char *end);
@@ -858,6 +817,7 @@ struct wpabuf * wps_nfc_token_gen(int ndef, int *id, struct wpabuf **pubkey,
 /* ndef.c */
 struct wpabuf * ndef_parse_wifi(const struct wpabuf *buf);
 struct wpabuf * ndef_build_wifi(const struct wpabuf *buf);
+struct wpabuf * ndef_build_wifi_hr(void);
 
 #ifdef CONFIG_WPS_STRICT
 int wps_validate_beacon(const struct wpabuf *wps_ie);
