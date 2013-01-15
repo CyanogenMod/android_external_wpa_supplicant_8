@@ -174,19 +174,18 @@ endif
 
 ifdef CONFIG_SAE
 CFLAGS += -DCONFIG_SAE
+OBJS += ../src/common/sae.o
+NEED_ECC=y
+NEED_DH_GROUPS=y
 endif
 
-ifdef CONFIG_IEEE80211V
-CFLAGS += -DCONFIG_IEEE80211V
+ifdef CONFIG_WNM
+CFLAGS += -DCONFIG_WNM
 OBJS += ../src/ap/wnm_ap.o
 endif
 
 ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
-endif
-
-ifdef CONFIG_WNM
-CFLAGS += -DCONFIG_WNM
 endif
 
 ifdef CONFIG_IEEE80211AC
@@ -732,6 +731,10 @@ ifdef CONFIG_INTERNAL_DH_GROUP5
 ifdef NEED_DH_GROUPS
 OBJS += ../src/crypto/dh_group5.o
 endif
+endif
+
+ifdef NEED_ECC
+CFLAGS += -DCONFIG_ECC
 endif
 
 ifdef CONFIG_NO_RANDOM_POOL

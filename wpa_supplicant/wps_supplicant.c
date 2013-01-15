@@ -423,6 +423,13 @@ static int wpa_supplicant_wps_cred(void *ctx,
 	}
 #endif /* CONFIG_NO_CONFIG_WRITE */
 
+	/*
+	 * Optimize the post-WPS scan based on the channel used during
+	 * the provisioning in case EAP-Failure is not received.
+	 */
+	wpa_s->after_wps = 5;
+	wpa_s->wps_freq = wpa_s->assoc_freq;
+
 	return 0;
 }
 
@@ -504,6 +511,7 @@ static void wpas_wps_reenable_networks_cb(void *eloop_ctx, void *timeout_ctx);
 static void wpas_wps_reenable_networks(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid;
+	int changed = 0;
 
 	eloop_cancel_timeout(wpas_wps_reenable_networks_cb, wpa_s, NULL);
 
@@ -512,7 +520,18 @@ static void wpas_wps_reenable_networks(struct wpa_supplicant *wpa_s)
 			ssid->disabled_for_connect = 0;
 			ssid->disabled = 0;
 			wpas_notify_network_enabled_changed(wpa_s, ssid);
+			changed++;
 		}
+	}
+
+	if (changed) {
+#ifndef CONFIG_NO_CONFIG_WRITE
+		if (wpa_s->conf->update_config &&
+		    wpa_config_write(wpa_s->confname, wpa_s->conf)) {
+			wpa_printf(MSG_DEBUG, "WPS: Failed to update "
+				   "configuration");
+		}
+#endif /* CONFIG_NO_CONFIG_WRITE */
 	}
 }
 
@@ -919,7 +938,8 @@ int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		}
 	}
 #endif /* CONFIG_P2P */
-	wpa_config_set(ssid, "phase1", "\"pbc=1\"", 0);
+	if (wpa_config_set(ssid, "phase1", "\"pbc=1\"", 0) < 0)
+		return -1;
 	if (wpa_s->wps_fragment_size)
 		ssid->eap.fragment_size = wpa_s->wps_fragment_size;
 	eloop_register_timeout(WPS_PBC_WALK_TIME, 0, wpas_wps_timeout,
@@ -962,7 +982,8 @@ int wpas_wps_start_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		os_snprintf(val, sizeof(val), "\"pin=%08d dev_pw_id=%u\"",
 			    rpin, dev_pw_id);
 	}
-	wpa_config_set(ssid, "phase1", val, 0);
+	if (wpa_config_set(ssid, "phase1", val, 0) < 0)
+		return -1;
 	if (wpa_s->wps_fragment_size)
 		ssid->eap.fragment_size = wpa_s->wps_fragment_size;
 	eloop_register_timeout(WPS_PBC_WALK_TIME, 0, wpas_wps_timeout,
@@ -1036,7 +1057,8 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 	res = os_snprintf(pos, end - pos, "\"");
 	if (res < 0 || res >= end - pos)
 		return -1;
-	wpa_config_set(ssid, "phase1", val, 0);
+	if (wpa_config_set(ssid, "phase1", val, 0) < 0)
+		return -1;
 	if (wpa_s->wps_fragment_size)
 		ssid->eap.fragment_size = wpa_s->wps_fragment_size;
 	eloop_register_timeout(WPS_PBC_WALK_TIME, 0, wpas_wps_timeout,

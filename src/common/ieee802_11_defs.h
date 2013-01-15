@@ -232,6 +232,7 @@
 #define WLAN_EID_20_40_BSS_INTOLERANT 73
 #define WLAN_EID_OVERLAPPING_BSS_SCAN_PARAMS 74
 #define WLAN_EID_MMIE 76
+#define WLAN_EID_SSID_LIST 84
 #define WLAN_EID_BSS_MAX_IDLE_PERIOD 90
 #define WLAN_EID_TFS_REQ 91
 #define WLAN_EID_TFS_RESP 92
@@ -537,6 +538,16 @@ struct ieee80211_mgmt {
 					 * Entries */
 					u8 variable[0];
 				} STRUCT_PACKED bss_tm_req;
+				struct {
+					u8 action; /* 8 */
+					u8 dialog_token;
+					u8 status_code;
+					u8 bss_termination_delay;
+					/* Target BSSID (optional),
+					 * BSS Transition Candidate List
+					 * Entries (optional) */
+					u8 variable[0];
+				} STRUCT_PACKED bss_tm_resp;
 			} u;
 		} STRUCT_PACKED action;
 	} u;
@@ -700,6 +711,12 @@ struct ieee80211_vht_operation {
 #define VHT_CAP_VHT_LINK_ADAPTATION_VHT_MRQ_MFB     ((u32) BIT(26) | BIT(27))
 #define VHT_CAP_RX_ANTENNA_PATTERN                  ((u32) BIT(28))
 #define VHT_CAP_TX_ANTENNA_PATTERN                  ((u32) BIT(29))
+
+/* VHT channel widths */
+#define VHT_CHANWIDTH_USE_HT	0
+#define VHT_CHANWIDTH_80MHZ	1
+#define VHT_CHANWIDTH_160MHZ	2
+#define VHT_CHANWIDTH_80P80MHZ	3
 
 #define OUI_MICROSOFT 0x0050f2 /* Microsoft (also used in Wi-Fi specs)
 				* 00:50:F2 */
@@ -1048,10 +1065,13 @@ struct ieee80211_2040_intol_chan_report {
 struct wnm_sleep_element {
 	u8 eid;     /* WLAN_EID_WNMSLEEP */
 	u8 len;
-	u8 action_type; /* WLAN_WNM_SLEEP_ENTER/EXIT */
+	u8 action_type; /* WNM_SLEEP_ENTER/WNM_SLEEP_MODE_EXIT */
 	u8 status;
 	le16 intval;
 } STRUCT_PACKED;
+
+#define WNM_SLEEP_MODE_ENTER 0
+#define WNM_SLEEP_MODE_EXIT 1
 
 enum wnm_sleep_mode_response_status {
 	WNM_STATUS_SLEEP_ACCEPT = 0,

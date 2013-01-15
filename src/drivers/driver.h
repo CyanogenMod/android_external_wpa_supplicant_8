@@ -898,6 +898,7 @@ struct hostapd_sta_add_params {
 	size_t supp_rates_len;
 	u16 listen_interval;
 	const struct ieee80211_ht_capabilities *ht_capabilities;
+	const struct ieee80211_vht_capabilities *vht_capabilities;
 	u32 flags; /* bitmask of WPA_STA_* flags */
 	int set; /* Set STA parameters instead of add */
 	u8 qosinfo;
@@ -907,10 +908,19 @@ struct hostapd_freq_params {
 	int mode;
 	int freq;
 	int channel;
+	/* for HT */
 	int ht_enabled;
 	int sec_channel_offset; /* 0 = HT40 disabled, -1 = HT40 enabled,
 				 * secondary channel below primary, 1 = HT40
 				 * enabled, secondary channel above primary */
+
+	/* for VHT */
+	int vht_enabled;
+
+	/* valid for both HT and VHT, center_freq2 is non-zero
+	 * only for bandwidth 80 and an 80+80 channel */
+	int center_freq1, center_freq2;
+	int bandwidth;
 };
 
 enum wpa_driver_if_type {

@@ -217,19 +217,18 @@ endif
 
 ifdef CONFIG_SAE
 L_CFLAGS += -DCONFIG_SAE
+OBJS += src/common/sae.c
+NEED_ECC=y
+NEED_DH_GROUPS=y
 endif
 
-ifdef CONFIG_IEEE80211V
-L_CFLAGS += -DCONFIG_IEEE80211V
+ifdef CONFIG_WNM
+L_CFLAGS += -DCONFIG_WNM
 OBJS += src/ap/wnm_ap.c
 endif
 
 ifdef CONFIG_IEEE80211N
 L_CFLAGS += -DCONFIG_IEEE80211N
-endif
-
-ifdef CONFIG_WNM
-L_CFLAGS += -DCONFIG_WNM
 endif
 
 ifdef CONFIG_IEEE80211AC
@@ -525,6 +524,10 @@ ifeq ($(CONFIG_TLS), gnutls)
 ifdef TLS_FUNCS
 OBJS += src/crypto/tls_gnutls.c
 LIBS += -lgnutls -lgpg-error
+ifdef CONFIG_GNUTLS_EXTRA
+L_CFLAGS += -DCONFIG_GNUTLS_EXTRA
+LIBS += -lgnutls-extra
+endif
 endif
 OBJS += src/crypto/crypto_gnutls.c
 HOBJS += src/crypto/crypto_gnutls.c
@@ -777,6 +780,10 @@ ifdef CONFIG_INTERNAL_DH_GROUP5
 ifdef NEED_DH_GROUPS
 OBJS += src/crypto/dh_group5.c
 endif
+endif
+
+ifdef NEED_ECC
+L_CFLAGS += -DCONFIG_ECC
 endif
 
 ifdef CONFIG_NO_RANDOM_POOL

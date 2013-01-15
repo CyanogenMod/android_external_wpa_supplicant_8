@@ -662,6 +662,8 @@ static void wpa_supplicant_eap_param_needed(void *ctx,
 		return;
 	}
 
+	wpas_notify_eap_status(wpa_s, "eap parameter needed", field_name);
+
 	buflen = 100 + os_strlen(txt) + ssid->ssid_len;
 	buf = os_malloc(buflen);
 	if (buf == NULL)
@@ -806,6 +808,7 @@ int wpa_supplicant_init_eapol(struct wpa_supplicant *wpa_s)
 }
 
 
+#ifndef CONFIG_NO_WPA
 static void wpa_supplicant_set_rekey_offload(void *ctx, const u8 *kek,
 					     const u8 *kck,
 					     const u8 *replay_ctr)
@@ -814,6 +817,7 @@ static void wpa_supplicant_set_rekey_offload(void *ctx, const u8 *kek,
 
 	wpa_drv_set_rekey_info(wpa_s, kek, kck, replay_ctr);
 }
+#endif /* CONFIG_NO_WPA */
 
 
 int wpa_supplicant_init_wpa(struct wpa_supplicant *wpa_s)

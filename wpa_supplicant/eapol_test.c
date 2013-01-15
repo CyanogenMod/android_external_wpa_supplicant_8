@@ -21,7 +21,6 @@
 #include "eloop.h"
 #include "utils/base64.h"
 #include "rsn_supp/wpa.h"
-#include "eap_peer/eap_i.h"
 #include "wpa_supplicant_i.h"
 #include "radius/radius.h"
 #include "radius/radius_client.h"
@@ -98,7 +97,7 @@ static int add_extra_attr(struct radius_msg *msg,
 	size_t len;
 	char *pos;
 	u32 val;
-	char buf[128];
+	char buf[RADIUS_MAX_ATTR_LEN + 1];
 
 	switch (attr->syntax) {
 	case 's':
@@ -114,7 +113,7 @@ static int add_extra_attr(struct radius_msg *msg,
 		if (pos[0] == '0' && pos[1] == 'x')
 			pos += 2;
 		len = os_strlen(pos);
-		if ((len & 1) || (len / 2) > sizeof(buf)) {
+		if ((len & 1) || (len / 2) > RADIUS_MAX_ATTR_LEN) {
 			printf("Invalid extra attribute hexstring\n");
 			return -1;
 		}
@@ -171,7 +170,7 @@ static void ieee802_1x_encapsulate_radius(struct eapol_test_data *e,
 					  const u8 *eap, size_t len)
 {
 	struct radius_msg *msg;
-	char buf[128];
+	char buf[RADIUS_MAX_ATTR_LEN + 1];
 	const struct eap_hdr *hdr;
 	const u8 *pos;
 
@@ -1173,7 +1172,7 @@ int main(int argc, char *argv[])
 			wait_for_monitor++;
 			break;
 		case 'N':
-			p1 = os_zalloc(sizeof(p1));
+			p1 = os_zalloc(sizeof(*p1));
 			if (p1 == NULL)
 				break;
 			if (!p)

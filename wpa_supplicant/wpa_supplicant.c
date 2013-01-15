@@ -52,7 +52,7 @@
 
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
-"Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2003-2013, Jouni Malinen <j@w1.fi> and contributors";
 
 const char *wpa_supplicant_license =
 "This software may be distributed under the terms of the BSD license.\n"
@@ -665,15 +665,13 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- Connection to "
 			MACSTR " completed %s [id=%d id_str=%s]",
-			MAC2STR(wpa_s->bssid), wpa_s->reassociated_connection ?
-			"(reauth)" : "(auth)",
+			MAC2STR(wpa_s->bssid), "(auth)",
 			ssid ? ssid->id : -1,
 			ssid && ssid->id_str ? ssid->id_str : "");
 #endif /* CONFIG_CTRL_IFACE || !CONFIG_NO_STDOUT_DEBUG */
 		wpas_clear_temp_disabled(wpa_s, ssid, 1);
 		wpa_s->extra_blacklist_count = 0;
 		wpa_s->new_connection = 0;
-		wpa_s->reassociated_connection = 1;
 		wpa_drv_set_operstate(wpa_s, 1);
 #ifndef IEEE8021X_EAPOL
 		wpa_drv_set_supp_port(wpa_s, 1);
@@ -853,26 +851,6 @@ static void wpa_supplicant_reconfig(int sig, void *signal_ctx)
 }
 
 
-enum wpa_cipher cipher_suite2driver(int cipher)
-{
-	switch (cipher) {
-	case WPA_CIPHER_NONE:
-		return CIPHER_NONE;
-	case WPA_CIPHER_WEP40:
-		return CIPHER_WEP40;
-	case WPA_CIPHER_WEP104:
-		return CIPHER_WEP104;
-	case WPA_CIPHER_CCMP:
-		return CIPHER_CCMP;
-	case WPA_CIPHER_GCMP:
-		return CIPHER_GCMP;
-	case WPA_CIPHER_TKIP:
-	default:
-		return CIPHER_TKIP;
-	}
-}
-
-
 enum wpa_key_mgmt key_mgmt2driver(int key_mgmt)
 {
 	switch (key_mgmt) {
@@ -1041,45 +1019,24 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	}
 
 	sel = ie.group_cipher & ssid->group_cipher;
-	if (sel & WPA_CIPHER_CCMP) {
-		wpa_s->group_cipher = WPA_CIPHER_CCMP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK CCMP");
-	} else if (sel & WPA_CIPHER_GCMP) {
-		wpa_s->group_cipher = WPA_CIPHER_GCMP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK GCMP");
-	} else if (sel & WPA_CIPHER_TKIP) {
-		wpa_s->group_cipher = WPA_CIPHER_TKIP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK TKIP");
-	} else if (sel & WPA_CIPHER_WEP104) {
-		wpa_s->group_cipher = WPA_CIPHER_WEP104;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK WEP104");
-	} else if (sel & WPA_CIPHER_WEP40) {
-		wpa_s->group_cipher = WPA_CIPHER_WEP40;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK WEP40");
-	} else {
+	wpa_s->group_cipher = wpa_pick_group_cipher(sel);
+	if (wpa_s->group_cipher < 0) {
 		wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to select group "
 			"cipher");
 		return -1;
 	}
+	wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using GTK %s",
+		wpa_cipher_txt(wpa_s->group_cipher));
 
 	sel = ie.pairwise_cipher & ssid->pairwise_cipher;
-	if (sel & WPA_CIPHER_CCMP) {
-		wpa_s->pairwise_cipher = WPA_CIPHER_CCMP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK CCMP");
-	} else if (sel & WPA_CIPHER_GCMP) {
-		wpa_s->pairwise_cipher = WPA_CIPHER_GCMP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK GCMP");
-	} else if (sel & WPA_CIPHER_TKIP) {
-		wpa_s->pairwise_cipher = WPA_CIPHER_TKIP;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK TKIP");
-	} else if (sel & WPA_CIPHER_NONE) {
-		wpa_s->pairwise_cipher = WPA_CIPHER_NONE;
-		wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK NONE");
-	} else {
+	wpa_s->pairwise_cipher = wpa_pick_pairwise_cipher(sel, 1);
+	if (wpa_s->pairwise_cipher < 0) {
 		wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to select pairwise "
 			"cipher");
 		return -1;
 	}
+	wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK %s",
+		wpa_cipher_txt(wpa_s->pairwise_cipher));
 
 	sel = ie.key_mgmt & ssid->key_mgmt;
 #ifdef CONFIG_SAE
@@ -1236,6 +1193,33 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 }
 
 
+int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf)
+{
+	u32 ext_capab = 0;
+	u8 *pos = buf;
+
+#ifdef CONFIG_INTERWORKING
+	if (wpa_s->conf->interworking)
+		ext_capab |= BIT(31); /* Interworking */
+#endif /* CONFIG_INTERWORKING */
+
+#ifdef CONFIG_WNM
+	ext_capab |= BIT(17); /* WNM-Sleep Mode */
+	ext_capab |= BIT(19); /* BSS Transition */
+#endif /* CONFIG_WNM */
+
+	if (!ext_capab)
+		return 0;
+
+	*pos++ = WLAN_EID_EXT_CAPAB;
+	*pos++ = 4;
+	WPA_PUT_LE32(pos, ext_capab);
+	pos += 4;
+
+	return pos - buf;
+}
+
+
 /**
  * wpa_supplicant_associate - Request association
  * @wpa_s: Pointer to wpa_supplicant data
@@ -1257,6 +1241,8 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	struct wpa_driver_capa capa;
 	int assoc_failed = 0;
 	struct wpa_ssid *old_ssid;
+	u8 ext_capab[10];
+	int ext_capab_len;
 #ifdef CONFIG_HT_OVERRIDES
 	struct ieee80211_ht_capabilities htcaps;
 	struct ieee80211_ht_capabilities htcaps_mask;
@@ -1470,26 +1456,21 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_HS20 */
 
-#ifdef CONFIG_INTERWORKING
-	if (wpa_s->conf->interworking) {
+	ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab);
+	if (ext_capab_len > 0) {
 		u8 *pos = wpa_ie;
 		if (wpa_ie_len > 0 && pos[0] == WLAN_EID_RSN)
 			pos += 2 + pos[1];
-		os_memmove(pos + 6, pos, wpa_ie_len - (pos - wpa_ie));
-		wpa_ie_len += 6;
-		*pos++ = WLAN_EID_EXT_CAPAB;
-		*pos++ = 4;
-		*pos++ = 0x00;
-		*pos++ = 0x00;
-		*pos++ = 0x00;
-		*pos++ = 0x80; /* Bit 31 - Interworking */
+		os_memmove(pos + ext_capab_len, pos,
+			   wpa_ie_len - (pos - wpa_ie));
+		wpa_ie_len += ext_capab_len;
+		os_memcpy(pos, ext_capab, ext_capab_len);
 	}
-#endif /* CONFIG_INTERWORKING */
 
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
 	use_crypt = 1;
-	cipher_pairwise = cipher_suite2driver(wpa_s->pairwise_cipher);
-	cipher_group = cipher_suite2driver(wpa_s->group_cipher);
+	cipher_pairwise = wpa_cipher_to_suite_driver(wpa_s->pairwise_cipher);
+	cipher_group = wpa_cipher_to_suite_driver(wpa_s->group_cipher);
 	if (wpa_s->key_mgmt == WPA_KEY_MGMT_NONE ||
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_IEEE8021X_NO_WPA) {
 		if (wpa_s->key_mgmt == WPA_KEY_MGMT_NONE)
@@ -2609,6 +2590,28 @@ static int wpa_set_disable_ht40(struct wpa_supplicant *wpa_s,
 }
 
 
+static int wpa_set_disable_sgi(struct wpa_supplicant *wpa_s,
+			       struct ieee80211_ht_capabilities *htcaps,
+			       struct ieee80211_ht_capabilities *htcaps_mask,
+			       int disabled)
+{
+	/* Masking these out disables SGI */
+	u16 msk = host_to_le16(HT_CAP_INFO_SHORT_GI20MHZ |
+			       HT_CAP_INFO_SHORT_GI40MHZ);
+
+	wpa_msg(wpa_s, MSG_DEBUG, "set_disable_sgi: %d", disabled);
+
+	if (disabled)
+		htcaps->ht_capabilities_info &= ~msk;
+	else
+		htcaps->ht_capabilities_info |= msk;
+
+	htcaps_mask->ht_capabilities_info |= msk;
+
+	return 0;
+}
+
+
 void wpa_supplicant_apply_ht_overrides(
 	struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 	struct wpa_driver_associate_params *params)
@@ -2631,6 +2634,7 @@ void wpa_supplicant_apply_ht_overrides(
 	wpa_set_ampdu_factor(wpa_s, htcaps, htcaps_mask, ssid->ampdu_factor);
 	wpa_set_ampdu_density(wpa_s, htcaps, htcaps_mask, ssid->ampdu_density);
 	wpa_set_disable_ht40(wpa_s, htcaps, htcaps_mask, ssid->disable_ht40);
+	wpa_set_disable_sgi(wpa_s, htcaps, htcaps_mask, ssid->disable_sgi);
 }
 
 #endif /* CONFIG_HT_OVERRIDES */

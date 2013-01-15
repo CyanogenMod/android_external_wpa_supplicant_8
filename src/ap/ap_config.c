@@ -89,6 +89,8 @@ void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 #endif /* CONFIG_IEEE80211R */
 
 	bss->radius_das_time_window = 300;
+
+	bss->sae_anti_clogging_threshold = 5;
 }
 
 
@@ -157,6 +159,9 @@ struct hostapd_config * hostapd_config_defaults(void)
 	conf->tx_queue[3] = txq_bk;
 
 	conf->ht_capab = HT_CAP_INFO_SMPS_DISABLED;
+
+	conf->ap_table_max_size = 255;
+	conf->ap_table_expiration_time = 60;
 
 	return conf;
 }
@@ -516,6 +521,8 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 #endif /* CONFIG_HS20 */
 
 	wpabuf_free(conf->vendor_elements);
+
+	os_free(conf->sae_groups);
 }
 
 

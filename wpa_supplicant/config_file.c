@@ -17,6 +17,8 @@
 #include "base64.h"
 #include "uuid.h"
 #include "p2p/p2p.h"
+#include "eap_peer/eap_methods.h"
+#include "eap_peer/eap.h"
 
 
 static int newline_terminated(const char *buf, size_t buflen)
@@ -676,6 +678,7 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT_DEFe(fragment_size, DEFAULT_FRAGMENT_SIZE);
 #endif /* IEEE8021X_EAPOL */
 	INT(mode);
+	INT(frequency);
 	write_int(f, "proactive_key_caching", ssid->proactive_key_caching, -1);
 	INT(disabled);
 	INT(peerkey);
@@ -704,16 +707,52 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 		fprintf(f, "\trealm=\"%s\"\n", cred->realm);
 	if (cred->username)
 		fprintf(f, "\tusername=\"%s\"\n", cred->username);
-	if (cred->password)
+	if (cred->password && cred->ext_password)
+		fprintf(f, "\tpassword=ext:%s\n", cred->password);
+	else if (cred->password)
 		fprintf(f, "\tpassword=\"%s\"\n", cred->password);
 	if (cred->ca_cert)
 		fprintf(f, "\tca_cert=\"%s\"\n", cred->ca_cert);
+	if (cred->client_cert)
+		fprintf(f, "\tclient_cert=\"%s\"\n", cred->client_cert);
+	if (cred->private_key)
+		fprintf(f, "\tprivate_key=\"%s\"\n", cred->private_key);
+	if (cred->private_key_passwd)
+		fprintf(f, "\tprivate_key_passwd=\"%s\"\n",
+			cred->private_key_passwd);
 	if (cred->imsi)
 		fprintf(f, "\timsi=\"%s\"\n", cred->imsi);
 	if (cred->milenage)
 		fprintf(f, "\tmilenage=\"%s\"\n", cred->milenage);
 	if (cred->domain)
 		fprintf(f, "\tdomain=\"%s\"\n", cred->domain);
+	if (cred->roaming_consortium_len) {
+		size_t i;
+		fprintf(f, "\troaming_consortium=");
+		for (i = 0; i < cred->roaming_consortium_len; i++)
+			fprintf(f, "%02x", cred->roaming_consortium[i]);
+		fprintf(f, "\n");
+	}
+	if (cred->eap_method) {
+		const char *name;
+		name = eap_get_name(cred->eap_method[0].vendor,
+				    cred->eap_method[0].method);
+		fprintf(f, "\teap=%s\n", name);
+	}
+	if (cred->phase1)
+		fprintf(f, "\tphase1=\"%s\"\n", cred->phase1);
+	if (cred->phase2)
+		fprintf(f, "\tphase2=\"%s\"\n", cred->phase2);
+	if (cred->excluded_ssid) {
+		size_t i, j;
+		for (i = 0; i < cred->num_excluded_ssid; i++) {
+			struct excluded_ssid *e = &cred->excluded_ssid[i];
+			fprintf(f, "\texcluded_ssid=");
+			for (j = 0; j < e->ssid_len; j++)
+				fprintf(f, "%02x", e->ssid[j]);
+			fprintf(f, "\n");
+		}
+	}
 }
 
 
@@ -931,6 +970,16 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 		fprintf(f, "okc=%d\n", config->okc);
 	if (config->pmf)
 		fprintf(f, "pmf=%d\n", config->pmf);
+
+	if (config->sae_groups) {
+		int i;
+		fprintf(f, "sae_groups=");
+		for (i = 0; config->sae_groups[i] >= 0; i++) {
+			fprintf(f, "%s%d", i > 0 ? " " : "",
+				config->sae_groups[i]);
+		}
+		fprintf(f, "\n");
+	}
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */

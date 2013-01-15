@@ -1,6 +1,6 @@
 /*
  * WPA/RSN - Shared functions for supplicant and authenticator
- * Copyright (c) 2002-2008, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -1132,6 +1132,26 @@ int wpa_cipher_to_alg(int cipher)
 }
 
 
+enum wpa_cipher wpa_cipher_to_suite_driver(int cipher)
+{
+	switch (cipher) {
+	case WPA_CIPHER_NONE:
+		return CIPHER_NONE;
+	case WPA_CIPHER_WEP40:
+		return CIPHER_WEP40;
+	case WPA_CIPHER_WEP104:
+		return CIPHER_WEP104;
+	case WPA_CIPHER_CCMP:
+		return CIPHER_CCMP;
+	case WPA_CIPHER_GCMP:
+		return CIPHER_GCMP;
+	case WPA_CIPHER_TKIP:
+	default:
+		return CIPHER_TKIP;
+	}
+}
+
+
 int wpa_cipher_valid_pairwise(int cipher)
 {
 	return cipher == WPA_CIPHER_CCMP ||
@@ -1213,4 +1233,151 @@ int wpa_cipher_put_suites(u8 *pos, int ciphers)
 	}
 
 	return num_suites;
+}
+
+
+int wpa_pick_pairwise_cipher(int ciphers, int none_allowed)
+{
+	if (ciphers & WPA_CIPHER_CCMP)
+		return WPA_CIPHER_CCMP;
+	if (ciphers & WPA_CIPHER_GCMP)
+		return WPA_CIPHER_GCMP;
+	if (ciphers & WPA_CIPHER_TKIP)
+		return WPA_CIPHER_TKIP;
+	if (none_allowed && (ciphers & WPA_CIPHER_NONE))
+		return WPA_CIPHER_NONE;
+	return -1;
+}
+
+
+int wpa_pick_group_cipher(int ciphers)
+{
+	if (ciphers & WPA_CIPHER_CCMP)
+		return WPA_CIPHER_CCMP;
+	if (ciphers & WPA_CIPHER_GCMP)
+		return WPA_CIPHER_GCMP;
+	if (ciphers & WPA_CIPHER_TKIP)
+		return WPA_CIPHER_TKIP;
+	if (ciphers & WPA_CIPHER_WEP104)
+		return WPA_CIPHER_WEP104;
+	if (ciphers & WPA_CIPHER_WEP40)
+		return WPA_CIPHER_WEP40;
+	return -1;
+}
+
+
+int wpa_parse_cipher(const char *value)
+{
+	int val = 0, last;
+	char *start, *end, *buf;
+
+	buf = os_strdup(value);
+	if (buf == NULL)
+		return -1;
+	start = buf;
+
+	while (*start != '\0') {
+		while (*start == ' ' || *start == '\t')
+			start++;
+		if (*start == '\0')
+			break;
+		end = start;
+		while (*end != ' ' && *end != '\t' && *end != '\0')
+			end++;
+		last = *end == '\0';
+		*end = '\0';
+		if (os_strcmp(start, "CCMP") == 0)
+			val |= WPA_CIPHER_CCMP;
+		else if (os_strcmp(start, "GCMP") == 0)
+			val |= WPA_CIPHER_GCMP;
+		else if (os_strcmp(start, "TKIP") == 0)
+			val |= WPA_CIPHER_TKIP;
+		else if (os_strcmp(start, "WEP104") == 0)
+			val |= WPA_CIPHER_WEP104;
+		else if (os_strcmp(start, "WEP40") == 0)
+			val |= WPA_CIPHER_WEP40;
+		else if (os_strcmp(start, "NONE") == 0)
+			val |= WPA_CIPHER_NONE;
+		else {
+			os_free(buf);
+			return -1;
+		}
+
+		if (last)
+			break;
+		start = end + 1;
+	}
+	os_free(buf);
+
+	return val;
+}
+
+
+int wpa_write_ciphers(char *start, char *end, int ciphers, const char *delim)
+{
+	char *pos = start;
+	int ret;
+
+	if (ciphers & WPA_CIPHER_CCMP) {
+		ret = os_snprintf(pos, end - pos, "%sCCMP",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+	if (ciphers & WPA_CIPHER_GCMP) {
+		ret = os_snprintf(pos, end - pos, "%sGCMP",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+	if (ciphers & WPA_CIPHER_TKIP) {
+		ret = os_snprintf(pos, end - pos, "%sTKIP",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+	if (ciphers & WPA_CIPHER_WEP104) {
+		ret = os_snprintf(pos, end - pos, "%sWEP104",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+	if (ciphers & WPA_CIPHER_WEP40) {
+		ret = os_snprintf(pos, end - pos, "%sWEP40",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+	if (ciphers & WPA_CIPHER_NONE) {
+		ret = os_snprintf(pos, end - pos, "%sNONE",
+				  pos == start ? "" : delim);
+		if (ret < 0 || ret >= end - pos)
+			return -1;
+		pos += ret;
+	}
+
+	return pos - start;
+}
+
+
+int wpa_select_ap_group_cipher(int wpa, int wpa_pairwise, int rsn_pairwise)
+{
+	int pairwise = 0;
+
+	/* Select group cipher based on the enabled pairwise cipher suites */
+	if (wpa & 1)
+		pairwise |= wpa_pairwise;
+	if (wpa & 2)
+		pairwise |= rsn_pairwise;
+
+	if (pairwise & WPA_CIPHER_TKIP)
+		return WPA_CIPHER_TKIP;
+	if ((pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP)) == WPA_CIPHER_GCMP)
+		return WPA_CIPHER_GCMP;
+	return WPA_CIPHER_CCMP;
 }

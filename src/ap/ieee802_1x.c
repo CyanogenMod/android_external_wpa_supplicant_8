@@ -66,8 +66,9 @@ static void ieee802_1x_send(struct hostapd_data *hapd, struct sta_info *sta,
 	if (sta->flags & WLAN_STA_PREAUTH) {
 		rsn_preauth_send(hapd, sta, buf, len);
 	} else {
-		hostapd_drv_hapd_send_eapol(hapd, sta->addr, buf, len,
-					    encrypt, sta->flags);
+		hostapd_drv_hapd_send_eapol(
+			hapd, sta->addr, buf, len,
+			encrypt, hostapd_sta_flags_to_drv(sta->flags));
 	}
 
 	os_free(buf);
@@ -354,6 +355,8 @@ void ieee802_1x_tx_key(struct hostapd_data *hapd, struct sta_info *sta)
 const char *radius_mode_txt(struct hostapd_data *hapd)
 {
 	switch (hapd->iface->conf->hw_mode) {
+	case HOSTAPD_MODE_IEEE80211AD:
+		return "802.11ad";
 	case HOSTAPD_MODE_IEEE80211A:
 		return "802.11a";
 	case HOSTAPD_MODE_IEEE80211G:
@@ -450,6 +453,16 @@ static int add_common_radius_sta_attr(struct hostapd_data *hapd,
 				 (u8 *) buf, os_strlen(buf))) {
 		wpa_printf(MSG_ERROR, "Could not add Connect-Info");
 		return -1;
+	}
+
+	if (sta->acct_session_id_hi || sta->acct_session_id_lo) {
+		os_snprintf(buf, sizeof(buf), "%08X-%08X",
+			    sta->acct_session_id_hi, sta->acct_session_id_lo);
+		if (!radius_msg_add_attr(msg, RADIUS_ATTR_ACCT_SESSION_ID,
+					 (u8 *) buf, os_strlen(buf))) {
+			wpa_printf(MSG_ERROR, "Could not add Acct-Session-Id");
+			return -1;
+		}
 	}
 
 	return 0;

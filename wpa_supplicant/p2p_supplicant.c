@@ -112,7 +112,7 @@ static void wpas_p2p_scan_res_handler(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < scan_res->num; i++) {
 		struct wpa_scan_res *bss = scan_res->res[i];
 		if (p2p_scan_res_handler(wpa_s->global->p2p, bss->bssid,
-					 bss->freq, bss->level,
+					 bss->freq, bss->age, bss->level,
 					 (const u8 *) (bss + 1),
 					 bss->ie_len) > 0)
 			break;
@@ -820,15 +820,28 @@ static void p2p_go_configured(void *ctx, void *data)
 		wpa_printf(MSG_DEBUG, "P2P: Group setup without provisioning");
 		if (wpa_s->global->p2p_group_formation == wpa_s)
 			wpa_s->global->p2p_group_formation = NULL;
-		wpa_msg(wpa_s->parent, MSG_INFO, P2P_EVENT_GROUP_STARTED
-			"%s GO ssid=\"%s\" freq=%d passphrase=\"%s\" "
-			"go_dev_addr=" MACSTR "%s",
-			wpa_s->ifname,
-			wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
-			ssid->frequency,
-			params->passphrase ? params->passphrase : "",
-			MAC2STR(wpa_s->global->p2p_dev_addr),
-			params->persistent_group ? " [PERSISTENT]" : "");
+		if (os_strlen(params->passphrase) > 0) {
+			wpa_msg(wpa_s->parent, MSG_INFO, P2P_EVENT_GROUP_STARTED
+				"%s GO ssid=\"%s\" freq=%d passphrase=\"%s\" "
+				"go_dev_addr=" MACSTR "%s", wpa_s->ifname,
+				wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
+				ssid->frequency, params->passphrase,
+				MAC2STR(wpa_s->global->p2p_dev_addr),
+				params->persistent_group ? " [PERSISTENT]" :
+				"");
+		} else {
+			char psk[65];
+			wpa_snprintf_hex(psk, sizeof(psk), params->psk,
+					 sizeof(params->psk));
+			wpa_msg(wpa_s->parent, MSG_INFO, P2P_EVENT_GROUP_STARTED
+				"%s GO ssid=\"%s\" freq=%d psk=%s "
+				"go_dev_addr=" MACSTR "%s", wpa_s->ifname,
+				wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
+				ssid->frequency, psk,
+				MAC2STR(wpa_s->global->p2p_dev_addr),
+				params->persistent_group ? " [PERSISTENT]" :
+				"");
+		}
 
 		if (params->persistent_group)
 			network_id = wpas_p2p_store_persistent_group(
@@ -898,17 +911,20 @@ static void wpas_start_wps_go(struct wpa_supplicant *wpa_s,
 	ssid->key_mgmt = WPA_KEY_MGMT_PSK;
 	ssid->proto = WPA_PROTO_RSN;
 	ssid->pairwise_cipher = WPA_CIPHER_CCMP;
-	ssid->passphrase = os_strdup(params->passphrase);
-	if (ssid->passphrase == NULL) {
-		wpa_msg(wpa_s, MSG_ERROR, "P2P: Failed to copy passphrase for "
-			"GO");
-		wpa_config_remove_network(wpa_s->conf, ssid->id);
-		return;
-	}
+	if (os_strlen(params->passphrase) > 0) {
+		ssid->passphrase = os_strdup(params->passphrase);
+		if (ssid->passphrase == NULL) {
+			wpa_msg(wpa_s, MSG_ERROR, "P2P: Failed to copy "
+				"passphrase for GO");
+			wpa_config_remove_network(wpa_s->conf, ssid->id);
+			return;
+		}
+	} else
+		ssid->passphrase = NULL;
 	ssid->psk_set = params->psk_set;
 	if (ssid->psk_set)
 		os_memcpy(ssid->psk, params->psk, sizeof(ssid->psk));
-	else
+	else if (ssid->passphrase)
 		wpa_config_update_psk(ssid);
 	ssid->ap_max_inactivity = wpa_s->parent->conf->p2p_go_max_inactivity;
 
@@ -3567,6 +3583,7 @@ static int wpas_p2p_join_start(struct wpa_supplicant *wpa_s)
 	}
 
 	group->p2p_in_provisioning = 1;
+	wpa_s->global->p2p_group_formation = wpa_s;
 	group->p2p_fallback_to_go_neg = wpa_s->p2p_fallback_to_go_neg;
 
 	os_memset(&res, 0, sizeof(res));
@@ -3845,12 +3862,12 @@ void wpas_p2p_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 {
 	wpa_printf(MSG_DEBUG, "P2P: Cancel remain-on-channel callback "
 		   "(p2p_long_listen=%d ms pending_action_tx=%p)",
-		   wpa_s->p2p_long_listen, wpa_s->pending_action_tx);
+		   wpa_s->p2p_long_listen, offchannel_pending_action_tx(wpa_s));
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return;
 	if (p2p_listen_end(wpa_s->global->p2p, freq) > 0)
 		return; /* P2P module started a new operation */
-	if (wpa_s->pending_action_tx)
+	if (offchannel_pending_action_tx(wpa_s))
 		return;
 	if (wpa_s->p2p_long_listen > 0)
 		wpa_s->p2p_long_listen -= wpa_s->max_remain_on_chan;
@@ -4186,14 +4203,15 @@ int wpas_p2p_group_add_persistent(struct wpa_supplicant *wpa_s,
 	params.psk_set = ssid->psk_set;
 	if (params.psk_set)
 		os_memcpy(params.psk, ssid->psk, sizeof(params.psk));
-	if (ssid->passphrase == NULL ||
-	    os_strlen(ssid->passphrase) >= sizeof(params.passphrase)) {
-		wpa_printf(MSG_DEBUG, "P2P: Invalid passphrase in persistent "
-			   "group");
-		return -1;
+	if (ssid->passphrase) {
+		if (os_strlen(ssid->passphrase) >= sizeof(params.passphrase)) {
+			wpa_printf(MSG_ERROR, "P2P: Invalid passphrase in "
+				   "persistent group");
+			return -1;
+		}
+		os_strlcpy(params.passphrase, ssid->passphrase,
+			   sizeof(params.passphrase));
 	}
-	os_strlcpy(params.passphrase, ssid->passphrase,
-		   sizeof(params.passphrase));
 	os_memcpy(params.ssid, ssid->ssid, ssid->ssid_len);
 	params.ssid_len = ssid->ssid_len;
 	params.persistent_group = 1;
@@ -4408,13 +4426,12 @@ int wpas_p2p_scan_result_text(const u8 *ies, size_t ies_len, char *buf,
 
 static void wpas_p2p_clear_pending_action_tx(struct wpa_supplicant *wpa_s)
 {
-	if (!wpa_s->pending_action_tx)
+	if (!offchannel_pending_action_tx(wpa_s))
 		return;
 
 	wpa_printf(MSG_DEBUG, "P2P: Drop pending Action TX due to new "
 		   "operation request");
-	wpabuf_free(wpa_s->pending_action_tx);
-	wpa_s->pending_action_tx = NULL;
+	offchannel_clear_pending_action_tx(wpa_s);
 }
 
 
@@ -5336,6 +5353,13 @@ void wpas_p2p_update_channel_list(struct wpa_supplicant *wpa_s)
 }
 
 
+static void wpas_p2p_scan_res_ignore(struct wpa_supplicant *wpa_s,
+				     struct wpa_scan_results *scan_res)
+{
+	wpa_printf(MSG_DEBUG, "P2P: Ignore scan results");
+}
+
+
 int wpas_p2p_cancel(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_global *global = wpa_s->global;
@@ -5356,6 +5380,18 @@ int wpas_p2p_cancel(struct wpa_supplicant *wpa_s)
 		wpa_printf(MSG_DEBUG, "P2P: Unauthorize pending GO Neg peer "
 			   MACSTR, MAC2STR(peer));
 		p2p_unauthorize(global->p2p, peer);
+		found = 1;
+	}
+
+	if (wpa_s->scan_res_handler == wpas_p2p_scan_res_join) {
+		wpa_printf(MSG_DEBUG, "P2P: Stop pending scan for join");
+		wpa_s->scan_res_handler = wpas_p2p_scan_res_ignore;
+		found = 1;
+	}
+
+	if (wpa_s->pending_pd_before_join) {
+		wpa_printf(MSG_DEBUG, "P2P: Stop pending PD before join");
+		wpa_s->pending_pd_before_join = 0;
 		found = 1;
 	}
 

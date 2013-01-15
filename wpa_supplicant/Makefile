@@ -174,10 +174,13 @@ endif
 
 ifdef CONFIG_SAE
 CFLAGS += -DCONFIG_SAE
+OBJS += ../src/common/sae.o
+NEED_ECC=y
+NEED_DH_GROUPS=y
 endif
 
-ifdef CONFIG_IEEE80211V
-CFLAGS += -DCONFIG_IEEE80211V
+ifdef CONFIG_WNM
+CFLAGS += -DCONFIG_WNM
 OBJS += wnm_sta.o
 endif
 
@@ -560,7 +563,7 @@ endif
 ifdef CONFIG_EAP_PWD
 CFLAGS += -DEAP_PWD
 OBJS += ../src/eap_peer/eap_pwd.o ../src/eap_common/eap_pwd_common.o
-OBJS_h += ../src/eap_server/eap_pwd.o
+OBJS_h += ../src/eap_server/eap_server_pwd.o
 CONFIG_IEEE8021X_EAPOL=y
 NEED_SHA256=y
 endif
@@ -725,6 +728,9 @@ OBJS += ../src/ap/eap_user_db.o
 ifdef CONFIG_IEEE80211N
 OBJS += ../src/ap/ieee802_11_ht.o
 endif
+ifdef CONFIG_WNM
+OBJS += ../src/ap/wnm_ap.o
+endif
 ifdef CONFIG_CTRL_IFACE
 OBJS += ../src/ap/ctrl_iface_ap.o
 endif
@@ -736,10 +742,6 @@ OBJS += ../src/eap_server/eap_server_methods.o
 
 ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
-endif
-
-ifdef CONFIG_WNM
-CFLAGS += -DCONFIG_WNM
 endif
 
 ifdef NEED_AP_MLME
@@ -860,6 +862,8 @@ OBJS += ../src/eap_peer/eap_tls_common.o
 OBJS_h += ../src/eap_server/eap_server_tls_common.o
 ifndef CONFIG_FIPS
 NEED_TLS_PRF=y
+NEED_SHA1=y
+NEED_MD5=y
 endif
 endif
 
@@ -1179,6 +1183,10 @@ OBJS += ../src/crypto/dh_group5.o
 endif
 endif
 
+ifdef NEED_ECC
+CFLAGS += -DCONFIG_ECC
+endif
+
 ifdef CONFIG_NO_RANDOM_POOL
 CFLAGS += -DCONFIG_NO_RANDOM_POOL
 else
@@ -1406,6 +1414,7 @@ CFLAGS += -DCONFIG_OFFCHANNEL
 endif
 
 OBJS += ../src/drivers/driver_common.o
+OBJS_priv += ../src/drivers/driver_common.o
 
 OBJS_wpa_rm := ctrl_iface.o ctrl_iface_unix.o
 OBJS_wpa := $(filter-out $(OBJS_wpa_rm),$(OBJS)) $(OBJS_h) tests/test_wpa.o

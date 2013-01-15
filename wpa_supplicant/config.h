@@ -196,6 +196,12 @@ struct wpa_cred {
 	 * Pre-configured EAP parameters or %NULL.
 	 */
 	char *phase2;
+
+	struct excluded_ssid {
+		u8 ssid[MAX_SSID_LEN];
+		size_t ssid_len;
+	} *excluded_ssid;
+	size_t num_excluded_ssid;
 };
 
 
@@ -710,12 +716,12 @@ struct wpa_config {
 	struct wpabuf *wps_nfc_dh_pubkey;
 
 	/**
-	 * wps_nfc_dh_pubkey - NFC DH Private Key for password token
+	 * wps_nfc_dh_privkey - NFC DH Private Key for password token
 	 */
 	struct wpabuf *wps_nfc_dh_privkey;
 
 	/**
-	 * wps_nfc_dh_pubkey - NFC Device Password for password token
+	 * wps_nfc_dev_pw - NFC Device Password for password token
 	 */
 	struct wpabuf *wps_nfc_dev_pw;
 
@@ -791,6 +797,16 @@ struct wpa_config {
 	 * this default behavior.
 	 */
 	enum mfp_options pmf;
+
+	/**
+	 * sae_groups - Preference list of enabled groups for SAE
+	 *
+	 * By default (if this parameter is not set), the mandatory group 19
+	 * (ECC group defined over a 256-bit prime order field) is preferred,
+	 * but other groups are also enabled. If this parameter is set, the
+	 * groups will be tried in the indicated order.
+	 */
+	int *sae_groups;
 };
 
 

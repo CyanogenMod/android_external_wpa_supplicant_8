@@ -1,6 +1,10 @@
 ChangeLog for wpa_supplicant
 
-????-??-?? - v2.0
+????-??-?? - v2.1
+	* added support for simulataneous authentication of equals (SAE) for
+	  stronger password-based authentication with WPA2-Personal
+
+2013-01-12 - v2.0
 	* removed Qt3-based wpa_gui (obsoleted by wpa_qui-qt4)
 	* removed unmaintained driver wrappers broadcom, iphone, osx, ralink,
 	  hostap, madwifi (hostap and madwifi remain available for hostapd;
@@ -104,6 +108,7 @@ ChangeLog for wpa_supplicant
 	    credential match with ANQP information
 	* limited PMKSA cache entries to be used only with the network context
 	  that was used to create them
+	* improved PMKSA cache expiration to avoid unnecessary disconnections
 	* adjusted bgscan_simple fast-scan backoff to avoid too frequent
 	  background scans
 	* removed ctrl_iface event on P2P PD Response in join-group case
@@ -149,6 +154,7 @@ ChangeLog for wpa_supplicant
 	* added initial support for WNM operations
 	  - Keep-alive based on BSS max idle period
 	  - WNM-Sleep Mode
+	  - minimal BSS Transition Management processing
 	* added autoscan module to control scanning behavior while not connected
 	  - autoscan_periodic and autoscan_exponential modules
 	* added new WPS NFC ctrl_iface mechanism
@@ -223,6 +229,10 @@ ChangeLog for wpa_supplicant
 	* added a workaround for WPS PBC session overlap detection to avoid
 	  interop issues with deployed station implementations that do not
 	  remove active PBC indication from Probe Request frames properly
+	* added basic support for 60 GHz band
+	* extend EAPOL frames processing workaround for roaming cases
+	  (postpone processing of unexpected EAPOL frame until association
+	  event to handle reordered events)
 
 2012-05-10 - v1.0
 	* bsd: Add support for setting HT values in IFM_MMASK.

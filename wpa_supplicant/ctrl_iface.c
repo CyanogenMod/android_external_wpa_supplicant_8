@@ -38,6 +38,7 @@
 #include "interworking.h"
 #include "blacklist.h"
 #include "autoscan.h"
+#include "wnm_sta.h"
 
 extern struct wpa_driver_ops *wpa_drivers[];
 
@@ -56,6 +57,11 @@ static int pno_start(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->pno)
 		return 0;
+
+	if (wpa_s->wpa_state == WPA_SCANNING) {
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_supplicant_cancel_scan(wpa_s);
+	}
 
 	os_memset(&params, 0, sizeof(params));
 
@@ -112,11 +118,17 @@ static int pno_start(struct wpa_supplicant *wpa_s)
 
 static int pno_stop(struct wpa_supplicant *wpa_s)
 {
+	int ret = 0;
+
 	if (wpa_s->pno) {
 		wpa_s->pno = 0;
-		return wpa_drv_stop_sched_scan(wpa_s);
+		ret = wpa_drv_stop_sched_scan(wpa_s);
 	}
-	return 0;
+
+	if (wpa_s->wpa_state == WPA_SCANNING)
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+
+	return ret;
 }
 
 
@@ -414,6 +426,8 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 		ret = set_bssid_filter(wpa_s, value);
 	} else if (os_strcasecmp(cmd, "disallow_aps") == 0) {
 		ret = set_disallow_aps(wpa_s, value);
+	} else if (os_strcasecmp(cmd, "no_keep_alive") == 0) {
+		wpa_s->no_keep_alive = !!atoi(value);
 	} else {
 		value[-1] = '=';
 		ret = wpa_config_process_global(wpa_s->conf, cmd, -1);
@@ -1359,6 +1373,16 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_AP */
 		pos += wpa_sm_get_status(wpa_s->wpa, pos, end - pos, verbose);
 	}
+#ifdef CONFIG_SAE
+	if (wpa_s->wpa_state >= WPA_ASSOCIATED &&
+	    wpa_s->sme.sae.state == SAE_ACCEPTED && !wpa_s->ap_iface) {
+		ret = os_snprintf(pos, end - pos, "sae_group=%d\n",
+				  wpa_s->sme.sae.group);
+		if (ret < 0 || ret >= end - pos)
+			return pos - buf;
+		pos += ret;
+	}
+#endif /* CONFIG_SAE */
 	ret = os_snprintf(pos, end - pos, "wpa_state=%s\n",
 			  wpa_supplicant_state_txt(wpa_s->wpa_state));
 	if (ret < 0 || ret >= end - pos)
@@ -1465,8 +1489,7 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
 		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- connection to "
 			MACSTR " completed %s [id=%d id_str=%s]",
-			MAC2STR(wpa_s->bssid), wpa_s->reassociated_connection ?
-			"(reauth)" : "(auth)",
+			MAC2STR(wpa_s->bssid), "(auth)",
 			ssid ? ssid->id : -1,
 			ssid && ssid->id_str ? ssid->id_str : "");
 	}
@@ -1713,54 +1736,15 @@ static int wpa_supplicant_ctrl_iface_list_networks(
 
 static char * wpa_supplicant_cipher_txt(char *pos, char *end, int cipher)
 {
-	int first = 1, ret;
+	int ret;
 	ret = os_snprintf(pos, end - pos, "-");
 	if (ret < 0 || ret >= end - pos)
 		return pos;
 	pos += ret;
-	if (cipher & WPA_CIPHER_NONE) {
-		ret = os_snprintf(pos, end - pos, "%sNONE", first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
-	if (cipher & WPA_CIPHER_WEP40) {
-		ret = os_snprintf(pos, end - pos, "%sWEP40", first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
-	if (cipher & WPA_CIPHER_WEP104) {
-		ret = os_snprintf(pos, end - pos, "%sWEP104",
-				  first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
-	if (cipher & WPA_CIPHER_TKIP) {
-		ret = os_snprintf(pos, end - pos, "%sTKIP", first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
-	if (cipher & WPA_CIPHER_CCMP) {
-		ret = os_snprintf(pos, end - pos, "%sCCMP", first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
-	if (cipher & WPA_CIPHER_GCMP) {
-		ret = os_snprintf(pos, end - pos, "%sGCMP", first ? "" : "+");
-		if (ret < 0 || ret >= end - pos)
-			return pos;
-		pos += ret;
-		first = 0;
-	}
+	ret = wpa_write_ciphers(pos, end, cipher, "+");
+	if (ret < 0)
+		return pos;
+	pos += ret;
 	return pos;
 }
 
@@ -2783,6 +2767,9 @@ static int ctrl_iface_get_capability_channels(struct wpa_supplicant *wpa_s,
 			break;
 		case HOSTAPD_MODE_IEEE80211A:
 			hmode = "A";
+			break;
+		case HOSTAPD_MODE_IEEE80211AD:
+			hmode = "AD";
 			break;
 		default:
 			continue;
@@ -4698,6 +4685,60 @@ static int wpa_supplicant_ctrl_iface_autoscan(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_AUTOSCAN */
 
 
+#ifdef CONFIG_WNM
+
+static int wpas_ctrl_iface_wnm_sleep(struct wpa_supplicant *wpa_s, char *cmd)
+{
+	int enter;
+	int intval = 0;
+	char *pos;
+	int ret;
+	struct wpabuf *tfs_req = NULL;
+
+	if (os_strncmp(cmd, "enter", 5) == 0)
+		enter = 1;
+	else if (os_strncmp(cmd, "exit", 4) == 0)
+		enter = 0;
+	else
+		return -1;
+
+	pos = os_strstr(cmd, " interval=");
+	if (pos)
+		intval = atoi(pos + 10);
+
+	pos = os_strstr(cmd, " tfs_req=");
+	if (pos) {
+		char *end;
+		size_t len;
+		pos += 9;
+		end = os_strchr(pos, ' ');
+		if (end)
+			len = end - pos;
+		else
+			len = os_strlen(pos);
+		if (len & 1)
+			return -1;
+		len /= 2;
+		tfs_req = wpabuf_alloc(len);
+		if (tfs_req == NULL)
+			return -1;
+		if (hexstr2bin(pos, wpabuf_put(tfs_req, len), len) < 0) {
+			wpabuf_free(tfs_req);
+			return -1;
+		}
+	}
+
+	ret = ieee802_11_send_wnmsleep_req(wpa_s, enter ? WNM_SLEEP_MODE_ENTER :
+					   WNM_SLEEP_MODE_EXIT, intval,
+					   tfs_req);
+	wpabuf_free(tfs_req);
+
+	return ret;
+}
+
+#endif /* CONFIG_WNM */
+
+
 static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 				      size_t buflen)
 {
@@ -5124,7 +5165,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED)
 			reply_len = -1;
 		else {
-			if (!wpa_s->scanning &&
+			if (!wpa_s->sched_scanning && !wpa_s->scanning &&
 			    ((wpa_s->wpa_state <= WPA_SCANNING) ||
 			     (wpa_s->wpa_state == WPA_COMPLETED))) {
 				wpa_s->normal_scans = 0;
@@ -5271,6 +5312,11 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strcmp(buf, "REAUTHENTICATE") == 0) {
 		pmksa_cache_clear_current(wpa_s->wpa);
 		eapol_sm_request_reauth(wpa_s->eapol);
+#ifdef CONFIG_WNM
+	} else if (os_strncmp(buf, "WNM_SLEEP ", 10) == 0) {
+		if (wpas_ctrl_iface_wnm_sleep(wpa_s, buf + 10))
+			reply_len = -1;
+#endif /* CONFIG_WNM */
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;

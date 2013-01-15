@@ -51,7 +51,8 @@ typedef enum hostap_security_policy {
 struct hostapd_ssid {
 	u8 ssid[HOSTAPD_MAX_SSID_LEN];
 	size_t ssid_len;
-	int ssid_set;
+	unsigned int ssid_set:1;
+	unsigned int utf8_ssid:1;
 
 	char vlan[IFNAMSIZ + 1];
 	secpolicy security_policy;
@@ -390,6 +391,8 @@ struct hostapd_bss_config {
 	/* IEEE 802.11v */
 	int time_advertisement;
 	char *time_zone;
+	int wnm_sleep_mode;
+	int bss_transition;
 
 	/* IEEE 802.11u - Interworking */
 	int interworking;
@@ -452,6 +455,9 @@ struct hostapd_bss_config {
 #endif /* CONFIG_RADIUS_TEST */
 
 	struct wpabuf *vendor_elements;
+
+	unsigned int sae_anti_clogging_threshold;
+	int *sae_groups;
 };
 
 
