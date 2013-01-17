@@ -1459,6 +1459,8 @@ static int wpa_cli_cmd_save_config(struct wpa_ctrl *ctrl, int argc,
 
 static int wpa_cli_cmd_scan(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
+	if (argc > 0)
+		return wpa_cli_cmd(ctrl, "SCAN", 1, argc, argv);
 	return wpa_ctrl_command(ctrl, "SCAN");
 }
 

@@ -32,5 +32,7 @@ struct wpabuf * wpa_scan_get_vendor_ie_multi(const struct wpa_scan_res *res,
 					     u32 vendor_type);
 int wpa_supplicant_filter_bssid_match(struct wpa_supplicant *wpa_s,
 				      const u8 *bssid);
+void scan_only_handler(struct wpa_supplicant *wpa_s,
+		       struct wpa_scan_results *scan_res);
 
 #endif /* SCAN_H */
