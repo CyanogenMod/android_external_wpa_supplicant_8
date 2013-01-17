@@ -2621,7 +2621,9 @@ broken_combination:
 		}
 	}
 
+#ifndef NO_APSME_ATTR
 	if (tb[NL80211_ATTR_DEVICE_AP_SME])
+#endif
 		info->device_ap_sme = 1;
 
 	if (tb[NL80211_ATTR_FEATURE_FLAGS]) {
