@@ -676,6 +676,7 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT_DEFe(fragment_size, DEFAULT_FRAGMENT_SIZE);
 #endif /* IEEE8021X_EAPOL */
 	INT(mode);
+	INT(frequency);
 	INT(proactive_key_caching);
 	INT(disabled);
 	INT(peerkey);
