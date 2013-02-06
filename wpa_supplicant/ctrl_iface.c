@@ -554,13 +554,12 @@ static int wpa_supplicant_ctrl_iface_tdls_setup(
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_SETUP " MACSTR,
 		   MAC2STR(peer));
 
-	ret = wpa_tdls_reneg(wpa_s->wpa, peer);
-	if (ret) {
-		if (wpa_tdls_is_external_setup(wpa_s->wpa))
-			ret = wpa_tdls_start(wpa_s->wpa, peer);
-		else
-			ret = wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, peer);
-	}
+	wpa_tdls_remove(wpa_s->wpa, peer);
+
+	if (wpa_tdls_is_external_setup(wpa_s->wpa))
+		ret = wpa_tdls_start(wpa_s->wpa, peer);
+	else
+		ret = wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, peer);
 
 	return ret;
 }
@@ -2130,14 +2129,6 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 	/* cmd: "<network id>" or "all" */
 	if (os_strcmp(cmd, "all") == 0) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: REMOVE_NETWORK all");
-		ssid = wpa_s->conf->ssid;
-		while (ssid) {
-			struct wpa_ssid *remove_ssid = ssid;
-			id = ssid->id;
-			ssid = ssid->next;
-			wpas_notify_network_removed(wpa_s, remove_ssid);
-			wpa_config_remove_network(wpa_s->conf, id);
-		}
 		eapol_sm_invalidate_cached_session(wpa_s->eapol);
 		if (wpa_s->current_ssid) {
 #ifdef CONFIG_SME
@@ -2147,6 +2138,14 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 			eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+		}
+		ssid = wpa_s->conf->ssid;
+		while (ssid) {
+			struct wpa_ssid *remove_ssid = ssid;
+			id = ssid->id;
+			ssid = ssid->next;
+			wpas_notify_network_removed(wpa_s, remove_ssid);
+			wpa_config_remove_network(wpa_s->conf, id);
 		}
 		return 0;
 	}
@@ -3200,8 +3199,10 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 				}
 			}
 		}
-	} else if (os_strcmp(cmd, "FIRST") == 0)
+	} else if (os_strncmp(cmd, "FIRST", 5) == 0)
 		bss = dl_list_first(&wpa_s->bss_id, struct wpa_bss, list_id);
+	else if (os_strncmp(cmd, "LAST", 4) == 0)
+		bss = dl_list_last(&wpa_s->bss_id, struct wpa_bss, list_id);
 	else if (os_strncmp(cmd, "ID-", 3) == 0) {
 		i = atoi(cmd + 3);
 		bss = wpa_bss_get_id(wpa_s, i);
@@ -5161,13 +5162,13 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_cancel_scan(wpa_s);
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
-	} else if ((os_strcmp(buf, "SCAN") == 0) ||
-		   (os_strncmp(buf, "SCAN ", 5) == 0)) {
+	} else if (os_strcmp(buf, "SCAN") == 0 ||
+		   os_strncmp(buf, "SCAN ", 5) == 0) {
 		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED)
 			reply_len = -1;
 		else {
-			if ((os_strlen(buf) > 4) &&
-			    (os_strncasecmp(buf + 5, "TYPE=ONLY", 9) == 0))
+			if (os_strlen(buf) > 4 &&
+			    os_strncasecmp(buf + 5, "TYPE=ONLY", 9) == 0)
 				wpa_s->scan_res_handler = scan_only_handler;
 			if (!wpa_s->sched_scanning && !wpa_s->scanning &&
 			    ((wpa_s->wpa_state <= WPA_SCANNING) ||

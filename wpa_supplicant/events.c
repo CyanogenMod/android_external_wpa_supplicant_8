@@ -44,6 +44,9 @@
 #include "interworking.h"
 
 
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s);
+
+
 static int wpas_temp_disabled(struct wpa_supplicant *wpa_s,
 			      struct wpa_ssid *ssid)
 {
@@ -1109,8 +1112,8 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 						   data ? &data->scan_info :
 						   NULL, 1);
 	if (scan_res == NULL) {
-		if ((wpa_s->conf->ap_scan == 2 || ap) ||
-		    (wpa_s->scan_res_handler == scan_only_handler))
+		if (wpa_s->conf->ap_scan == 2 || ap ||
+		    wpa_s->scan_res_handler == scan_only_handler)
 			return -1;
 		wpa_dbg(wpa_s, MSG_DEBUG, "Failed to get scan results - try "
 			"scanning again");
@@ -1205,7 +1208,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 }
 
 
-int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
@@ -1347,6 +1350,26 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 
+
+int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s)
+{
+#ifdef CONFIG_NO_SCAN_PROCESSING
+	return -1;
+#else /* CONFIG_NO_SCAN_PROCESSING */
+	struct os_time now;
+
+	if (wpa_s->last_scan_res_used <= 0)
+		return -1;
+
+	os_get_time(&now);
+	if (now.sec - wpa_s->last_scan.sec > 5) {
+		wpa_printf(MSG_DEBUG, "Fast associate: Old scan results");
+		return -1;
+	}
+
+	return wpas_select_network_from_last_scan(wpa_s);
+#endif /* CONFIG_NO_SCAN_PROCESSING */
+}
 
 #ifdef CONFIG_WNM
 
@@ -2178,10 +2201,14 @@ static void wpa_supplicant_event_tdls(struct wpa_supplicant *wpa_s,
 		return;
 	switch (data->tdls.oper) {
 	case TDLS_REQUEST_SETUP:
-		wpa_tdls_start(wpa_s->wpa, data->tdls.peer);
+		wpa_tdls_remove(wpa_s->wpa, data->tdls.peer);
+		if (wpa_tdls_is_external_setup(wpa_s->wpa))
+			wpa_tdls_start(wpa_s->wpa, data->tdls.peer);
+		else
+			wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, data->tdls.peer);
 		break;
 	case TDLS_REQUEST_TEARDOWN:
-		wpa_tdls_send_teardown(wpa_s->wpa, data->tdls.peer,
+		wpa_tdls_teardown_link(wpa_s->wpa, data->tdls.peer,
 				       data->tdls.reason_code);
 		break;
 	}

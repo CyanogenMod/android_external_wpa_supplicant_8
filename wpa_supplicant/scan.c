@@ -749,7 +749,7 @@ ssid_list_set:
 	extra_ie = wpa_supplicant_extra_ies(wpa_s);
 
 #ifdef CONFIG_HS20
-	if (wpa_s->conf->hs20 && wpabuf_resize(&extra_ie, 6) == 0)
+	if (wpa_s->conf->hs20 && wpabuf_resize(&extra_ie, 7) == 0)
 		wpas_hs20_add_indication(extra_ie);
 #endif /* CONFIG_HS20 */
 
@@ -827,6 +827,27 @@ scan:
 	} else {
 		wpa_s->scan_for_connection = 0;
 	}
+}
+
+
+void wpa_supplicant_update_scan_int(struct wpa_supplicant *wpa_s, int sec)
+{
+	struct os_time remaining, new_int;
+	int cancelled;
+
+	cancelled = eloop_cancel_timeout_one(wpa_supplicant_scan, wpa_s, NULL,
+					     &remaining);
+
+	new_int.sec = sec;
+	new_int.usec = 0;
+	if (cancelled && os_time_before(&remaining, &new_int)) {
+		new_int.sec = remaining.sec;
+		new_int.usec = remaining.usec;
+	}
+
+	eloop_register_timeout(new_int.sec, new_int.usec, wpa_supplicant_scan,
+			       wpa_s, NULL);
+	wpa_s->scan_interval = sec;
 }
 
 
@@ -1592,6 +1613,8 @@ int wpa_supplicant_update_scan_results(struct wpa_supplicant *wpa_s)
 void scan_only_handler(struct wpa_supplicant *wpa_s,
 		       struct wpa_scan_results *scan_res)
 {
+	wpa_dbg(wpa_s, MSG_DEBUG, "Scan-only results received");
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
 	wpas_notify_scan_results(wpa_s);
+	wpas_notify_scan_done(wpa_s, 1);
 }
