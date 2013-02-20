@@ -552,20 +552,35 @@ static int wpa_supplicant_tdls_oper(void *ctx, int oper, const u8 *peer)
 
 static int wpa_supplicant_tdls_peer_addset(
 	void *ctx, const u8 *peer, int add, u16 capability,
-	const u8 *supp_rates, size_t supp_rates_len)
+	const u8 *supp_rates, size_t supp_rates_len,
+	const struct ieee80211_ht_capabilities *ht_capab,
+	u8 qosinfo, const u8 *ext_capab, size_t ext_capab_len)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	struct hostapd_sta_add_params params;
+
+	os_memset(&params, 0, sizeof(params));
 
 	params.addr = peer;
 	params.aid = 1;
 	params.capability = capability;
 	params.flags = WPA_STA_TDLS_PEER | WPA_STA_AUTHORIZED;
-	params.ht_capabilities = NULL;
+
+	/*
+	 * TDLS Setup frames do not contain WMM IEs, hence need to depend on
+	 * qosinfo to check if the peer is WMM capable.
+	 */
+	if (qosinfo)
+		params.flags |= WPA_STA_WMM;
+
+	params.ht_capabilities = ht_capab;
+	params.qosinfo = qosinfo;
 	params.listen_interval = 0;
 	params.supp_rates = supp_rates;
 	params.supp_rates_len = supp_rates_len;
 	params.set = !add;
+	params.ext_capab = ext_capab;
+	params.ext_capab_len = ext_capab_len;
 
 	return wpa_drv_sta_add(wpa_s, &params);
 }

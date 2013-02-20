@@ -664,8 +664,8 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 #if defined(CONFIG_CTRL_IFACE) || !defined(CONFIG_NO_STDOUT_DEBUG)
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- Connection to "
-			MACSTR " completed %s [id=%d id_str=%s]",
-			MAC2STR(wpa_s->bssid), "(auth)",
+			MACSTR " completed (auth) [id=%d id_str=%s]",
+			MAC2STR(wpa_s->bssid),
 			ssid ? ssid->id : -1,
 			ssid && ssid->id_str ? ssid->id_str : "");
 #endif /* CONFIG_CTRL_IFACE || !CONFIG_NO_STDOUT_DEBUG */
@@ -1729,6 +1729,10 @@ void wpa_supplicant_deauthenticate(struct wpa_supplicant *wpa_s,
 		addr = wpa_s->bssid;
 		zero_addr = 1;
 	}
+
+#ifdef CONFIG_TDLS
+	wpa_tdls_teardown_peers(wpa_s->wpa);
+#endif /* CONFIG_TDLS */
 
 	if (addr) {
 		wpa_drv_deauthenticate(wpa_s, addr, reason_code);

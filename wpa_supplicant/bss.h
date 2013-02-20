@@ -97,7 +97,8 @@ struct wpa_bss {
 
 void wpa_bss_update_start(struct wpa_supplicant *wpa_s);
 void wpa_bss_update_scan_res(struct wpa_supplicant *wpa_s,
-			     struct wpa_scan_res *res);
+			     struct wpa_scan_res *res,
+			     struct os_time *fetch_time);
 void wpa_bss_update_end(struct wpa_supplicant *wpa_s, struct scan_info *info,
 			int new_scan);
 int wpa_bss_init(struct wpa_supplicant *wpa_s);
@@ -111,6 +112,8 @@ struct wpa_bss * wpa_bss_get_bssid(struct wpa_supplicant *wpa_s,
 struct wpa_bss * wpa_bss_get_p2p_dev_addr(struct wpa_supplicant *wpa_s,
 					  const u8 *dev_addr);
 struct wpa_bss * wpa_bss_get_id(struct wpa_supplicant *wpa_s, unsigned int id);
+struct wpa_bss * wpa_bss_get_id_range(struct wpa_supplicant *wpa_s,
+				      unsigned int idf, unsigned int idl);
 const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie);
 const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type);
 struct wpabuf * wpa_bss_get_vendor_ie_multi(const struct wpa_bss *bss,

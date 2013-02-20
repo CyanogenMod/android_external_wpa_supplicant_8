@@ -770,6 +770,13 @@ static int wpa_cli_cmd_wps_nfc(struct wpa_ctrl *ctrl, int argc, char *argv[])
 }
 
 
+static int wpa_cli_cmd_wps_nfc_config_token(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "WPS_NFC_CONFIG_TOKEN", 1, argc, argv);
+}
+
+
 static int wpa_cli_cmd_wps_nfc_token(struct wpa_ctrl *ctrl, int argc,
 				     char *argv[])
 {
@@ -866,6 +873,13 @@ static int wpa_cli_cmd_nfc_rx_handover_sel(struct wpa_ctrl *ctrl, int argc,
 	os_free(buf);
 
 	return ret;
+}
+
+
+static int wpa_cli_cmd_nfc_report_handover(struct wpa_ctrl *ctrl, int argc,
+					   char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "NFC_REPORT_HANDOVER", 4, argc, argv);
 }
 
 #endif /* CONFIG_WPS_NFC */
@@ -2529,6 +2543,9 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "wps_nfc", wpa_cli_cmd_wps_nfc, wpa_cli_complete_bss,
 	  cli_cmd_flag_none,
 	  "[BSSID] = start Wi-Fi Protected Setup: NFC" },
+	{ "wps_nfc_config_token", wpa_cli_cmd_wps_nfc_config_token, NULL,
+	  cli_cmd_flag_none,
+	  "<WPS|NDEF> = build configuration token" },
 	{ "wps_nfc_token", wpa_cli_cmd_wps_nfc_token, NULL,
 	  cli_cmd_flag_none,
 	  "<WPS|NDEF> = create password token" },
@@ -2547,6 +2564,10 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "nfc_rx_handover_sel", wpa_cli_cmd_nfc_rx_handover_sel, NULL,
 	  cli_cmd_flag_none,
 	  "<hexdump of payload> = report received NFC handover select" },
+	{ "nfc_report_handover", wpa_cli_cmd_nfc_report_handover, NULL,
+	  cli_cmd_flag_none,
+	  "<role> <type> <hexdump of req> <hexdump of sel> = report completed "
+	  "NFC handover" },
 #endif /* CONFIG_WPS_NFC */
 	{ "wps_reg", wpa_cli_cmd_wps_reg, wpa_cli_complete_bss,
 	  cli_cmd_flag_sensitive,

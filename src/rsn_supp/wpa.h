@@ -12,6 +12,7 @@
 #include "common/defs.h"
 #include "common/eapol_common.h"
 #include "common/wpa_common.h"
+#include "common/ieee802_11_defs.h"
 
 struct wpa_sm;
 struct eapol_sm;
@@ -57,7 +58,10 @@ struct wpa_sm_ctx {
 	int (*tdls_oper)(void *ctx, int oper, const u8 *peer);
 	int (*tdls_peer_addset)(void *ctx, const u8 *addr, int add,
 				u16 capability, const u8 *supp_rates,
-				size_t supp_rates_len);
+				size_t supp_rates_len,
+				const struct ieee80211_ht_capabilities *ht_capab,
+				u8 qosinfo, const u8 *ext_capab,
+				size_t ext_capab_len);
 #endif /* CONFIG_TDLS */
 	void (*set_rekey_offload)(void *ctx, const u8 *kek, const u8 *kck,
 				  const u8 *replay_ctr);
@@ -360,6 +364,7 @@ int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr, u16 reason_code);
 int wpa_tdls_teardown_link(struct wpa_sm *sm, const u8 *addr, u16 reason_code);
 int wpa_tdls_send_discovery_request(struct wpa_sm *sm, const u8 *addr);
 int wpa_tdls_init(struct wpa_sm *sm);
+void wpa_tdls_teardown_peers(struct wpa_sm *sm);
 void wpa_tdls_deinit(struct wpa_sm *sm);
 void wpa_tdls_enable(struct wpa_sm *sm, int enabled);
 void wpa_tdls_disable_link(struct wpa_sm *sm, const u8 *addr);

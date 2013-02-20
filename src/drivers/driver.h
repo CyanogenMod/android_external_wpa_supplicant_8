@@ -122,6 +122,13 @@ struct hostapd_hw_modes {
 #define IEEE80211_CAP_IBSS	0x0002
 #define IEEE80211_CAP_PRIVACY	0x0010
 
+/* DMG (60 GHz) IEEE 802.11ad */
+/* type - bits 0..1 */
+#define IEEE80211_CAP_DMG_MASK	0x0003
+#define IEEE80211_CAP_DMG_IBSS	0x0001 /* Tx by: STA */
+#define IEEE80211_CAP_DMG_PBSS	0x0002 /* Tx by: PCP */
+#define IEEE80211_CAP_DMG_AP	0x0003 /* Tx by: AP */
+
 #define WPA_SCAN_QUAL_INVALID		BIT(0)
 #define WPA_SCAN_NOISE_INVALID		BIT(1)
 #define WPA_SCAN_LEVEL_INVALID		BIT(2)
@@ -180,10 +187,12 @@ struct wpa_scan_res {
  * struct wpa_scan_results - Scan results
  * @res: Array of pointers to allocated variable length scan result entries
  * @num: Number of entries in the scan result array
+ * @fetch_time: Time when the results were fetched from the driver
  */
 struct wpa_scan_results {
 	struct wpa_scan_res **res;
 	size_t num;
+	struct os_time fetch_time;
 };
 
 /**
@@ -902,6 +911,8 @@ struct hostapd_sta_add_params {
 	u32 flags; /* bitmask of WPA_STA_* flags */
 	int set; /* Set STA parameters instead of add */
 	u8 qosinfo;
+	const u8 *ext_capab;
+	size_t ext_capab_len;
 };
 
 struct hostapd_freq_params {
@@ -3067,7 +3078,16 @@ enum wpa_event_type {
 	 *
 	 * This event can be used to request a WNM operation to be performed.
 	 */
-	EVENT_WNM
+	EVENT_WNM,
+
+	/**
+	 * EVENT_CONNECT_FAILED_REASON - Connection failure reason in AP mode
+	 *
+	 * This event indicates that the driver reported a connection failure
+	 * with the specified client (for example, max client reached, etc.) in
+	 * AP mode.
+	 */
+	EVENT_CONNECT_FAILED_REASON
 };
 
 
@@ -3692,6 +3712,19 @@ union wpa_event_data {
 		int ht_enabled;
 		int ch_offset;
 	} ch_switch;
+
+	/**
+	 * struct connect_failed - Data for EVENT_CONNECT_FAILED_REASON
+	 * @addr: Remote client address
+	 * @code: Reason code for connection failure
+	 */
+	struct connect_failed_reason {
+		u8 addr[ETH_ALEN];
+		enum {
+			MAX_CLIENT_REACHED,
+			BLOCKED_CLIENT
+		} code;
+	} connect_failed_reason;
 };
 
 /**

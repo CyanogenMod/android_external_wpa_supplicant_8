@@ -120,6 +120,13 @@ struct wpa_tdls_peer {
 
 	u8 supp_rates[IEEE80211_MAX_SUPP_RATES];
 	size_t supp_rates_len;
+
+	struct ieee80211_ht_capabilities *ht_capabilities;
+
+	u8 qos_info;
+
+	u8 *ext_capab;
+	size_t ext_capab_len;
 };
 
 
@@ -611,6 +618,10 @@ static void wpa_tdls_peer_free(struct wpa_sm *sm, struct wpa_tdls_peer *peer)
 	peer->initiator = 0;
 	os_free(peer->sm_tmr.buf);
 	peer->sm_tmr.buf = NULL;
+	os_free(peer->ht_capabilities);
+	peer->ht_capabilities = NULL;
+	os_free(peer->ext_capab);
+	peer->ext_capab = NULL;
 	peer->rsnie_i_len = peer->rsnie_p_len = 0;
 	peer->cipher = 0;
 	peer->tpk_set = peer->tpk_success = 0;
@@ -681,8 +692,10 @@ int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr, u16 reason_code)
 	pos = rbuf;
 
 	if (!wpa_tdls_get_privacy(sm) || !peer->tpk_set || !peer->tpk_success) {
-		/* Overwrite the reason code */
-		reason_code = WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED;
+		if (reason_code != WLAN_REASON_DEAUTH_LEAVING) {
+			/* Overwrite the reason code */
+			reason_code = WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED;
+		}
 		goto skip_ies;
 	}
 
@@ -1329,6 +1342,58 @@ static int copy_supp_rates(const struct wpa_eapol_ie_parse *kde,
 }
 
 
+static int copy_peer_ht_capab(const struct wpa_eapol_ie_parse *kde,
+			      struct wpa_tdls_peer *peer)
+{
+	if (!kde->ht_capabilities ||
+	    kde->ht_capabilities_len <
+	    sizeof(struct ieee80211_ht_capabilities) ) {
+		wpa_printf(MSG_DEBUG, "TDLS: No supported ht capabilities "
+			   "received");
+		return 0;
+	}
+
+	if (!peer->ht_capabilities) {
+		peer->ht_capabilities =
+                        os_zalloc(sizeof(struct ieee80211_ht_capabilities));
+		if (peer->ht_capabilities == NULL)
+                        return -1;
+	}
+
+	os_memcpy(peer->ht_capabilities, kde->ht_capabilities,
+                  sizeof(struct ieee80211_ht_capabilities));
+	wpa_hexdump(MSG_DEBUG, "TDLS: Peer HT capabilities",
+		    (u8 *) peer->ht_capabilities,
+		    sizeof(struct ieee80211_ht_capabilities));
+
+	return 0;
+}
+
+
+static int copy_peer_ext_capab(const struct wpa_eapol_ie_parse *kde,
+			       struct wpa_tdls_peer *peer)
+{
+	if (!kde->ext_capab) {
+		wpa_printf(MSG_DEBUG, "TDLS: No extended capabilities "
+			   "received");
+		return 0;
+	}
+
+	if (!peer->ext_capab || peer->ext_capab_len < kde->ext_capab_len - 2) {
+		/* Need to allocate buffer to fit the new information */
+		os_free(peer->ext_capab);
+		peer->ext_capab = os_zalloc(kde->ext_capab_len - 2);
+		if (peer->ext_capab == NULL)
+			return -1;
+	}
+
+	peer->ext_capab_len = kde->ext_capab_len - 2;
+	os_memcpy(peer->ext_capab, kde->ext_capab + 2, peer->ext_capab_len);
+
+	return 0;
+}
+
+
 static int wpa_tdls_process_tpk_m1(struct wpa_sm *sm, const u8 *src_addr,
 				   const u8 *buf, size_t len)
 {
@@ -1397,6 +1462,14 @@ static int wpa_tdls_process_tpk_m1(struct wpa_sm *sm, const u8 *src_addr,
 
 	if (copy_supp_rates(&kde, peer) < 0)
 		goto error;
+
+	if (copy_peer_ht_capab(&kde, peer) < 0)
+		goto error;
+
+	if (copy_peer_ext_capab(&kde, peer) < 0)
+		goto error;
+
+	peer->qos_info = kde.qosinfo;
 
 #ifdef CONFIG_TDLS_TESTING
 	if (tdls_testing & TDLS_TESTING_CONCURRENT_INIT) {
@@ -1621,7 +1694,8 @@ skip_rsn:
 
 skip_rsn_check:
 	/* add the peer to the driver as a "setup in progress" peer */
-	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0);
+	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0, NULL, 0,
+				NULL, 0);
 
 	wpa_printf(MSG_DEBUG, "TDLS: Sending TDLS Setup Response / TPK M2");
 	if (wpa_tdls_send_tpk_m2(sm, src_addr, dtoken, lnkid, peer) < 0) {
@@ -1661,9 +1735,11 @@ static void wpa_tdls_enable_link(struct wpa_sm *sm, struct wpa_tdls_peer *peer)
 #endif /* CONFIG_TDLS_TESTING */
 	}
 
-	/* add supported rates and capabilities to the TDLS peer */
+	/* add supported rates, capabilities, and qos_info to the TDLS peer */
 	wpa_sm_tdls_peer_addset(sm, peer->addr, 0, peer->capability,
-				peer->supp_rates, peer->supp_rates_len);
+				peer->supp_rates, peer->supp_rates_len,
+				peer->ht_capabilities, peer->qos_info,
+				peer->ext_capab, peer->ext_capab_len);
 
 	wpa_sm_tdls_oper(sm, TDLS_ENABLE_LINK, peer->addr);
 }
@@ -1758,6 +1834,14 @@ static int wpa_tdls_process_tpk_m2(struct wpa_sm *sm, const u8 *src_addr,
 
 	if (copy_supp_rates(&kde, peer) < 0)
 		goto error;
+
+	if (copy_peer_ht_capab(&kde, peer) < 0)
+		goto error;
+
+	if (copy_peer_ext_capab(&kde, peer) < 0)
+		goto error;
+
+	peer->qos_info = kde.qosinfo;
 
 	if (!wpa_tdls_get_privacy(sm)) {
 		peer->rsnie_p_len = 0;
@@ -2062,7 +2146,8 @@ int wpa_tdls_start(struct wpa_sm *sm, const u8 *addr)
 	peer->initiator = 1;
 
 	/* add the peer to the driver as a "setup in progress" peer */
-	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0);
+	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0, NULL, 0,
+				NULL, 0);
 
 	if (wpa_tdls_send_tpk_m1(sm, peer) < 0) {
 		wpa_tdls_disable_link(sm, peer->addr);
@@ -2204,6 +2289,28 @@ int wpa_tdls_init(struct wpa_sm *sm)
 		   sm->tdls_external_setup ? "external" : "internal");
 
 	return 0;
+}
+
+
+void wpa_tdls_teardown_peers(struct wpa_sm *sm)
+{
+	struct wpa_tdls_peer *peer;
+
+	peer = sm->tdls;
+
+	wpa_printf(MSG_DEBUG, "TDLS: Tear down peers");
+
+	while (peer) {
+		wpa_printf(MSG_DEBUG, "TDLS: Tear down peer " MACSTR,
+			   MAC2STR(peer->addr));
+		if (sm->tdls_external_setup)
+			wpa_tdls_send_teardown(sm, peer->addr,
+					       WLAN_REASON_DEAUTH_LEAVING);
+		else
+			wpa_sm_tdls_oper(sm, TDLS_TEARDOWN, peer->addr);
+
+		peer = peer->next;
+	}
 }
 
 

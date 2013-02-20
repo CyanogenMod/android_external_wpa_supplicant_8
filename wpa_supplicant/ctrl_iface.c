@@ -778,6 +778,35 @@ static int wpa_supplicant_ctrl_iface_wps_nfc(struct wpa_supplicant *wpa_s,
 }
 
 
+static int wpa_supplicant_ctrl_iface_wps_nfc_config_token(
+	struct wpa_supplicant *wpa_s, char *cmd, char *reply, size_t max_len)
+{
+	int ndef;
+	struct wpabuf *buf;
+	int res;
+
+	if (os_strcmp(cmd, "WPS") == 0)
+		ndef = 0;
+	else if (os_strcmp(cmd, "NDEF") == 0)
+		ndef = 1;
+	else
+		return -1;
+
+	buf = wpas_wps_nfc_config_token(wpa_s, ndef);
+	if (buf == NULL)
+		return -1;
+
+	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
+					 wpabuf_len(buf));
+	reply[res++] = '\n';
+	reply[res] = '\0';
+
+	wpabuf_free(buf);
+
+	return res;
+}
+
+
 static int wpa_supplicant_ctrl_iface_wps_nfc_token(
 	struct wpa_supplicant *wpa_s, char *cmd, char *reply, size_t max_len)
 {
@@ -835,12 +864,13 @@ static int wpa_supplicant_ctrl_iface_wps_nfc_tag_read(
 
 
 static int wpas_ctrl_nfc_get_handover_req_wps(struct wpa_supplicant *wpa_s,
-					      char *reply, size_t max_len)
+					      char *reply, size_t max_len,
+					      int cr)
 {
 	struct wpabuf *buf;
 	int res;
 
-	buf = wpas_wps_nfc_handover_req(wpa_s);
+	buf = wpas_wps_nfc_handover_req(wpa_s, cr);
 	if (buf == NULL)
 		return -1;
 
@@ -869,9 +899,9 @@ static int wpas_ctrl_nfc_get_handover_req(struct wpa_supplicant *wpa_s,
 	if (os_strcmp(cmd, "NDEF") != 0)
 		return -1;
 
-	if (os_strcmp(pos, "WPS") == 0) {
-		return wpas_ctrl_nfc_get_handover_req_wps(wpa_s, reply,
-							  max_len);
+	if (os_strcmp(pos, "WPS") == 0 || os_strcmp(pos, "WPS-CR") == 0) {
+		return wpas_ctrl_nfc_get_handover_req_wps(
+			wpa_s, reply, max_len, os_strcmp(pos, "WPS-CR") == 0);
 	}
 
 	return -1;
@@ -879,12 +909,13 @@ static int wpas_ctrl_nfc_get_handover_req(struct wpa_supplicant *wpa_s,
 
 
 static int wpas_ctrl_nfc_get_handover_sel_wps(struct wpa_supplicant *wpa_s,
-					      char *reply, size_t max_len)
+					      char *reply, size_t max_len,
+					      int ndef, int cr)
 {
 	struct wpabuf *buf;
 	int res;
 
-	buf = wpas_wps_nfc_handover_sel(wpa_s);
+	buf = wpas_wps_nfc_handover_sel(wpa_s, ndef, cr);
 	if (buf == NULL)
 		return -1;
 
@@ -904,18 +935,24 @@ static int wpas_ctrl_nfc_get_handover_sel(struct wpa_supplicant *wpa_s,
 					  size_t max_len)
 {
 	char *pos;
+	int ndef;
 
 	pos = os_strchr(cmd, ' ');
 	if (pos == NULL)
 		return -1;
 	*pos++ = '\0';
 
-	if (os_strcmp(cmd, "NDEF") != 0)
+	if (os_strcmp(cmd, "WPS") == 0)
+		ndef = 0;
+	else if (os_strcmp(cmd, "NDEF") == 0)
+		ndef = 1;
+	else
 		return -1;
 
-	if (os_strcmp(pos, "WPS") == 0) {
-		return wpas_ctrl_nfc_get_handover_sel_wps(wpa_s, reply,
-							  max_len);
+	if (os_strcmp(pos, "WPS") == 0 || os_strcmp(pos, "WPS-CR") == 0) {
+		return wpas_ctrl_nfc_get_handover_sel_wps(
+			wpa_s, reply, max_len, ndef,
+			os_strcmp(pos, "WPS-CR") == 0);
 	}
 
 	return -1;
@@ -972,6 +1009,76 @@ static int wpas_ctrl_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 
 	ret = wpas_wps_nfc_rx_handover_sel(wpa_s, buf);
 	wpabuf_free(buf);
+
+	return ret;
+}
+
+
+static int wpas_ctrl_nfc_report_handover(struct wpa_supplicant *wpa_s,
+					 char *cmd)
+{
+	size_t len;
+	struct wpabuf *req, *sel;
+	int ret;
+	char *pos, *role, *type, *pos2;
+
+	role = cmd;
+	pos = os_strchr(role, ' ');
+	if (pos == NULL)
+		return -1;
+	*pos++ = '\0';
+
+	type = pos;
+	pos = os_strchr(type, ' ');
+	if (pos == NULL)
+		return -1;
+	*pos++ = '\0';
+
+	pos2 = os_strchr(pos, ' ');
+	if (pos2 == NULL)
+		return -1;
+	*pos2++ = '\0';
+
+	len = os_strlen(pos);
+	if (len & 0x01)
+		return -1;
+	len /= 2;
+
+	req = wpabuf_alloc(len);
+	if (req == NULL)
+		return -1;
+	if (hexstr2bin(pos, wpabuf_put(req, len), len) < 0) {
+		wpabuf_free(req);
+		return -1;
+	}
+
+	len = os_strlen(pos2);
+	if (len & 0x01) {
+		wpabuf_free(req);
+		return -1;
+	}
+	len /= 2;
+
+	sel = wpabuf_alloc(len);
+	if (sel == NULL) {
+		wpabuf_free(req);
+		return -1;
+	}
+	if (hexstr2bin(pos2, wpabuf_put(sel, len), len) < 0) {
+		wpabuf_free(req);
+		wpabuf_free(sel);
+		return -1;
+	}
+
+	if (os_strcmp(role, "INIT") == 0 && os_strcmp(type, "WPS") == 0) {
+		ret = wpas_wps_nfc_report_handover(wpa_s, req, sel);
+	} else {
+		wpa_printf(MSG_DEBUG, "NFC: Unsupported connection handover "
+			   "reported: role=%s type=%s", role, type);
+		ret = -1;
+	}
+	wpabuf_free(req);
+	wpabuf_free(sel);
 
 	return ret;
 }
@@ -3174,10 +3281,17 @@ static int wpa_supplicant_ctrl_iface_bss(struct wpa_supplicant *wpa_s,
 				return 0;
 			}
 
-			id1 = atoi(cmd + 6);
-			bss = wpa_bss_get_id(wpa_s, id1);
-			id2 = atoi(ctmp + 1);
-			if (id2 == 0)
+			if (*(cmd + 6) == '-')
+				id1 = 0;
+			else
+				id1 = atoi(cmd + 6);
+			ctmp++;
+			if (*ctmp >= '0' && *ctmp <= '9')
+				id2 = atoi(ctmp);
+			else
+				id2 = (unsigned int) -1;
+			bss = wpa_bss_get_id_range(wpa_s, id1, id2);
+			if (id2 == (unsigned int) -1)
 				bsslast = dl_list_last(&wpa_s->bss_id,
 						       struct wpa_bss,
 						       list_id);
@@ -4803,6 +4917,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	if (os_strncmp(buf, WPA_CTRL_RSP, os_strlen(WPA_CTRL_RSP)) == 0 ||
 	    os_strncmp(buf, "SET_NETWORK ", 12) == 0 ||
 	    os_strncmp(buf, "WPS_NFC_TAG_READ", 16) == 0 ||
+	    os_strncmp(buf, "NFC_REPORT_HANDOVER", 19) == 0 ||
 	    os_strncmp(buf, "NFC_RX_HANDOVER_SEL", 19) == 0) {
 		wpa_hexdump_ascii_key(MSG_DEBUG, "RX ctrl_iface",
 				      (const u8 *) buf, os_strlen(buf));
@@ -4919,6 +5034,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "WPS_NFC ", 8) == 0) {
 		if (wpa_supplicant_ctrl_iface_wps_nfc(wpa_s, buf + 8))
 			reply_len = -1;
+	} else if (os_strncmp(buf, "WPS_NFC_CONFIG_TOKEN ", 21) == 0) {
+		reply_len = wpa_supplicant_ctrl_iface_wps_nfc_config_token(
+			wpa_s, buf + 21, reply, reply_size);
 	} else if (os_strncmp(buf, "WPS_NFC_TOKEN ", 14) == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_wps_nfc_token(
 			wpa_s, buf + 14, reply, reply_size);
@@ -4937,6 +5055,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 			wpa_s, buf + 20, reply, reply_size);
 	} else if (os_strncmp(buf, "NFC_RX_HANDOVER_SEL ", 20) == 0) {
 		if (wpas_ctrl_nfc_rx_handover_sel(wpa_s, buf + 20))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "NFC_REPORT_HANDOVER ", 20) == 0) {
+		if (wpas_ctrl_nfc_report_handover(wpa_s, buf + 20))
 			reply_len = -1;
 #endif /* CONFIG_WPS_NFC */
 	} else if (os_strncmp(buf, "WPS_REG ", 8) == 0) {

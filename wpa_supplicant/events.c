@@ -639,6 +639,28 @@ static int rate_match(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 }
 
 
+static int bss_is_dmg(struct wpa_bss *bss)
+{
+	return bss->freq > 45000;
+}
+
+
+/*
+ * Test whether BSS is in an ESS.
+ * This is done differently in DMG (60 GHz) and non-DMG bands
+ */
+static int bss_is_ess(struct wpa_bss *bss)
+{
+	if (bss_is_dmg(bss)) {
+		return (bss->caps & IEEE80211_CAP_DMG_MASK) ==
+			IEEE80211_CAP_DMG_AP;
+	}
+
+	return ((bss->caps & (IEEE80211_CAP_ESS | IEEE80211_CAP_IBSS)) ==
+		IEEE80211_CAP_ESS);
+}
+
+
 static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 					    int i, struct wpa_bss *bss,
 					    struct wpa_ssid *group)
@@ -772,9 +794,8 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 			continue;
 		}
 
-		if (bss->caps & IEEE80211_CAP_IBSS) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - IBSS (adhoc) "
-				"network");
+		if (!bss_is_ess(bss)) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - not ESS network");
 			continue;
 		}
 
@@ -3050,6 +3071,16 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_WPS
 		wpas_wps_start_pbc(wpa_s, NULL, 0);
 #endif /* CONFIG_WPS */
+		break;
+	case EVENT_CONNECT_FAILED_REASON:
+#ifdef CONFIG_AP
+		if (!wpa_s->ap_iface || !data)
+			break;
+		hostapd_event_connect_failed_reason(
+			wpa_s->ap_iface->bss[0],
+			data->connect_failed_reason.addr,
+			data->connect_failed_reason.code);
+#endif /* CONFIG_AP */
 		break;
 	default:
 		wpa_msg(wpa_s, MSG_INFO, "Unknown event %d", event);

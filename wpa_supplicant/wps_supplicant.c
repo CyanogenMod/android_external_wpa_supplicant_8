@@ -1830,8 +1830,26 @@ void wpas_wps_update_config(struct wpa_supplicant *wpa_s)
 
 #ifdef CONFIG_WPS_NFC
 
+struct wpabuf * wpas_wps_nfc_config_token(struct wpa_supplicant *wpa_s,
+					  int ndef)
+{
+#ifdef CONFIG_AP
+	if (wpa_s->ap_iface)
+		return wpas_ap_wps_nfc_config_token(wpa_s, ndef);
+#endif /* CONFIG_AP */
+	return NULL;
+}
+
+
 struct wpabuf * wpas_wps_nfc_token(struct wpa_supplicant *wpa_s, int ndef)
 {
+	if (wpa_s->conf->wps_nfc_pw_from_config) {
+		return wps_nfc_token_build(ndef,
+					   wpa_s->conf->wps_nfc_dev_pw_id,
+					   wpa_s->conf->wps_nfc_dh_pubkey,
+					   wpa_s->conf->wps_nfc_dev_pw);
+	}
+
 	return wps_nfc_token_gen(ndef, &wpa_s->conf->wps_nfc_dev_pw_id,
 				 &wpa_s->conf->wps_nfc_dh_pubkey,
 				 &wpa_s->conf->wps_nfc_dh_privkey,
@@ -1977,15 +1995,20 @@ int wpas_wps_nfc_tag_read(struct wpa_supplicant *wpa_s,
 }
 
 
-struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s)
+struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s, int cr)
 {
+	if (cr)
+		return ndef_build_wifi_hc(1);
 	return ndef_build_wifi_hr();
 }
 
 
-struct wpabuf * wpas_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s)
+struct wpabuf * wpas_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s,
+					  int ndef, int cr)
 {
-	return NULL;
+	if (!cr)
+		return NULL;
+	return wpas_ap_wps_nfc_handover_sel(wpa_s, ndef);
 }
 
 
@@ -2013,6 +2036,17 @@ int wpas_wps_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 	wpabuf_free(wps);
 
 	return ret;
+}
+
+
+int wpas_wps_nfc_report_handover(struct wpa_supplicant *wpa_s,
+				 const struct wpabuf *req,
+				 const struct wpabuf *sel)
+{
+	wpa_printf(MSG_DEBUG, "NFC: WPS connection handover reported");
+	wpa_hexdump_buf_key(MSG_DEBUG, "WPS: Carrier record in request", req);
+	wpa_hexdump_buf_key(MSG_DEBUG, "WPS: Carrier record in select", sel);
+	return wpas_wps_nfc_rx_handover_sel(wpa_s, sel);
 }
 
 #endif /* CONFIG_WPS_NFC */

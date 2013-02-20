@@ -52,5 +52,9 @@ int wpa_supplicant_ap_mac_addr_filter(struct wpa_supplicant *wpa_s,
 void wpa_supplicant_ap_pwd_auth_fail(struct wpa_supplicant *wpa_s);
 void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
 		       int offset);
+struct wpabuf * wpas_ap_wps_nfc_config_token(struct wpa_supplicant *wpa_s,
+					     int ndef);
+struct wpabuf * wpas_ap_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s,
+					     int ndef);
 
 #endif /* AP_H */

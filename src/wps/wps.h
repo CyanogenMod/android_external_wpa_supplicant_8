@@ -810,6 +810,8 @@ u16 wps_config_methods_str2bin(const char *str);
 struct wpabuf * wps_build_nfc_pw_token(u16 dev_pw_id,
 				       const struct wpabuf *pubkey,
 				       const struct wpabuf *dev_pw);
+struct wpabuf * wps_nfc_token_build(int ndef, int id, struct wpabuf *pubkey,
+				    struct wpabuf *dev_pw);
 struct wpabuf * wps_nfc_token_gen(int ndef, int *id, struct wpabuf **pubkey,
 				  struct wpabuf **privkey,
 				  struct wpabuf **dev_pw);
@@ -817,6 +819,7 @@ struct wpabuf * wps_nfc_token_gen(int ndef, int *id, struct wpabuf **pubkey,
 /* ndef.c */
 struct wpabuf * ndef_parse_wifi(const struct wpabuf *buf);
 struct wpabuf * ndef_build_wifi(const struct wpabuf *buf);
+struct wpabuf * ndef_build_wifi_hc(int begin);
 struct wpabuf * ndef_build_wifi_hr(void);
 
 #ifdef CONFIG_WPS_STRICT

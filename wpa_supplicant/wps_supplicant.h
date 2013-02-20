@@ -62,16 +62,22 @@ struct wpabuf * wpas_wps_er_nfc_config_token(struct wpa_supplicant *wpa_s,
 int wpas_wps_terminate_pending(struct wpa_supplicant *wpa_s);
 int wpas_wps_in_progress(struct wpa_supplicant *wpa_s);
 void wpas_wps_update_config(struct wpa_supplicant *wpa_s);
+struct wpabuf * wpas_wps_nfc_config_token(struct wpa_supplicant *wpa_s,
+					  int ndef);
 struct wpabuf * wpas_wps_nfc_token(struct wpa_supplicant *wpa_s, int ndef);
 int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *bssid);
 int wpas_wps_nfc_tag_read(struct wpa_supplicant *wpa_s,
 			  const struct wpabuf *data);
-struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s);
-struct wpabuf * wpas_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s);
+struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s, int cr);
+struct wpabuf * wpas_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s,
+					  int ndef, int cr);
 int wpas_wps_nfc_rx_handover_req(struct wpa_supplicant *wpa_s,
 				 const struct wpabuf *data);
 int wpas_wps_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 				 const struct wpabuf *data);
+int wpas_wps_nfc_report_handover(struct wpa_supplicant *wpa_s,
+				 const struct wpabuf *req,
+				 const struct wpabuf *sel);
 void wpas_wps_update_ap_info(struct wpa_supplicant *wpa_s,
 			     struct wpa_scan_results *scan_res);
 void wpas_wps_notify_assoc(struct wpa_supplicant *wpa_s, const u8 *bssid);
