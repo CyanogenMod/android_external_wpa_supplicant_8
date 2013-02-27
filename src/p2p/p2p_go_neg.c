@@ -161,9 +161,7 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 	p2p_buf_add_capability(buf, p2p->dev_capab &
 			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY,
 			       group_capab);
-	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) |
-			      p2p->next_tie_breaker);
-	p2p->next_tie_breaker = !p2p->next_tie_breaker;
+	p2p_buf_add_go_intent(buf, (p2p->go_intent << 1) | peer->tie_breaker);
 	p2p_buf_add_config_timeout(buf, p2p->go_timeout, p2p->client_timeout);
 	p2p_buf_add_listen_channel(buf, p2p->cfg->country, p2p->cfg->reg_class,
 				   p2p->cfg->channel);
@@ -985,10 +983,8 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 			"P2P: Mandatory P2P Group ID attribute missing from "
 			"GO Negotiation Response");
 		p2p->ssid_len = 0;
-#ifdef CONFIG_P2P_STRICT
 		status = P2P_SC_FAIL_INVALID_PARAMS;
 		goto fail;
-#endif /* CONFIG_P2P_STRICT */
 	}
 
 	if (!msg.config_timeout) {
@@ -1118,6 +1114,11 @@ fail:
 		p2p_go_neg_failed(p2p, dev, -1);
 	}
 	wpabuf_free(conf);
+	if (status != P2P_SC_SUCCESS) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
+			"P2P: GO Negotiation failed");
+		p2p_go_neg_failed(p2p, dev, status);
+	}
 }
 
 
@@ -1175,6 +1176,7 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: GO Negotiation rejected: status %d",
 			*msg.status);
+		p2p_go_neg_failed(p2p, dev, *msg.status);
 		p2p_parse_free(&msg);
 		return;
 	}
@@ -1188,10 +1190,9 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 			"P2P: Mandatory P2P Group ID attribute missing from "
 			"GO Negotiation Confirmation");
 		p2p->ssid_len = 0;
-#ifdef CONFIG_P2P_STRICT
+		p2p_go_neg_failed(p2p, dev, P2P_SC_FAIL_INVALID_PARAMS);
 		p2p_parse_free(&msg);
 		return;
-#endif /* CONFIG_P2P_STRICT */
 	}
 
 	if (!msg.operating_channel) {

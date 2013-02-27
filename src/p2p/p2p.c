@@ -1435,12 +1435,14 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 	else {
 		dev->flags &= ~P2P_DEV_PD_BEFORE_GO_NEG;
 		/*
-		 * Assign dialog token here to use the same value in each
-		 * retry within the same GO Negotiation exchange.
+		 * Assign dialog token and tie breaker here to use the same
+		 * values in each retry within the same GO Negotiation exchange.
 		 */
 		dev->dialog_token++;
 		if (dev->dialog_token == 0)
 			dev->dialog_token = 1;
+		dev->tie_breaker = p2p->next_tie_breaker;
+		p2p->next_tie_breaker = !p2p->next_tie_breaker;
 	}
 	dev->connect_reqs = 0;
 	dev->go_neg_req_sent = 0;
@@ -2231,11 +2233,13 @@ p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *dst,
 	if ((p2p->state == P2P_CONNECT || p2p->state == P2P_CONNECT_LISTEN) &&
 	    p2p->go_neg_peer &&
 	    os_memcmp(addr, p2p->go_neg_peer->info.p2p_device_addr, ETH_ALEN)
-	    == 0) {
+	    == 0 &&
+	    !(p2p->go_neg_peer->flags & P2P_DEV_WAIT_GO_NEG_CONFIRM)) {
 		/* Received a Probe Request from GO Negotiation peer */
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Found GO Negotiation peer - try to start GO "
 			"negotiation from timeout");
+		eloop_cancel_timeout(p2p_go_neg_start, p2p, NULL);
 		eloop_register_timeout(0, 0, p2p_go_neg_start, p2p, NULL);
 		return P2P_PREQ_PROCESSED;
 	}
@@ -2549,6 +2553,7 @@ void p2p_deinit(struct p2p_data *p2p)
 	eloop_cancel_timeout(p2p_expiration_timeout, p2p, NULL);
 	eloop_cancel_timeout(p2p_ext_listen_timeout, p2p, NULL);
 	eloop_cancel_timeout(p2p_scan_timeout, p2p, NULL);
+	eloop_cancel_timeout(p2p_go_neg_start, p2p, NULL);
 	p2p_flush(p2p);
 	p2p_free_req_dev_types(p2p);
 	os_free(p2p->cfg->dev_name);
