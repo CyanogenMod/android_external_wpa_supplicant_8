@@ -61,6 +61,13 @@ def wpas_get_config_token():
     return wpas.request("WPS_NFC_CONFIG_TOKEN NDEF").rstrip().decode("hex")
 
 
+def wpas_get_er_config_token(uuid):
+    wpas = wpas_connect()
+    if (wpas == None):
+        return None
+    return wpas.request("WPS_ER_NFC_CONFIG_TOKEN NDEF " + uuid).rstrip().decode("hex")
+
+
 def wpas_get_password_token():
     wpas = wpas_connect()
     if (wpas == None):
@@ -75,13 +82,89 @@ def wpas_get_handover_req():
     return wpas.request("NFC_GET_HANDOVER_REQ NDEF WPS-CR").rstrip().decode("hex")
 
 
-def wpas_report_handover(req, sel):
+def wpas_get_handover_sel(uuid):
     wpas = wpas_connect()
     if (wpas == None):
         return None
-    return wpas.request("NFC_REPORT_HANDOVER INIT WPS " +
+    if uuid is None:
+        return wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR").rstrip().decode("hex")
+    return wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR " + uuid).rstrip().decode("hex")
+
+
+def wpas_report_handover(req, sel, type):
+    wpas = wpas_connect()
+    if (wpas == None):
+        return None
+    return wpas.request("NFC_REPORT_HANDOVER " + type + " WPS " +
                         str(req).encode("hex") + " " +
                         str(sel).encode("hex"))
+
+
+class HandoverServer(nfc.handover.HandoverServer):
+    def __init__(self):
+        super(HandoverServer, self).__init__()
+
+    def process_request(self, request):
+        print "HandoverServer - request received"
+        print "Parsed handover request: " + request.pretty()
+
+        sel = nfc.ndef.HandoverSelectMessage(version="1.2")
+
+        for carrier in request.carriers:
+            print "Remote carrier type: " + carrier.type
+            if carrier.type == "application/vnd.wfa.wsc":
+                print "WPS carrier type match - add WPS carrier record"
+                self.received_carrier = carrier.record
+                data = wpas_get_handover_sel(self.uuid)
+                if data is None:
+                    print "Could not get handover select carrier record from wpa_supplicant"
+                    continue
+                print "Handover select carrier record from wpa_supplicant:"
+                print data.encode("hex")
+                self.sent_carrier = data
+
+                message = nfc.ndef.Message(data);
+                sel.add_carrier(message[0], "active", message[1:])
+
+        print "Handover select:"
+        print sel.pretty()
+        print str(sel).encode("hex")
+
+        print "Sending handover select"
+        return sel
+
+
+def wps_handover_resp(peer, uuid):
+    if uuid is None:
+        print "Trying to handle WPS handover"
+    else:
+        print "Trying to handle WPS handover with AP " + uuid
+
+    srv = HandoverServer()
+    srv.sent_carrier = None
+    srv.uuid = uuid
+
+    nfc.llcp.activate(peer);
+
+    try:
+        print "Trying handover";
+        srv.start()
+        print "Wait for disconnect"
+        while nfc.llcp.connected():
+            time.sleep(0.1)
+        print "Disconnected after handover"
+    except nfc.llcp.ConnectRefused:
+        print "Handover connection refused"
+        nfc.llcp.shutdown()
+        return
+
+    if srv.sent_carrier:
+        wpas_report_handover(srv.received_carrier, srv.sent_carrier, "RESP")
+
+    print "Remove peer"
+    nfc.llcp.shutdown()
+    print "Done with handover"
+    time.sleep(1)
 
 
 def wps_handover_init(peer):
@@ -147,7 +230,7 @@ def wps_handover_init(peer):
         print "Remote carrier type: " + carrier.type
         if carrier.type == "application/vnd.wfa.wsc":
             print "WPS carrier type match - send to wpa_supplicant"
-            wpas_report_handover(data, carrier.record)
+            wpas_report_handover(data, carrier.record, "INIT")
             wifi = nfc.ndef.WifiConfigRecord(carrier.record)
             print wifi.pretty()
 
@@ -179,6 +262,28 @@ def wps_tag_read(tag):
 def wps_write_config_tag(clf):
     print "Write WPS config token"
     data = wpas_get_config_token()
+    if (data == None):
+        print "Could not get WPS config token from wpa_supplicant"
+        return
+
+    print "Touch an NFC tag"
+    while True:
+        tag = clf.poll()
+        if tag == None:
+            time.sleep(0.1)
+            continue
+        break
+
+    print "Tag found - writing"
+    tag.ndef.message = data
+    print "Done - remove tag"
+    while tag.is_present:
+        time.sleep(0.1)
+
+
+def wps_write_er_config_tag(clf, uuid):
+    print "Write WPS ER config token"
+    data = wpas_get_er_config_token(uuid)
     if (data == None):
         print "Could not get WPS config token from wpa_supplicant"
         return
@@ -252,8 +357,16 @@ def main():
     clf = nfc.ContactlessFrontend()
 
     try:
+        arg_uuid = None
+        if len(sys.argv) > 1:
+            arg_uuid = sys.argv[1]
+
         if len(sys.argv) > 1 and sys.argv[1] == "write-config":
             wps_write_config_tag(clf)
+            raise SystemExit
+
+        if len(sys.argv) > 2 and sys.argv[1] == "write-er-config":
+            wps_write_er_config_tag(clf, sys.argv[2])
             raise SystemExit
 
         if len(sys.argv) > 1 and sys.argv[1] == "write-password":
@@ -265,7 +378,12 @@ def main():
 
             tag = find_peer(clf)
             if isinstance(tag, nfc.DEP):
-                wps_handover_init(tag)
+                if arg_uuid is None:
+                    wps_handover_init(tag)
+                elif arg_uuid is "ap":
+                    wps_handover_resp(tag, None)
+                else:
+                    wps_handover_resp(tag, arg_uuid)
                 continue
 
             if tag.ndef:
