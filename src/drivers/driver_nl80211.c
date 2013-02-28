@@ -2470,6 +2470,9 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 			case NL80211_IFTYPE_AP:
 				capa->flags |= WPA_DRIVER_FLAGS_AP;
 				break;
+			case NL80211_IFTYPE_ADHOC:
+				capa->flags |= WPA_DRIVER_FLAGS_IBSS;
+				break;
 			case NL80211_IFTYPE_P2P_GO:
 				p2p_go_supported = 1;
 				break;
