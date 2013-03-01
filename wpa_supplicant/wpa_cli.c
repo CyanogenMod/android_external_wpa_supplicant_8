@@ -403,11 +403,7 @@ static void wpa_cli_msg_cb(char *msg, size_t len)
 
 static int _wpa_ctrl_command(struct wpa_ctrl *ctrl, char *cmd, int print)
 {
-#ifdef ANDROID
 	char buf[4096];
-#else		
-	char buf[2048];
-#endif	
 #if defined(CONFIG_P2P) && defined(ANDROID_P2P)
 	char _cmd[256];
 #endif
@@ -3455,11 +3451,7 @@ static char * wpa_cli_get_default_ifname(void)
 #endif /* CONFIG_CTRL_IFACE_UNIX */
 
 #ifdef CONFIG_CTRL_IFACE_NAMED_PIPE
-#ifdef ANDROID
-	char buf[4096], *pos;
-#else
 	char buf[2048], *pos;
-#endif
 	size_t len;
 	struct wpa_ctrl *ctrl;
 	int ret;
