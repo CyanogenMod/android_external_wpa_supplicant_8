@@ -742,6 +742,7 @@ struct p2p_config {
 	 * @ctx: Callback context from cb_ctx
 	 * @status: Negotiation result (Status Code)
 	 * @bssid: P2P Group BSSID or %NULL if not received
+	 * @channels: Available operating channels for the group
 	 *
 	 * This callback is used to indicate result of an Invitation procedure
 	 * started with a call to p2p_invite(). The indicated status code is
@@ -749,7 +750,8 @@ struct p2p_config {
 	 * (P2P_SC_SUCCESS) indicating success or -1 to indicate a timeout or a
 	 * local failure in transmitting the Invitation Request.
 	 */
-	void (*invitation_result)(void *ctx, int status, const u8 *bssid);
+	void (*invitation_result)(void *ctx, int status, const u8 *bssid,
+				  const struct p2p_channels *channels);
 
 	/**
 	 * go_connected - Check whether we are connected to a GO
@@ -1059,12 +1061,14 @@ enum p2p_invite_role {
  * @force_freq: The only allowed channel frequency in MHz or 0
  * @go_dev_addr: Forced GO Device Address or %NULL if none
  * @persistent_group: Whether this is to reinvoke a persistent group
+ * @pref_freq: Preferred operating frequency in MHz or 0 (this is only used if
+ *	force_freq == 0)
  * Returns: 0 on success, -1 on failure
  */
 int p2p_invite(struct p2p_data *p2p, const u8 *peer, enum p2p_invite_role role,
 	       const u8 *bssid, const u8 *ssid, size_t ssid_len,
 	       unsigned int force_freq, const u8 *go_dev_addr,
-	       int persistent_group);
+	       int persistent_group, unsigned int pref_freq);
 
 /**
  * p2p_presence_req - Request GO presence
@@ -1630,6 +1634,9 @@ int p2p_get_oper_freq(struct p2p_data *p2p, const u8 *iface_addr);
  * @enabled: Whether intra BSS distribution will be enabled
  */
 void p2p_set_intra_bss_dist(struct p2p_data *p2p, int enabled);
+
+int p2p_channels_includes_freq(const struct p2p_channels *channels,
+			       unsigned int freq);
 
 /**
  * p2p_supported_freq - Check whether channel is supported for P2P

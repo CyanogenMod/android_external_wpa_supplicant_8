@@ -1326,8 +1326,8 @@ static void p2p_prepare_channel_best(struct p2p_data *p2p)
  * may be further optimized in p2p_reselect_channel() once the peer information
  * is available.
  */
-static int p2p_prepare_channel(struct p2p_data *p2p, struct p2p_device *dev,
-			       unsigned int force_freq, unsigned int pref_freq)
+int p2p_prepare_channel(struct p2p_data *p2p, struct p2p_device *dev,
+			unsigned int force_freq, unsigned int pref_freq)
 {
 	if (force_freq || pref_freq) {
 		if (p2p_prepare_channel_pref(p2p, force_freq, pref_freq) < 0)
@@ -3490,7 +3490,7 @@ static void p2p_timeout_invite_listen(struct p2p_data *p2p)
 				"P2P: Invitation Request retry limit reached");
 			if (p2p->cfg->invitation_result)
 				p2p->cfg->invitation_result(
-					p2p->cfg->cb_ctx, -1, NULL);
+					p2p->cfg->cb_ctx, -1, NULL, NULL);
 		}
 		p2p_set_state(p2p, P2P_IDLE);
 	}

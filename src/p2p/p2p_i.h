@@ -92,6 +92,7 @@ struct p2p_device {
 #define P2P_DEV_REPORTED_ONCE BIT(15)
 #define P2P_DEV_PREFER_PERSISTENT_RECONN BIT(16)
 #define P2P_DEV_PD_BEFORE_GO_NEG BIT(17)
+#define P2P_DEV_NO_PREF_CHAN BIT(18)
 	unsigned int flags;
 
 	int status; /* enum p2p_status_code */
@@ -726,5 +727,7 @@ int p2p_send_action(struct p2p_data *p2p, unsigned int freq, const u8 *dst,
 		    const u8 *src, const u8 *bssid, const u8 *buf,
 		    size_t len, unsigned int wait_time);
 void p2p_stop_listen_for_freq(struct p2p_data *p2p, int freq);
+int p2p_prepare_channel(struct p2p_data *p2p, struct p2p_device *dev,
+			unsigned int force_freq, unsigned int pref_freq);
 
 #endif /* P2P_I_H */
