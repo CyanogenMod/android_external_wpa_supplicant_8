@@ -1747,6 +1747,24 @@ void wpa_supplicant_deauthenticate(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_clear_connection(wpa_s, addr);
 }
 
+static void wpa_supplicant_enable_one_network(struct wpa_supplicant *wpa_s,
+					      struct wpa_ssid *ssid)
+{
+	if (!ssid || !ssid->disabled || ssid->disabled == 2)
+		return;
+
+	ssid->disabled = 0;
+	wpas_clear_temp_disabled(wpa_s, ssid, 1);
+	wpas_notify_network_enabled_changed(wpa_s, ssid);
+
+	/*
+	 * Try to reassociate since there is no current configuration and a new
+	 * network was made available.
+	 */
+	if (!wpa_s->current_ssid)
+		wpa_s->reassociate = 1;
+}
+
 
 /**
  * wpa_supplicant_enable_network - Mark a configured network as enabled
@@ -1758,48 +1776,20 @@ void wpa_supplicant_deauthenticate(struct wpa_supplicant *wpa_s,
 void wpa_supplicant_enable_network(struct wpa_supplicant *wpa_s,
 				   struct wpa_ssid *ssid)
 {
-	struct wpa_ssid *other_ssid;
-	int was_disabled;
-
 	if (ssid == NULL) {
-		for (other_ssid = wpa_s->conf->ssid; other_ssid;
-		     other_ssid = other_ssid->next) {
-			if (other_ssid->disabled == 2)
-				continue; /* do not change persistent P2P group
-					   * data */
-			if (other_ssid == wpa_s->current_ssid &&
-			    other_ssid->disabled)
-				wpa_s->reassociate = 1;
+		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next)
+			wpa_supplicant_enable_one_network(wpa_s, ssid);
+	} else
+		wpa_supplicant_enable_one_network(wpa_s, ssid);
 
-			was_disabled = other_ssid->disabled;
-
-			other_ssid->disabled = 0;
-			if (was_disabled)
-				wpas_clear_temp_disabled(wpa_s, other_ssid, 0);
-
-			if (was_disabled != other_ssid->disabled)
-				wpas_notify_network_enabled_changed(
-					wpa_s, other_ssid);
-		}
-		if (wpa_s->reassociate)
-			wpa_supplicant_req_scan(wpa_s, 0, 0);
-	} else if (ssid->disabled && ssid->disabled != 2) {
-		if (wpa_s->current_ssid == NULL) {
-			/*
-			 * Try to reassociate since there is no current
-			 * configuration and a new network was made available.
-			 */
-			wpa_s->reassociate = 1;
-			wpa_supplicant_req_scan(wpa_s, 0, 0);
+	if (wpa_s->reassociate) {
+		if (wpa_s->sched_scanning) {
+			wpa_printf(MSG_DEBUG, "Stop ongoing sched_scan to add "
+				   "new network to scan filters");
+			wpa_supplicant_cancel_sched_scan(wpa_s);
 		}
 
-		was_disabled = ssid->disabled;
-
-		ssid->disabled = 0;
-		wpas_clear_temp_disabled(wpa_s, ssid, 1);
-
-		if (was_disabled != ssid->disabled)
-			wpas_notify_network_enabled_changed(wpa_s, ssid);
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
 	}
 }
 
@@ -1818,6 +1808,9 @@ void wpa_supplicant_disable_network(struct wpa_supplicant *wpa_s,
 	int was_disabled;
 
 	if (ssid == NULL) {
+		if (wpa_s->sched_scanning)
+			wpa_supplicant_cancel_sched_scan(wpa_s);
+
 		for (other_ssid = wpa_s->conf->ssid; other_ssid;
 		     other_ssid = other_ssid->next) {
 			was_disabled = other_ssid->disabled;
@@ -1843,8 +1836,15 @@ void wpa_supplicant_disable_network(struct wpa_supplicant *wpa_s,
 
 		ssid->disabled = 1;
 
-		if (was_disabled != ssid->disabled)
+		if (was_disabled != ssid->disabled) {
 			wpas_notify_network_enabled_changed(wpa_s, ssid);
+			if (wpa_s->sched_scanning) {
+				wpa_printf(MSG_DEBUG, "Stop ongoing sched_scan "
+					   "to remove network from filters");
+				wpa_supplicant_cancel_sched_scan(wpa_s);
+				wpa_supplicant_req_scan(wpa_s, 0, 0);
+			}
+		}
 	}
 }
 
@@ -2644,6 +2644,54 @@ void wpa_supplicant_apply_ht_overrides(
 }
 
 #endif /* CONFIG_HT_OVERRIDES */
+
+
+#ifdef CONFIG_VHT_OVERRIDES
+void wpa_supplicant_apply_vht_overrides(
+	struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
+	struct wpa_driver_associate_params *params)
+{
+	struct ieee80211_vht_capabilities *vhtcaps;
+	struct ieee80211_vht_capabilities *vhtcaps_mask;
+
+	if (!ssid)
+		return;
+
+	params->disable_vht = ssid->disable_vht;
+
+	vhtcaps = (void *) params->vhtcaps;
+	vhtcaps_mask = (void *) params->vhtcaps_mask;
+
+	if (!vhtcaps || !vhtcaps_mask)
+		return;
+
+	vhtcaps->vht_capabilities_info = ssid->vht_capa;
+	vhtcaps_mask->vht_capabilities_info = ssid->vht_capa_mask;
+
+#define OVERRIDE_MCS(i)							\
+	if (ssid->vht_tx_mcs_nss_ ##i >= 0) {				\
+		vhtcaps_mask->vht_supported_mcs_set.tx_map |=		\
+			3 << 2 * (i - 1);				\
+		vhtcaps->vht_supported_mcs_set.tx_map |=		\
+			ssid->vht_tx_mcs_nss_ ##i << 2 * (i - 1);	\
+	}								\
+	if (ssid->vht_rx_mcs_nss_ ##i >= 0) {				\
+		vhtcaps_mask->vht_supported_mcs_set.rx_map |=		\
+			3 << 2 * (i - 1);				\
+		vhtcaps->vht_supported_mcs_set.rx_map |=		\
+			ssid->vht_rx_mcs_nss_ ##i << 2 * (i - 1);	\
+	}
+
+	OVERRIDE_MCS(1);
+	OVERRIDE_MCS(2);
+	OVERRIDE_MCS(3);
+	OVERRIDE_MCS(4);
+	OVERRIDE_MCS(5);
+	OVERRIDE_MCS(6);
+	OVERRIDE_MCS(7);
+	OVERRIDE_MCS(8);
+}
+#endif /* CONFIG_VHT_OVERRIDES */
 
 
 static int pcsc_reader_init(struct wpa_supplicant *wpa_s)
