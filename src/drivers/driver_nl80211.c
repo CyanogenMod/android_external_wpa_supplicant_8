@@ -2485,6 +2485,42 @@ nla_put_failure:
 }
 
 
+static int protocol_feature_handler(struct nl_msg *msg, void *arg)
+{
+	u32 *feat = arg;
+	struct nlattr *tb_msg[NL80211_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+
+	nla_parse(tb_msg, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+
+	if (tb_msg[NL80211_ATTR_PROTOCOL_FEATURES])
+		*feat = nla_get_u32(tb_msg[NL80211_ATTR_PROTOCOL_FEATURES]);
+
+	return NL_SKIP;
+}
+
+
+static u32 get_nl80211_protocol_features(struct wpa_driver_nl80211_data *drv)
+{
+	u32 feat = 0;
+	struct nl_msg *msg;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		goto nla_put_failure;
+
+	nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_PROTOCOL_FEATURES);
+	if (send_and_recv_msgs(drv, msg, protocol_feature_handler, &feat) == 0)
+		return feat;
+
+	msg = NULL;
+nla_put_failure:
+	nlmsg_free(msg);
+	return 0;
+}
+
+
 struct wiphy_info_data {
 	struct wpa_driver_capa *capa;
 
@@ -2493,6 +2529,12 @@ struct wiphy_info_data {
 	unsigned int poll_command_supported:1;
 	unsigned int data_tx_status:1;
 	unsigned int monitor_supported:1;
+	unsigned int auth_supported:1;
+	unsigned int connect_supported:1;
+	unsigned int p2p_go_supported:1;
+	unsigned int p2p_client_supported:1;
+	unsigned int p2p_concurrent:1;
+	unsigned int p2p_multichan_concurrent:1;
 };
 
 
@@ -2513,15 +2555,42 @@ static unsigned int probe_resp_offload_support(int supp_protocols)
 }
 
 
-static int wiphy_info_handler(struct nl_msg *msg, void *arg)
+static void wiphy_info_supported_iftypes(struct wiphy_info_data *info,
+					 struct nlattr *tb)
 {
-	struct nlattr *tb[NL80211_ATTR_MAX + 1];
-	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
-	struct wiphy_info_data *info = arg;
-	int p2p_go_supported = 0, p2p_client_supported = 0;
-	int p2p_concurrent = 0, p2p_multichan_concurrent = 0;
-	int auth_supported = 0, connect_supported = 0;
-	struct wpa_driver_capa *capa = info->capa;
+	struct nlattr *nl_mode;
+	int i;
+
+	if (tb == NULL)
+		return;
+
+	nla_for_each_nested(nl_mode, tb, i) {
+		switch (nla_type(nl_mode)) {
+		case NL80211_IFTYPE_AP:
+			info->capa->flags |= WPA_DRIVER_FLAGS_AP;
+			break;
+		case NL80211_IFTYPE_P2P_GO:
+			info->p2p_go_supported = 1;
+			break;
+		case NL80211_IFTYPE_P2P_CLIENT:
+			info->p2p_client_supported = 1;
+			break;
+		case NL80211_IFTYPE_MONITOR:
+			info->monitor_supported = 1;
+			break;
+		}
+	}
+}
+
+
+static int wiphy_info_iface_comb_process(struct wiphy_info_data *info,
+					 struct nlattr *nl_combi)
+{
+	struct nlattr *tb_comb[NUM_NL80211_IFACE_COMB];
+	struct nlattr *tb_limit[NUM_NL80211_IFACE_LIMIT];
+	struct nlattr *nl_limit, *nl_mode;
+	int err, rem_limit, rem_mode;
+	int combination_has_p2p = 0, combination_has_mgd = 0;
 	static struct nla_policy
 	iface_combination_policy[NUM_NL80211_IFACE_COMB] = {
 		[NL80211_IFACE_COMB_LIMITS] = { .type = NLA_NESTED },
@@ -2533,6 +2602,164 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 		[NL80211_IFACE_LIMIT_TYPES] = { .type = NLA_NESTED },
 		[NL80211_IFACE_LIMIT_MAX] = { .type = NLA_U32 },
 	};
+
+	err = nla_parse_nested(tb_comb, MAX_NL80211_IFACE_COMB,
+			       nl_combi, iface_combination_policy);
+	if (err || !tb_comb[NL80211_IFACE_COMB_LIMITS] ||
+	    !tb_comb[NL80211_IFACE_COMB_MAXNUM] ||
+	    !tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS])
+		return 0; /* broken combination */
+
+	nla_for_each_nested(nl_limit, tb_comb[NL80211_IFACE_COMB_LIMITS],
+			    rem_limit) {
+		err = nla_parse_nested(tb_limit, MAX_NL80211_IFACE_LIMIT,
+				       nl_limit, iface_limit_policy);
+		if (err || !tb_limit[NL80211_IFACE_LIMIT_TYPES])
+			return 0; /* broken combination */
+
+		nla_for_each_nested(nl_mode,
+				    tb_limit[NL80211_IFACE_LIMIT_TYPES],
+				    rem_mode) {
+			int ift = nla_type(nl_mode);
+			if (ift == NL80211_IFTYPE_P2P_GO ||
+			    ift == NL80211_IFTYPE_P2P_CLIENT)
+				combination_has_p2p = 1;
+			if (ift == NL80211_IFTYPE_STATION)
+				combination_has_mgd = 1;
+		}
+		if (combination_has_p2p && combination_has_mgd)
+			break;
+	}
+
+	if (combination_has_p2p && combination_has_mgd) {
+		info->p2p_concurrent = 1;
+		if (nla_get_u32(tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS]) > 1)
+			info->p2p_multichan_concurrent = 1;
+		return 1;
+	}
+
+	return 0;
+}
+
+
+static void wiphy_info_iface_comb(struct wiphy_info_data *info,
+				  struct nlattr *tb)
+{
+	struct nlattr *nl_combi;
+	int rem_combi;
+
+	if (tb == NULL)
+		return;
+
+	nla_for_each_nested(nl_combi, tb, rem_combi) {
+		if (wiphy_info_iface_comb_process(info, nl_combi) > 0)
+			break;
+	}
+}
+
+
+static void wiphy_info_supp_cmds(struct wiphy_info_data *info,
+				 struct nlattr *tb)
+{
+	struct nlattr *nl_cmd;
+	int i;
+
+	if (tb == NULL)
+		return;
+
+	nla_for_each_nested(nl_cmd, tb, i) {
+		switch (nla_get_u32(nl_cmd)) {
+		case NL80211_CMD_AUTHENTICATE:
+			info->auth_supported = 1;
+			break;
+		case NL80211_CMD_CONNECT:
+			info->connect_supported = 1;
+			break;
+		case NL80211_CMD_START_SCHED_SCAN:
+			info->capa->sched_scan_supported = 1;
+			break;
+		case NL80211_CMD_PROBE_CLIENT:
+			info->poll_command_supported = 1;
+			break;
+		}
+	}
+}
+
+
+static void wiphy_info_max_roc(struct wpa_driver_capa *capa,
+			       struct nlattr *tb)
+{
+	/* default to 5000 since early versions of mac80211 don't set it */
+	capa->max_remain_on_chan = 5000;
+
+	if (tb)
+		capa->max_remain_on_chan = nla_get_u32(tb);
+}
+
+
+static void wiphy_info_tdls(struct wpa_driver_capa *capa, struct nlattr *tdls,
+			    struct nlattr *ext_setup)
+{
+	if (tdls == NULL)
+		return;
+
+	wpa_printf(MSG_DEBUG, "nl80211: TDLS supported");
+	capa->flags |= WPA_DRIVER_FLAGS_TDLS_SUPPORT;
+
+	if (ext_setup) {
+		wpa_printf(MSG_DEBUG, "nl80211: TDLS external setup");
+		capa->flags |= WPA_DRIVER_FLAGS_TDLS_EXTERNAL_SETUP;
+	}
+}
+
+
+static void wiphy_info_feature_flags(struct wiphy_info_data *info,
+				     struct nlattr *tb)
+{
+	u32 flags;
+	struct wpa_driver_capa *capa = info->capa;
+
+	if (tb == NULL)
+		return;
+
+	flags = nla_get_u32(tb);
+
+	if (flags & NL80211_FEATURE_SK_TX_STATUS)
+		info->data_tx_status = 1;
+
+	if (flags & NL80211_FEATURE_INACTIVITY_TIMER)
+		capa->flags |= WPA_DRIVER_FLAGS_INACTIVITY_TIMER;
+
+	if (flags & NL80211_FEATURE_SAE)
+		capa->flags |= WPA_DRIVER_FLAGS_SAE;
+
+	if (flags & NL80211_FEATURE_NEED_OBSS_SCAN)
+		capa->flags |= WPA_DRIVER_FLAGS_OBSS_SCAN;
+}
+
+
+static void wiphy_info_probe_resp_offload(struct wpa_driver_capa *capa,
+					  struct nlattr *tb)
+{
+	u32 protocols;
+
+	if (tb == NULL)
+		return;
+
+	protocols = nla_get_u32(tb);
+	wpa_printf(MSG_DEBUG, "nl80211: Supports Probe Response offload in AP "
+		   "mode");
+	capa->flags |= WPA_DRIVER_FLAGS_PROBE_RESP_OFFLOAD;
+	capa->probe_resp_offloads = probe_resp_offload_support(protocols);
+}
+
+
+static int wiphy_info_handler(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	struct wiphy_info_data *info = arg;
+	struct wpa_driver_capa *capa = info->capa;
 
 	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
 		  genlmsg_attrlen(gnlh, 0), NULL);
@@ -2549,109 +2776,9 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 		capa->max_match_sets =
 			nla_get_u8(tb[NL80211_ATTR_MAX_MATCH_SETS]);
 
-	if (tb[NL80211_ATTR_SUPPORTED_IFTYPES]) {
-		struct nlattr *nl_mode;
-		int i;
-		nla_for_each_nested(nl_mode,
-				    tb[NL80211_ATTR_SUPPORTED_IFTYPES], i) {
-			switch (nla_type(nl_mode)) {
-			case NL80211_IFTYPE_AP:
-				capa->flags |= WPA_DRIVER_FLAGS_AP;
-				break;
-			case NL80211_IFTYPE_P2P_GO:
-				p2p_go_supported = 1;
-				break;
-			case NL80211_IFTYPE_P2P_CLIENT:
-				p2p_client_supported = 1;
-				break;
-			case NL80211_IFTYPE_MONITOR:
-				info->monitor_supported = 1;
-				break;
-			}
-		}
-	}
-
-	if (tb[NL80211_ATTR_INTERFACE_COMBINATIONS]) {
-		struct nlattr *nl_combi;
-		int rem_combi;
-
-		nla_for_each_nested(nl_combi,
-				    tb[NL80211_ATTR_INTERFACE_COMBINATIONS],
-				    rem_combi) {
-			struct nlattr *tb_comb[NUM_NL80211_IFACE_COMB];
-			struct nlattr *tb_limit[NUM_NL80211_IFACE_LIMIT];
-			struct nlattr *nl_limit, *nl_mode;
-			int err, rem_limit, rem_mode;
-			int combination_has_p2p = 0, combination_has_mgd = 0;
-
-			err = nla_parse_nested(tb_comb, MAX_NL80211_IFACE_COMB,
-					       nl_combi,
-					       iface_combination_policy);
-			if (err || !tb_comb[NL80211_IFACE_COMB_LIMITS] ||
-			    !tb_comb[NL80211_IFACE_COMB_MAXNUM] ||
-			    !tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS])
-				goto broken_combination;
-
-			nla_for_each_nested(nl_limit,
-					    tb_comb[NL80211_IFACE_COMB_LIMITS],
-					    rem_limit) {
-				err = nla_parse_nested(tb_limit,
-						       MAX_NL80211_IFACE_LIMIT,
-						       nl_limit,
-						       iface_limit_policy);
-				if (err ||
-				    !tb_limit[NL80211_IFACE_LIMIT_TYPES])
-					goto broken_combination;
-
-				nla_for_each_nested(
-					nl_mode,
-					tb_limit[NL80211_IFACE_LIMIT_TYPES],
-					rem_mode) {
-					int ift = nla_type(nl_mode);
-					if (ift == NL80211_IFTYPE_P2P_GO ||
-					    ift == NL80211_IFTYPE_P2P_CLIENT)
-						combination_has_p2p = 1;
-					if (ift == NL80211_IFTYPE_STATION)
-						combination_has_mgd = 1;
-				}
-				if (combination_has_p2p && combination_has_mgd)
-					break;
-			}
-
-			if (combination_has_p2p && combination_has_mgd) {
-				p2p_concurrent = 1;
-				if (nla_get_u32(tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS]) > 1)
-					p2p_multichan_concurrent = 1;
-				break;
-			}
-
-broken_combination:
-			;
-		}
-	}
-
-	if (tb[NL80211_ATTR_SUPPORTED_COMMANDS]) {
-		struct nlattr *nl_cmd;
-		int i;
-
-		nla_for_each_nested(nl_cmd,
-				    tb[NL80211_ATTR_SUPPORTED_COMMANDS], i) {
-			switch (nla_get_u32(nl_cmd)) {
-			case NL80211_CMD_AUTHENTICATE:
-				auth_supported = 1;
-				break;
-			case NL80211_CMD_CONNECT:
-				connect_supported = 1;
-				break;
-			case NL80211_CMD_START_SCHED_SCAN:
-				capa->sched_scan_supported = 1;
-				break;
-			case NL80211_CMD_PROBE_CLIENT:
-				info->poll_command_supported = 1;
-				break;
-			}
-		}
-	}
+	wiphy_info_supported_iftypes(info, tb[NL80211_ATTR_SUPPORTED_IFTYPES]);
+	wiphy_info_iface_comb(info, tb[NL80211_ATTR_INTERFACE_COMBINATIONS]);
+	wiphy_info_supp_cmds(info, tb[NL80211_ATTR_SUPPORTED_COMMANDS]);
 
 	if (tb[NL80211_ATTR_OFFCHANNEL_TX_OK]) {
 		wpa_printf(MSG_DEBUG, "nl80211: Using driver-based "
@@ -2664,79 +2791,21 @@ broken_combination:
 		capa->flags |= WPA_DRIVER_FLAGS_BSS_SELECTION;
 	}
 
-	/* default to 5000 since early versions of mac80211 don't set it */
-	capa->max_remain_on_chan = 5000;
+	wiphy_info_max_roc(capa,
+			   tb[NL80211_ATTR_MAX_REMAIN_ON_CHANNEL_DURATION]);
 
 	if (tb[NL80211_ATTR_SUPPORT_AP_UAPSD])
 		capa->flags |= WPA_DRIVER_FLAGS_AP_UAPSD;
 
-	if (tb[NL80211_ATTR_MAX_REMAIN_ON_CHANNEL_DURATION])
-		capa->max_remain_on_chan =
-			nla_get_u32(tb[NL80211_ATTR_MAX_REMAIN_ON_CHANNEL_DURATION]);
-
-	if (auth_supported)
-		capa->flags |= WPA_DRIVER_FLAGS_SME;
-	else if (!connect_supported) {
-		wpa_printf(MSG_INFO, "nl80211: Driver does not support "
-			   "authentication/association or connect commands");
-		info->error = 1;
-	}
-
-	if (p2p_go_supported && p2p_client_supported)
-		capa->flags |= WPA_DRIVER_FLAGS_P2P_CAPABLE;
-	if (p2p_concurrent) {
-		wpa_printf(MSG_DEBUG, "nl80211: Use separate P2P group "
-			   "interface (driver advertised support)");
-		capa->flags |= WPA_DRIVER_FLAGS_P2P_CONCURRENT;
-		capa->flags |= WPA_DRIVER_FLAGS_P2P_MGMT_AND_NON_P2P;
-
-		if (p2p_multichan_concurrent) {
-			wpa_printf(MSG_DEBUG, "nl80211: Enable multi-channel "
-				   "concurrent (driver advertised support)");
-			capa->flags |=
-				WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT;
-		}
-	}
-
-	if (tb[NL80211_ATTR_TDLS_SUPPORT]) {
-		wpa_printf(MSG_DEBUG, "nl80211: TDLS supported");
-		capa->flags |= WPA_DRIVER_FLAGS_TDLS_SUPPORT;
-
-		if (tb[NL80211_ATTR_TDLS_EXTERNAL_SETUP]) {
-			wpa_printf(MSG_DEBUG, "nl80211: TDLS external setup");
-			capa->flags |=
-				WPA_DRIVER_FLAGS_TDLS_EXTERNAL_SETUP;
-		}
-	}
+	wiphy_info_tdls(capa, tb[NL80211_ATTR_TDLS_SUPPORT],
+			tb[NL80211_ATTR_TDLS_EXTERNAL_SETUP]);
 
 	if (tb[NL80211_ATTR_DEVICE_AP_SME])
 		info->device_ap_sme = 1;
 
-	if (tb[NL80211_ATTR_FEATURE_FLAGS]) {
-		u32 flags = nla_get_u32(tb[NL80211_ATTR_FEATURE_FLAGS]);
-
-		if (flags & NL80211_FEATURE_SK_TX_STATUS)
-			info->data_tx_status = 1;
-
-		if (flags & NL80211_FEATURE_INACTIVITY_TIMER)
-			capa->flags |= WPA_DRIVER_FLAGS_INACTIVITY_TIMER;
-
-		if (flags & NL80211_FEATURE_SAE)
-			capa->flags |= WPA_DRIVER_FLAGS_SAE;
-
-		if (flags & NL80211_FEATURE_NEED_OBSS_SCAN)
-			capa->flags |= WPA_DRIVER_FLAGS_OBSS_SCAN;
-	}
-
-	if (tb[NL80211_ATTR_PROBE_RESP_OFFLOAD]) {
-		int protocols =
-			nla_get_u32(tb[NL80211_ATTR_PROBE_RESP_OFFLOAD]);
-		wpa_printf(MSG_DEBUG, "nl80211: Supports Probe Response "
-			   "offload in AP mode");
-		capa->flags |= WPA_DRIVER_FLAGS_PROBE_RESP_OFFLOAD;
-		capa->probe_resp_offloads =
-			probe_resp_offload_support(protocols);
-	}
+	wiphy_info_feature_flags(info, tb[NL80211_ATTR_FEATURE_FLAGS]);
+	wiphy_info_probe_resp_offload(capa,
+				      tb[NL80211_ATTR_PROBE_RESP_OFFLOAD]);
 
 	return NL_SKIP;
 }
@@ -2745,6 +2814,7 @@ broken_combination:
 static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 				       struct wiphy_info_data *info)
 {
+	u32 feat;
 	struct nl_msg *msg;
 
 	os_memset(info, 0, sizeof(*info));
@@ -2754,13 +2824,40 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 	if (!msg)
 		return -1;
 
-	nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_WIPHY);
+	feat = get_nl80211_protocol_features(drv);
+	if (feat & NL80211_PROTOCOL_FEATURE_SPLIT_WIPHY_DUMP)
+		nl80211_cmd(drv, msg, NLM_F_DUMP, NL80211_CMD_GET_WIPHY);
+	else
+		nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_WIPHY);
 
+	NLA_PUT_FLAG(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->first_bss.ifindex);
 
-	if (send_and_recv_msgs(drv, msg, wiphy_info_handler, info) == 0)
-		return 0;
-	msg = NULL;
+	if (send_and_recv_msgs(drv, msg, wiphy_info_handler, info))
+		return -1;
+
+	if (info->auth_supported)
+		drv->capa.flags |= WPA_DRIVER_FLAGS_SME;
+	else if (!info->connect_supported) {
+		wpa_printf(MSG_INFO, "nl80211: Driver does not support "
+			   "authentication/association or connect commands");
+		info->error = 1;
+	}
+
+	if (info->p2p_go_supported && info->p2p_client_supported)
+		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_CAPABLE;
+	if (info->p2p_concurrent) {
+		wpa_printf(MSG_DEBUG, "nl80211: Use separate P2P group "
+			   "interface (driver advertised support)");
+		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_CONCURRENT;
+		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_MGMT_AND_NON_P2P;
+	}
+	if (info->p2p_multichan_concurrent) {
+		wpa_printf(MSG_DEBUG, "nl80211: Enable multi-channel "
+			   "concurrent (driver advertised support)");
+		drv->capa.flags |= WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT;
+	}
+	return 0;
 nla_put_failure:
 	nlmsg_free(msg);
 	return -1;
@@ -4921,17 +5018,101 @@ static int wpa_driver_nl80211_authenticate_retry(
 struct phy_info_arg {
 	u16 *num_modes;
 	struct hostapd_hw_modes *modes;
+	int last_mode, last_chan_idx;
 };
 
-static int phy_info_handler(struct nl_msg *msg, void *arg)
+static void phy_info_ht_capa(struct hostapd_hw_modes *mode, struct nlattr *capa,
+			     struct nlattr *ampdu_factor,
+			     struct nlattr *ampdu_density,
+			     struct nlattr *mcs_set)
 {
-	struct nlattr *tb_msg[NL80211_ATTR_MAX + 1];
-	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
-	struct phy_info_arg *phy_info = arg;
+	if (capa)
+		mode->ht_capab = nla_get_u16(capa);
 
-	struct nlattr *tb_band[NL80211_BAND_ATTR_MAX + 1];
+	if (ampdu_factor)
+		mode->a_mpdu_params |= nla_get_u8(ampdu_factor) & 0x03;
 
-	struct nlattr *tb_freq[NL80211_FREQUENCY_ATTR_MAX + 1];
+	if (ampdu_density)
+		mode->a_mpdu_params |= nla_get_u8(ampdu_density) << 2;
+
+	if (mcs_set && nla_len(mcs_set) >= 16) {
+		u8 *mcs;
+		mcs = nla_data(mcs_set);
+		os_memcpy(mode->mcs_set, mcs, 16);
+	}
+}
+
+
+static void phy_info_vht_capa(struct hostapd_hw_modes *mode,
+			      struct nlattr *capa,
+			      struct nlattr *mcs_set)
+{
+	if (capa)
+		mode->vht_capab = nla_get_u32(capa);
+
+	if (mcs_set && nla_len(mcs_set) >= 8) {
+		u8 *mcs;
+		mcs = nla_data(mcs_set);
+		os_memcpy(mode->vht_mcs_set, mcs, 8);
+	}
+}
+
+
+static void phy_info_freq(struct hostapd_hw_modes *mode,
+			  struct hostapd_channel_data *chan,
+			  struct nlattr *tb_freq[])
+{
+	chan->freq = nla_get_u32(tb_freq[NL80211_FREQUENCY_ATTR_FREQ]);
+	chan->flag = 0;
+
+	/* mode is not set */
+	if (mode->mode >= NUM_HOSTAPD_MODES) {
+		/* crude heuristic */
+		if (chan->freq < 4000)
+			mode->mode = HOSTAPD_MODE_IEEE80211B;
+		else if (chan->freq > 50000)
+			mode->mode = HOSTAPD_MODE_IEEE80211AD;
+		else
+			mode->mode = HOSTAPD_MODE_IEEE80211A;
+	}
+
+	switch (mode->mode) {
+	case HOSTAPD_MODE_IEEE80211AD:
+		chan->chan = (chan->freq - 56160) / 2160;
+		break;
+	case HOSTAPD_MODE_IEEE80211A:
+		chan->chan = chan->freq / 5 - 1000;
+		break;
+	case HOSTAPD_MODE_IEEE80211B:
+	case HOSTAPD_MODE_IEEE80211G:
+		if (chan->freq == 2484)
+			chan->chan = 14;
+		else
+			chan->chan = (chan->freq - 2407) / 5;
+		break;
+	default:
+		break;
+	}
+
+	if (tb_freq[NL80211_FREQUENCY_ATTR_DISABLED])
+		chan->flag |= HOSTAPD_CHAN_DISABLED;
+	if (tb_freq[NL80211_FREQUENCY_ATTR_PASSIVE_SCAN])
+		chan->flag |= HOSTAPD_CHAN_PASSIVE_SCAN;
+	if (tb_freq[NL80211_FREQUENCY_ATTR_NO_IBSS])
+		chan->flag |= HOSTAPD_CHAN_NO_IBSS;
+	if (tb_freq[NL80211_FREQUENCY_ATTR_RADAR])
+		chan->flag |= HOSTAPD_CHAN_RADAR;
+
+	if (tb_freq[NL80211_FREQUENCY_ATTR_MAX_TX_POWER] &&
+	    !tb_freq[NL80211_FREQUENCY_ATTR_DISABLED])
+		chan->max_tx_power = nla_get_u32(
+			tb_freq[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]) / 100;
+}
+
+
+static int phy_info_freqs(struct phy_info_arg *phy_info,
+			  struct hostapd_hw_modes *mode, struct nlattr *tb)
+{
 	static struct nla_policy freq_policy[NL80211_FREQUENCY_ATTR_MAX + 1] = {
 		[NL80211_FREQUENCY_ATTR_FREQ] = { .type = NLA_U32 },
 		[NL80211_FREQUENCY_ATTR_DISABLED] = { .type = NLA_FLAG },
@@ -4940,27 +5121,105 @@ static int phy_info_handler(struct nl_msg *msg, void *arg)
 		[NL80211_FREQUENCY_ATTR_RADAR] = { .type = NLA_FLAG },
 		[NL80211_FREQUENCY_ATTR_MAX_TX_POWER] = { .type = NLA_U32 },
 	};
-
-	struct nlattr *tb_rate[NL80211_BITRATE_ATTR_MAX + 1];
-	static struct nla_policy rate_policy[NL80211_BITRATE_ATTR_MAX + 1] = {
-		[NL80211_BITRATE_ATTR_RATE] = { .type = NLA_U32 },
-		[NL80211_BITRATE_ATTR_2GHZ_SHORTPREAMBLE] = { .type = NLA_FLAG },
-	};
-
-	struct nlattr *nl_band;
+	int new_channels = 0;
+	struct hostapd_channel_data *channel;
+	struct nlattr *tb_freq[NL80211_FREQUENCY_ATTR_MAX + 1];
 	struct nlattr *nl_freq;
-	struct nlattr *nl_rate;
-	int rem_band, rem_freq, rem_rate;
-	struct hostapd_hw_modes *mode;
-	int idx, mode_is_set;
+	int rem_freq, idx;
 
-	nla_parse(tb_msg, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
-		  genlmsg_attrlen(gnlh, 0), NULL);
+	if (tb == NULL)
+		return NL_OK;
 
-	if (!tb_msg[NL80211_ATTR_WIPHY_BANDS])
+	nla_for_each_nested(nl_freq, tb, rem_freq) {
+		nla_parse(tb_freq, NL80211_FREQUENCY_ATTR_MAX,
+			  nla_data(nl_freq), nla_len(nl_freq), freq_policy);
+		if (!tb_freq[NL80211_FREQUENCY_ATTR_FREQ])
+			continue;
+		new_channels++;
+	}
+
+	channel = os_realloc_array(mode->channels,
+				   mode->num_channels + new_channels,
+				   sizeof(struct hostapd_channel_data));
+	if (!channel)
 		return NL_SKIP;
 
-	nla_for_each_nested(nl_band, tb_msg[NL80211_ATTR_WIPHY_BANDS], rem_band) {
+	mode->channels = channel;
+	mode->num_channels += new_channels;
+
+	idx = phy_info->last_chan_idx;
+
+	nla_for_each_nested(nl_freq, tb, rem_freq) {
+		nla_parse(tb_freq, NL80211_FREQUENCY_ATTR_MAX,
+			  nla_data(nl_freq), nla_len(nl_freq), freq_policy);
+		if (!tb_freq[NL80211_FREQUENCY_ATTR_FREQ])
+			continue;
+		phy_info_freq(mode, &mode->channels[idx], tb_freq);
+		idx++;
+	}
+	phy_info->last_chan_idx = idx;
+
+	return NL_OK;
+}
+
+
+static int phy_info_rates(struct hostapd_hw_modes *mode, struct nlattr *tb)
+{
+	static struct nla_policy rate_policy[NL80211_BITRATE_ATTR_MAX + 1] = {
+		[NL80211_BITRATE_ATTR_RATE] = { .type = NLA_U32 },
+		[NL80211_BITRATE_ATTR_2GHZ_SHORTPREAMBLE] =
+		{ .type = NLA_FLAG },
+	};
+	struct nlattr *tb_rate[NL80211_BITRATE_ATTR_MAX + 1];
+	struct nlattr *nl_rate;
+	int rem_rate, idx;
+
+	if (tb == NULL)
+		return NL_OK;
+
+	nla_for_each_nested(nl_rate, tb, rem_rate) {
+		nla_parse(tb_rate, NL80211_BITRATE_ATTR_MAX,
+			  nla_data(nl_rate), nla_len(nl_rate),
+			  rate_policy);
+		if (!tb_rate[NL80211_BITRATE_ATTR_RATE])
+			continue;
+		mode->num_rates++;
+	}
+
+	mode->rates = os_calloc(mode->num_rates, sizeof(int));
+	if (!mode->rates)
+		return NL_SKIP;
+
+	idx = 0;
+
+	nla_for_each_nested(nl_rate, tb, rem_rate) {
+		nla_parse(tb_rate, NL80211_BITRATE_ATTR_MAX,
+			  nla_data(nl_rate), nla_len(nl_rate),
+			  rate_policy);
+		if (!tb_rate[NL80211_BITRATE_ATTR_RATE])
+			continue;
+		mode->rates[idx] = nla_get_u32(
+			tb_rate[NL80211_BITRATE_ATTR_RATE]);
+
+		/* crude heuristic */
+		if (mode->mode == HOSTAPD_MODE_IEEE80211B &&
+		    mode->rates[idx] > 200)
+			mode->mode = HOSTAPD_MODE_IEEE80211G;
+
+		idx++;
+	}
+
+	return NL_OK;
+}
+
+
+static int phy_info_band(struct phy_info_arg *phy_info, struct nlattr *nl_band)
+{
+	struct nlattr *tb_band[NL80211_BAND_ATTR_MAX + 1];
+	struct hostapd_hw_modes *mode;
+	int ret;
+
+	if (phy_info->last_mode != nl_band->nla_type) {
 		mode = os_realloc_array(phy_info->modes,
 					*phy_info->num_modes + 1,
 					sizeof(*mode));
@@ -4968,163 +5227,60 @@ static int phy_info_handler(struct nl_msg *msg, void *arg)
 			return NL_SKIP;
 		phy_info->modes = mode;
 
-		mode_is_set = 0;
-
 		mode = &phy_info->modes[*(phy_info->num_modes)];
-		memset(mode, 0, sizeof(*mode));
+		os_memset(mode, 0, sizeof(*mode));
+		mode->mode = NUM_HOSTAPD_MODES;
 		mode->flags = HOSTAPD_MODE_FLAG_HT_INFO_KNOWN;
 		*(phy_info->num_modes) += 1;
+		phy_info->last_mode = nl_band->nla_type;
+		phy_info->last_chan_idx = 0;
+	} else
+		mode = &phy_info->modes[*(phy_info->num_modes) - 1];
 
-		nla_parse(tb_band, NL80211_BAND_ATTR_MAX, nla_data(nl_band),
-			  nla_len(nl_band), NULL);
+	nla_parse(tb_band, NL80211_BAND_ATTR_MAX, nla_data(nl_band),
+		  nla_len(nl_band), NULL);
 
-		if (tb_band[NL80211_BAND_ATTR_HT_CAPA]) {
-			mode->ht_capab = nla_get_u16(
-				tb_band[NL80211_BAND_ATTR_HT_CAPA]);
-		}
+	phy_info_ht_capa(mode, tb_band[NL80211_BAND_ATTR_HT_CAPA],
+			 tb_band[NL80211_BAND_ATTR_HT_AMPDU_FACTOR],
+			 tb_band[NL80211_BAND_ATTR_HT_AMPDU_DENSITY],
+			 tb_band[NL80211_BAND_ATTR_HT_MCS_SET]);
+	phy_info_vht_capa(mode, tb_band[NL80211_BAND_ATTR_VHT_CAPA],
+			  tb_band[NL80211_BAND_ATTR_VHT_MCS_SET]);
+	ret = phy_info_freqs(phy_info, mode, tb_band[NL80211_BAND_ATTR_FREQS]);
+	if (ret != NL_OK)
+		return ret;
+	ret = phy_info_rates(mode, tb_band[NL80211_BAND_ATTR_RATES]);
+	if (ret != NL_OK)
+		return ret;
 
-		if (tb_band[NL80211_BAND_ATTR_HT_AMPDU_FACTOR]) {
-			mode->a_mpdu_params |= nla_get_u8(
-				tb_band[NL80211_BAND_ATTR_HT_AMPDU_FACTOR]) &
-				0x03;
-		}
+	return NL_OK;
+}
 
-		if (tb_band[NL80211_BAND_ATTR_HT_AMPDU_DENSITY]) {
-			mode->a_mpdu_params |= nla_get_u8(
-				tb_band[NL80211_BAND_ATTR_HT_AMPDU_DENSITY]) <<
-				2;
-		}
 
-		if (tb_band[NL80211_BAND_ATTR_HT_MCS_SET] &&
-		    nla_len(tb_band[NL80211_BAND_ATTR_HT_MCS_SET])) {
-			u8 *mcs;
-			mcs = nla_data(tb_band[NL80211_BAND_ATTR_HT_MCS_SET]);
-			os_memcpy(mode->mcs_set, mcs, 16);
-		}
+static int phy_info_handler(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *tb_msg[NL80211_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	struct phy_info_arg *phy_info = arg;
+	struct nlattr *nl_band;
+	int rem_band;
 
-		if (tb_band[NL80211_BAND_ATTR_VHT_CAPA]) {
-			mode->vht_capab = nla_get_u32(
-				tb_band[NL80211_BAND_ATTR_VHT_CAPA]);
-		}
+	nla_parse(tb_msg, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
 
-		if (tb_band[NL80211_BAND_ATTR_VHT_MCS_SET] &&
-		    nla_len(tb_band[NL80211_BAND_ATTR_VHT_MCS_SET])) {
-			u8 *mcs;
-			mcs = nla_data(tb_band[NL80211_BAND_ATTR_VHT_MCS_SET]);
-			os_memcpy(mode->vht_mcs_set, mcs, 8);
-		}
+	if (!tb_msg[NL80211_ATTR_WIPHY_BANDS])
+		return NL_SKIP;
 
-		nla_for_each_nested(nl_freq, tb_band[NL80211_BAND_ATTR_FREQS], rem_freq) {
-			nla_parse(tb_freq, NL80211_FREQUENCY_ATTR_MAX, nla_data(nl_freq),
-				  nla_len(nl_freq), freq_policy);
-			if (!tb_freq[NL80211_FREQUENCY_ATTR_FREQ])
-				continue;
-			mode->num_channels++;
-		}
-
-		mode->channels = os_calloc(mode->num_channels,
-					   sizeof(struct hostapd_channel_data));
-		if (!mode->channels)
-			return NL_SKIP;
-
-		idx = 0;
-
-		nla_for_each_nested(nl_freq, tb_band[NL80211_BAND_ATTR_FREQS], rem_freq) {
-			nla_parse(tb_freq, NL80211_FREQUENCY_ATTR_MAX, nla_data(nl_freq),
-				  nla_len(nl_freq), freq_policy);
-			if (!tb_freq[NL80211_FREQUENCY_ATTR_FREQ])
-				continue;
-
-			mode->channels[idx].freq = nla_get_u32(tb_freq[NL80211_FREQUENCY_ATTR_FREQ]);
-			mode->channels[idx].flag = 0;
-
-			if (!mode_is_set) {
-				/* crude heuristic */
-				if (mode->channels[idx].freq < 4000)
-					mode->mode = HOSTAPD_MODE_IEEE80211B;
-				else if (mode->channels[idx].freq > 50000)
-					mode->mode = HOSTAPD_MODE_IEEE80211AD;
-				else
-					mode->mode = HOSTAPD_MODE_IEEE80211A;
-				mode_is_set = 1;
-			}
-
-			switch (mode->mode) {
-			case HOSTAPD_MODE_IEEE80211AD:
-				mode->channels[idx].chan =
-					(mode->channels[idx].freq - 56160) /
-					2160;
-				break;
-			case HOSTAPD_MODE_IEEE80211A:
-				mode->channels[idx].chan =
-					mode->channels[idx].freq / 5 - 1000;
-				break;
-			case HOSTAPD_MODE_IEEE80211B:
-			case HOSTAPD_MODE_IEEE80211G:
-				if (mode->channels[idx].freq == 2484)
-					mode->channels[idx].chan = 14;
-				else
-					mode->channels[idx].chan =
-						(mode->channels[idx].freq -
-						 2407) / 5;
-				break;
-			default:
-				break;
-			}
-
-			if (tb_freq[NL80211_FREQUENCY_ATTR_DISABLED])
-				mode->channels[idx].flag |=
-					HOSTAPD_CHAN_DISABLED;
-			if (tb_freq[NL80211_FREQUENCY_ATTR_PASSIVE_SCAN])
-				mode->channels[idx].flag |=
-					HOSTAPD_CHAN_PASSIVE_SCAN;
-			if (tb_freq[NL80211_FREQUENCY_ATTR_NO_IBSS])
-				mode->channels[idx].flag |=
-					HOSTAPD_CHAN_NO_IBSS;
-			if (tb_freq[NL80211_FREQUENCY_ATTR_RADAR])
-				mode->channels[idx].flag |=
-					HOSTAPD_CHAN_RADAR;
-
-			if (tb_freq[NL80211_FREQUENCY_ATTR_MAX_TX_POWER] &&
-			    !tb_freq[NL80211_FREQUENCY_ATTR_DISABLED])
-				mode->channels[idx].max_tx_power =
-					nla_get_u32(tb_freq[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]) / 100;
-
-			idx++;
-		}
-
-		nla_for_each_nested(nl_rate, tb_band[NL80211_BAND_ATTR_RATES], rem_rate) {
-			nla_parse(tb_rate, NL80211_BITRATE_ATTR_MAX, nla_data(nl_rate),
-				  nla_len(nl_rate), rate_policy);
-			if (!tb_rate[NL80211_BITRATE_ATTR_RATE])
-				continue;
-			mode->num_rates++;
-		}
-
-		mode->rates = os_calloc(mode->num_rates, sizeof(int));
-		if (!mode->rates)
-			return NL_SKIP;
-
-		idx = 0;
-
-		nla_for_each_nested(nl_rate, tb_band[NL80211_BAND_ATTR_RATES], rem_rate) {
-			nla_parse(tb_rate, NL80211_BITRATE_ATTR_MAX, nla_data(nl_rate),
-				  nla_len(nl_rate), rate_policy);
-			if (!tb_rate[NL80211_BITRATE_ATTR_RATE])
-				continue;
-			mode->rates[idx] = nla_get_u32(tb_rate[NL80211_BITRATE_ATTR_RATE]);
-
-			/* crude heuristic */
-			if (mode->mode == HOSTAPD_MODE_IEEE80211B &&
-			    mode->rates[idx] > 200)
-				mode->mode = HOSTAPD_MODE_IEEE80211G;
-
-			idx++;
-		}
+	nla_for_each_nested(nl_band, tb_msg[NL80211_ATTR_WIPHY_BANDS], rem_band)
+	{
+		int res = phy_info_band(phy_info, nl_band);
+		if (res != NL_OK)
+			return res;
 	}
 
 	return NL_SKIP;
 }
+
 
 static struct hostapd_hw_modes *
 wpa_driver_nl80211_add_11b(struct hostapd_hw_modes *modes, u16 *num_modes)
@@ -5350,12 +5506,14 @@ static int nl80211_set_ht40_flags(struct wpa_driver_nl80211_data *drv,
 static struct hostapd_hw_modes *
 wpa_driver_nl80211_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 {
+	u32 feat;
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	struct phy_info_arg result = {
 		.num_modes = num_modes,
 		.modes = NULL,
+		.last_mode = -1,
 	};
 
 	*num_modes = 0;
@@ -5365,8 +5523,13 @@ wpa_driver_nl80211_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 	if (!msg)
 		return NULL;
 
-	nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_WIPHY);
+	feat = get_nl80211_protocol_features(drv);
+	if (feat & NL80211_PROTOCOL_FEATURE_SPLIT_WIPHY_DUMP)
+		nl80211_cmd(drv, msg, NLM_F_DUMP, NL80211_CMD_GET_WIPHY);
+	else
+		nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_WIPHY);
 
+	NLA_PUT_FLAG(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 
 	if (send_and_recv_msgs(drv, msg, phy_info_handler, &result) == 0) {
@@ -7043,6 +7206,20 @@ skip_auth_type:
 			params->htcaps_mask);
 	}
 
+#ifdef CONFIG_VHT_OVERRIDES
+	if (params->disable_vht) {
+		wpa_printf(MSG_DEBUG, "  * VHT disabled");
+		NLA_PUT_FLAG(msg, NL80211_ATTR_DISABLE_VHT);
+	}
+
+	if (params->vhtcaps && params->vhtcaps_mask) {
+		int sz = sizeof(struct ieee80211_vht_capabilities);
+		NLA_PUT(msg, NL80211_ATTR_VHT_CAPABILITY, sz, params->vhtcaps);
+		NLA_PUT(msg, NL80211_ATTR_VHT_CAPABILITY_MASK, sz,
+			params->vhtcaps_mask);
+	}
+#endif /* CONFIG_VHT_OVERRIDES */
+
 	ret = nl80211_set_conn_keys(params, msg);
 	if (ret)
 		goto nla_put_failure;
@@ -7228,6 +7405,20 @@ static int wpa_driver_nl80211_associate(
 		NLA_PUT(msg, NL80211_ATTR_HT_CAPABILITY_MASK, sz,
 			params->htcaps_mask);
 	}
+
+#ifdef CONFIG_VHT_OVERRIDES
+	if (params->disable_vht) {
+		wpa_printf(MSG_DEBUG, "  * VHT disabled");
+		NLA_PUT_FLAG(msg, NL80211_ATTR_DISABLE_VHT);
+	}
+
+	if (params->vhtcaps && params->vhtcaps_mask) {
+		int sz = sizeof(struct ieee80211_vht_capabilities);
+		NLA_PUT(msg, NL80211_ATTR_VHT_CAPABILITY, sz, params->vhtcaps);
+		NLA_PUT(msg, NL80211_ATTR_VHT_CAPABILITY_MASK, sz,
+			params->vhtcaps_mask);
+	}
+#endif /* CONFIG_VHT_OVERRIDES */
 
 	if (params->p2p)
 		wpa_printf(MSG_DEBUG, "  * P2P group");

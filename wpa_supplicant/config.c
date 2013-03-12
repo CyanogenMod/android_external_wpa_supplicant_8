@@ -178,10 +178,17 @@ static int wpa_config_parse_int(const struct parse_data *data,
 				struct wpa_ssid *ssid,
 				int line, const char *value)
 {
-	int *dst;
+	int val, *dst;
+	char *end;
 
 	dst = (int *) (((u8 *) ssid) + (long) data->param1);
-	*dst = atoi(value);
+	val = strtol(value, &end, 0);
+	if (*end) {
+		wpa_printf(MSG_ERROR, "Line %d: invalid number \"%s\"",
+			   line, value);
+		return -1;
+	}
+	*dst = val;
 	wpa_printf(MSG_MSGDUMP, "%s=%d (0x%x)", data->name, *dst, *dst);
 
 	if (data->param3 && *dst < (long) data->param3) {
@@ -1543,6 +1550,27 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(ampdu_density, -1, 7) },
 	{ STR(ht_mcs) },
 #endif /* CONFIG_HT_OVERRIDES */
+#ifdef CONFIG_VHT_OVERRIDES
+	{ INT_RANGE(disable_vht, 0, 1) },
+	{ INT(vht_capa) },
+	{ INT(vht_capa_mask) },
+	{ INT_RANGE(vht_rx_mcs_nss_1, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_2, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_3, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_4, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_5, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_6, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_7, -1, 3) },
+	{ INT_RANGE(vht_rx_mcs_nss_8, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_1, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_2, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_3, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_4, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_5, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_6, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_7, -1, 3) },
+	{ INT_RANGE(vht_tx_mcs_nss_8, -1, 3) },
+#endif /* CONFIG_VHT_OVERRIDES */
 	{ INT(ap_max_inactivity) },
 	{ INT(dtim_period) },
 	{ INT(beacon_int) },
@@ -1946,6 +1974,24 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->ampdu_factor = DEFAULT_AMPDU_FACTOR;
 	ssid->ampdu_density = DEFAULT_AMPDU_DENSITY;
 #endif /* CONFIG_HT_OVERRIDES */
+#ifdef CONFIG_VHT_OVERRIDES
+	ssid->vht_rx_mcs_nss_1 = -1;
+	ssid->vht_rx_mcs_nss_2 = -1;
+	ssid->vht_rx_mcs_nss_3 = -1;
+	ssid->vht_rx_mcs_nss_4 = -1;
+	ssid->vht_rx_mcs_nss_5 = -1;
+	ssid->vht_rx_mcs_nss_6 = -1;
+	ssid->vht_rx_mcs_nss_7 = -1;
+	ssid->vht_rx_mcs_nss_8 = -1;
+	ssid->vht_tx_mcs_nss_1 = -1;
+	ssid->vht_tx_mcs_nss_2 = -1;
+	ssid->vht_tx_mcs_nss_3 = -1;
+	ssid->vht_tx_mcs_nss_4 = -1;
+	ssid->vht_tx_mcs_nss_5 = -1;
+	ssid->vht_tx_mcs_nss_6 = -1;
+	ssid->vht_tx_mcs_nss_7 = -1;
+	ssid->vht_tx_mcs_nss_8 = -1;
+#endif /* CONFIG_VHT_OVERRIDES */
 	ssid->proactive_key_caching = -1;
 #ifdef CONFIG_IEEE80211W
 	ssid->ieee80211w = MGMT_FRAME_PROTECTION_DEFAULT;
@@ -2590,9 +2636,18 @@ static int wpa_global_config_parse_int(const struct global_parse_data *data,
 				       struct wpa_config *config, int line,
 				       const char *pos)
 {
-	int *dst;
+	int val, *dst;
+	char *end;
+
 	dst = (int *) (((u8 *) config) + (long) data->param1);
-	*dst = atoi(pos);
+	val = strtol(pos, &end, 0);
+	if (*end) {
+		wpa_printf(MSG_ERROR, "Line %d: invalid number \"%s\"",
+			   line, pos);
+		return -1;
+	}
+	*dst = val;
+
 	wpa_printf(MSG_DEBUG, "%s=%d", data->name, *dst);
 
 	if (data->param2 && *dst < (long) data->param2) {
