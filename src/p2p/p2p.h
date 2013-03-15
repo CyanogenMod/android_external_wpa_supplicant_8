@@ -743,6 +743,7 @@ struct p2p_config {
 	 * @status: Negotiation result (Status Code)
 	 * @bssid: P2P Group BSSID or %NULL if not received
 	 * @channels: Available operating channels for the group
+	 * @addr: Peer address
 	 *
 	 * This callback is used to indicate result of an Invitation procedure
 	 * started with a call to p2p_invite(). The indicated status code is
@@ -751,7 +752,8 @@ struct p2p_config {
 	 * local failure in transmitting the Invitation Request.
 	 */
 	void (*invitation_result)(void *ctx, int status, const u8 *bssid,
-				  const struct p2p_channels *channels);
+				  const struct p2p_channels *channels,
+				  const u8 *addr);
 
 	/**
 	 * go_connected - Check whether we are connected to a GO
@@ -1657,6 +1659,17 @@ void p2p_update_channel_list(struct p2p_data *p2p, struct p2p_channels *chan);
  */
 void p2p_set_best_channels(struct p2p_data *p2p, int freq_24, int freq_5,
 			   int freq_overall);
+
+/**
+ * p2p_set_own_freq_preference - Set own preference for channel
+ * @p2p: P2P module context from p2p_init()
+ * @freq: Frequency (MHz) of the preferred channel or 0 if no preference
+ *
+ * This function can be used to set a preference on the operating channel based
+ * on frequencies used on the other virtual interfaces that share the same
+ * radio. If non-zero, this is used to try to avoid multi-channel concurrency.
+ */
+void p2p_set_own_freq_preference(struct p2p_data *p2p, int freq);
 
 const u8 * p2p_get_go_neg_peer(struct p2p_data *p2p);
 

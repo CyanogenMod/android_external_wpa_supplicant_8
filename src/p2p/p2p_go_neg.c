@@ -350,14 +350,36 @@ void p2p_reselect_channel(struct p2p_data *p2p,
 	u8 op_reg_class, op_channel;
 	unsigned int i;
 
-	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Selected operating "
-		"channel (reg_class %u channel %u) not acceptable to the "
-		"peer", p2p->op_reg_class, p2p->op_channel);
+	if (p2p->own_freq_preference > 0 &&
+	    p2p_freq_to_channel(p2p->cfg->country, p2p->own_freq_preference,
+				&op_reg_class, &op_channel) == 0 &&
+	    p2p_channels_includes(intersection, op_reg_class, op_channel)) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Pick own channel "
+			"preference (reg_class %u channel %u) from "
+			"intersection", op_reg_class, op_channel);
+		p2p->op_reg_class = op_reg_class;
+		p2p->op_channel = op_channel;
+		return;
+	}
+
+	if (p2p->best_freq_overall > 0 &&
+	    p2p_freq_to_channel(p2p->cfg->country, p2p->best_freq_overall,
+				&op_reg_class, &op_channel) == 0 &&
+	    p2p_channels_includes(intersection, op_reg_class, op_channel)) {
+		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Pick best overall "
+			"channel (reg_class %u channel %u) from intersection",
+			op_reg_class, op_channel);
+		p2p->op_reg_class = op_reg_class;
+		p2p->op_channel = op_channel;
+		return;
+	}
 
 	/* First, try to pick the best channel from another band */
 	freq = p2p_channel_to_freq(p2p->cfg->country, p2p->op_reg_class,
 				   p2p->op_channel);
 	if (freq >= 2400 && freq < 2500 && p2p->best_freq_5 > 0 &&
+	    !p2p_channels_includes(intersection, p2p->op_reg_class,
+				   p2p->op_channel) &&
 	    p2p_freq_to_channel(p2p->cfg->country, p2p->best_freq_5,
 				&op_reg_class, &op_channel) == 0 &&
 	    p2p_channels_includes(intersection, op_reg_class, op_channel)) {
@@ -370,6 +392,8 @@ void p2p_reselect_channel(struct p2p_data *p2p,
 	}
 
 	if (freq >= 4900 && freq < 6000 && p2p->best_freq_24 > 0 &&
+	    !p2p_channels_includes(intersection, p2p->op_reg_class,
+				   p2p->op_channel) &&
 	    p2p_freq_to_channel(p2p->cfg->country, p2p->best_freq_24,
 				&op_reg_class, &op_channel) == 0 &&
 	    p2p_channels_includes(intersection, op_reg_class, op_channel)) {

@@ -3490,7 +3490,8 @@ static void p2p_timeout_invite_listen(struct p2p_data *p2p)
 				"P2P: Invitation Request retry limit reached");
 			if (p2p->cfg->invitation_result)
 				p2p->cfg->invitation_result(
-					p2p->cfg->cb_ctx, -1, NULL, NULL);
+					p2p->cfg->cb_ctx, -1, NULL, NULL,
+					p2p->invite_peer->info.p2p_device_addr);
 		}
 		p2p_set_state(p2p, P2P_IDLE);
 	}
@@ -4316,6 +4317,14 @@ void p2p_set_best_channels(struct p2p_data *p2p, int freq_24, int freq_5,
 	p2p->best_freq_24 = freq_24;
 	p2p->best_freq_5 = freq_5;
 	p2p->best_freq_overall = freq_overall;
+}
+
+
+void p2p_set_own_freq_preference(struct p2p_data *p2p, int freq)
+{
+	wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Own frequency preference: "
+		"%d MHz", freq);
+	p2p->own_freq_preference = freq;
 }
 
 

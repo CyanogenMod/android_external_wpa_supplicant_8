@@ -661,8 +661,8 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_notify_scanning(wpa_s, 0);
 
 	if (state == WPA_COMPLETED && wpa_s->new_connection) {
-#if defined(CONFIG_CTRL_IFACE) || !defined(CONFIG_NO_STDOUT_DEBUG)
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
+#if defined(CONFIG_CTRL_IFACE) || !defined(CONFIG_NO_STDOUT_DEBUG)
 		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- Connection to "
 			MACSTR " completed (auth) [id=%d id_str=%s]",
 			MAC2STR(wpa_s->bssid),
@@ -1361,8 +1361,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 				     ssid->proactive_key_caching) &&
 			(ssid->proto & WPA_PROTO_RSN);
 		if (pmksa_cache_set_current(wpa_s->wpa, NULL, bss->bssid,
-					    wpa_s->current_ssid,
-					    try_opportunistic) == 0)
+					    ssid, try_opportunistic) == 0)
 			eapol_sm_notify_pmkid_attempt(wpa_s->eapol, 1);
 		wpa_ie_len = sizeof(wpa_ie);
 		if (wpa_supplicant_set_suites(wpa_s, bss, ssid,
@@ -3146,6 +3145,8 @@ int wpa_supplicant_remove_iface(struct wpa_global *global,
 
 	if (global->p2p_group_formation == wpa_s)
 		global->p2p_group_formation = NULL;
+	if (global->p2p_invite_group == wpa_s)
+		global->p2p_invite_group = NULL;
 	wpa_supplicant_deinit_iface(wpa_s, 1, terminate);
 	os_free(wpa_s);
 
