@@ -1091,13 +1091,9 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 
 /* Return != 0 if no scan results could be fetched or if scan results should not
  * be shared with other virtual interfaces. */
-#ifdef ANDROID_P2P
 static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
-					      union wpa_event_data *data, int suppress_event)
-#else
-static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
-					      union wpa_event_data *data)
-#endif
+					      union wpa_event_data *data,
+					      int own_request)
 {
 	struct wpa_scan_results *scan_res;
 	int ap = 0;
@@ -1113,7 +1109,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_notify_scanning(wpa_s, 0);
 
 #ifdef CONFIG_P2P
-	if (wpa_s->global->p2p_cb_on_scan_complete &&
+	if (own_request && wpa_s->global->p2p_cb_on_scan_complete &&
 	    !wpa_s->global->p2p_disabled &&
 	    wpa_s->global->p2p != NULL && !wpa_s->sta_scan_pending &&
 	    !wpa_s->scan_res_handler) {
@@ -1135,6 +1131,8 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	if (scan_res == NULL) {
 		if (wpa_s->conf->ap_scan == 2 || ap ||
 		    wpa_s->scan_res_handler == scan_only_handler)
+			return -1;
+		if (!own_request)
 			return -1;
 		wpa_dbg(wpa_s, MSG_DEBUG, "Failed to get scan results - try "
 			"scanning again");
@@ -1158,7 +1156,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_NO_RANDOM_POOL */
 
-	if (wpa_s->scan_res_handler) {
+	if (own_request && wpa_s->scan_res_handler) {
 		void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 					 struct wpa_scan_results *scan_res);
 
@@ -1179,18 +1177,10 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		wpa_scan_results_free(scan_res);
 		return 0;
 	}
-#ifdef ANDROID_P2P
-	if(!suppress_event)
-	{
-		wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
-		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
-		wpas_notify_scan_results(wpa_s);
-	}
-#else
+
 	wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
 	wpas_notify_scan_results(wpa_s);
-#endif
 
 	wpas_notify_scan_done(wpa_s, 1);
 
@@ -1307,11 +1297,8 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 {
 	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
-#ifdef ANDROID_P2P
-	if (_wpa_supplicant_event_scan_results(wpa_s, data, 0) != 0) {
-#else
-	if (_wpa_supplicant_event_scan_results(wpa_s, data) != 0) {
-#endif
+
+	if (_wpa_supplicant_event_scan_results(wpa_s, data, 1) != 0) {
 		/*
 		 * If no scan results could be fetched, then no need to
 		 * notify those interfaces that did not actually request
@@ -1344,27 +1331,7 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (rn2 && os_strcmp(rn, rn2) == 0) {
 			wpa_printf(MSG_DEBUG, "%s: Updating scan results from "
 				   "sibling", ifs->ifname);
-#ifdef ANDROID_P2P
-			if ( (ifs->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) || (ifs->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)) {
-				/* Do not update the scan results from STA interface to p2p interfaces */
-				wpa_printf(MSG_DEBUG, "Not Updating scan results on interface %s from "
-					   "sibling %s", ifs->ifname, wpa_s->ifname);
-				continue;
-			}
-			else {
-				/* P2P_FIND will result in too many SCAN_RESULT_EVENTS within
-				 * no time. Avoid announcing it to application as it may not
-				 * be that useful (since results will be that of only 1,6,11).
-				 * over to any other interface as it
-				 */
-				if(p2p_search_in_progress(wpa_s->global->p2p))
-					_wpa_supplicant_event_scan_results(ifs, data, 1);
-				else
-					_wpa_supplicant_event_scan_results(ifs, data, 0);
-			}
-#else
-			_wpa_supplicant_event_scan_results(ifs, data);
-#endif
+			_wpa_supplicant_event_scan_results(ifs, data, 0);
 		}
 	}
 }
@@ -2552,18 +2519,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifndef CONFIG_NO_SCAN_PROCESSING
 	case EVENT_SCAN_RESULTS:
 		wpa_supplicant_event_scan_results(wpa_s, data);
-#ifdef CONFIG_P2P
-	if (wpa_s->global->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
-	    wpa_s->global->p2p != NULL &&
-	    wpa_s->wpa_state != WPA_AUTHENTICATING &&
-	    wpa_s->wpa_state != WPA_ASSOCIATING) {
-		wpa_s->global->p2p_cb_on_scan_complete = 0;
-		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
-				"continued after scan result processing");
-		}
-	}
-#endif /* CONFIG_P2P */
+		if (wpa_s->wpa_state != WPA_AUTHENTICATING &&
+		    wpa_s->wpa_state != WPA_ASSOCIATING)
+			wpas_p2p_continue_after_scan(wpa_s);
 		break;
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 	case EVENT_ASSOCINFO:

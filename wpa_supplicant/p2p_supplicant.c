@@ -158,6 +158,7 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 
 	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
 		if (ifs->sta_scan_pending &&
+		    (wpas_scan_scheduled(ifs) || ifs->scanning) &&
 		    wpas_p2p_in_progress(wpa_s) == 2) {
 			wpa_printf(MSG_DEBUG, "Delaying P2P scan to allow "
 				   "pending station mode scan to be "
@@ -5052,17 +5053,7 @@ void wpas_p2p_completed(struct wpa_supplicant *wpa_s)
 	wpas_notify_p2p_group_started(wpa_s, ssid, network_id, 1);
 
 done:
-	if (wpa_s->global->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
-	    wpa_s->global->p2p != NULL) {
-		wpa_s->global->p2p_cb_on_scan_complete = 0;
-		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
-				"continued after successful connection");
-			p2p_increase_search_delay(
-				wpa_s->global->p2p,
-				wpas_p2p_search_delay(wpa_s));
-		}
-	}
+	wpas_p2p_continue_after_scan(wpa_s);
 }
 
 
@@ -5836,6 +5827,30 @@ unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s)
 	}
 
 	return 0;
+}
+
+
+void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s)
+{
+	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Station mode scan operation not "
+		"pending anymore (sta_scan_pending=%d "
+		"p2p_cb_on_scan_complete=%d)", wpa_s->sta_scan_pending,
+		wpa_s->global->p2p_cb_on_scan_complete);
+	wpa_s->sta_scan_pending = 0;
+
+	if (!wpa_s->global->p2p_cb_on_scan_complete)
+		return;
+	wpa_s->global->p2p_cb_on_scan_complete = 0;
+
+	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
+		return;
+
+	if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
+			"continued after successful connection");
+		p2p_increase_search_delay(wpa_s->global->p2p,
+					  wpas_p2p_search_delay(wpa_s));
+	}
 }
 
 #ifdef ANDROID_P2P
