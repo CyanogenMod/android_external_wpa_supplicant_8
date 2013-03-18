@@ -536,12 +536,14 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 
 	if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Skip scan - interface disabled");
+		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 
 	if (wpa_s->disconnected && wpa_s->scan_req == NORMAL_SCAN_REQ) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Disconnected - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
+		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 #ifdef ANDROID
@@ -555,9 +557,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	    wpa_s->scan_req == NORMAL_SCAN_REQ) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_INACTIVE);
-#ifdef CONFIG_P2P
-		wpa_s->sta_scan_pending = 0;
-#endif /* CONFIG_P2P */
+		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 
@@ -1159,6 +1159,7 @@ void wpa_supplicant_cancel_scan(struct wpa_supplicant *wpa_s)
 {
 	wpa_dbg(wpa_s, MSG_DEBUG, "Cancelling scan request");
 	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
+	wpas_p2p_continue_after_scan(wpa_s);
 #ifdef ANDROID
 	wpa_supplicant_notify_scanning(wpa_s, 0);
 #endif
@@ -1635,4 +1636,10 @@ void scan_only_handler(struct wpa_supplicant *wpa_s,
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
 	wpas_notify_scan_results(wpa_s);
 	wpas_notify_scan_done(wpa_s, 1);
+}
+
+
+int wpas_scan_scheduled(struct wpa_supplicant *wpa_s)
+{
+	return eloop_is_timeout_registered(wpa_supplicant_scan, wpa_s, NULL);
 }
