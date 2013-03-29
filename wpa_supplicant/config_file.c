@@ -917,6 +917,9 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->p2p_no_group_iface)
 		fprintf(f, "p2p_no_group_iface=%u\n",
 			config->p2p_no_group_iface);
+	if (config->p2p_ignore_shared_freq)
+		fprintf(f, "p2p_ignore_shared_freq=%u\n",
+			config->p2p_ignore_shared_freq);
 #endif /* CONFIG_P2P */
 	if (config->country[0] && config->country[1]) {
 		fprintf(f, "country=%c%c\n",
@@ -989,6 +992,17 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 				config->sae_groups[i]);
 		}
 		fprintf(f, "\n");
+	}
+
+	if (config->ap_vendor_elements) {
+		int i, len = wpabuf_len(config->ap_vendor_elements);
+		const u8 *p = wpabuf_head_u8(config->ap_vendor_elements);
+		if (len > 0) {
+			fprintf(f, "ap_vendor_elements=");
+			for (i = 0; i < len; i++)
+				fprintf(f, "%02x", *p++);
+			fprintf(f, "\n");
+		}
 	}
 }
 
