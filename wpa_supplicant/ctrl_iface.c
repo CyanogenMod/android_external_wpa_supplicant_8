@@ -3532,7 +3532,13 @@ static int wpa_supplicant_ctrl_iface_roam(struct wpa_supplicant *wpa_s,
 
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE ROAM " MACSTR, MAC2STR(bssid));
 
-	bss = wpa_bss_get_bssid(wpa_s, bssid);
+	if (!ssid) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE ROAM: No network "
+			   "configuration known for the target AP");
+		return -1;
+	}
+
+	bss = wpa_bss_get(wpa_s, bssid, ssid->ssid, ssid->ssid_len);
 	if (!bss) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE ROAM: Target AP not found "
 			   "from BSS table");
@@ -3543,12 +3549,6 @@ static int wpa_supplicant_ctrl_iface_roam(struct wpa_supplicant *wpa_s,
 	 * TODO: Find best network configuration block from configuration to
 	 * allow roaming to other networks
 	 */
-
-	if (!ssid) {
-		wpa_printf(MSG_DEBUG, "CTRL_IFACE ROAM: No network "
-			   "configuration known for the target AP");
-		return -1;
-	}
 
 	wpa_s->reassociate = 1;
 	wpa_supplicant_connect(wpa_s, bss, ssid);
@@ -4509,6 +4509,15 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 }
 
 
+static void p2p_ctrl_flush(struct wpa_supplicant *wpa_s)
+{
+	os_memset(wpa_s->p2p_auth_invite, 0, ETH_ALEN);
+	wpa_s->force_long_sd = 0;
+	if (wpa_s->global->p2p)
+		p2p_flush(wpa_s->global->p2p);
+}
+
+
 static int p2p_ctrl_presence_req(struct wpa_supplicant *wpa_s, char *cmd)
 {
 	char *pos, *pos2;
@@ -4979,6 +4988,54 @@ static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 #endif
 
 
+static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
+{
+	wpa_dbg(wpa_s, MSG_DEBUG, "Flush all wpa_supplicant state");
+
+#ifdef CONFIG_P2P
+	wpas_p2p_stop_find(wpa_s);
+	p2p_ctrl_flush(wpa_s);
+	wpas_p2p_group_remove(wpa_s, "*");
+#endif /* CONFIG_P2P */
+
+#ifdef CONFIG_WPS_TESTING
+	wps_version_number = 0x20;
+	wps_testing_dummy_cred = 0;
+#endif /* CONFIG_WPS_TESTING */
+#ifdef CONFIG_WPS
+	wpas_wps_cancel(wpa_s);
+#endif /* CONFIG_WPS */
+
+#ifdef CONFIG_TDLS_TESTING
+	extern unsigned int tdls_testing;
+	tdls_testing = 0;
+#endif /* CONFIG_TDLS_TESTING */
+#ifdef CONFIG_TDLS
+	wpa_drv_tdls_oper(wpa_s, TDLS_ENABLE, NULL);
+	wpa_tdls_enable(wpa_s->wpa, 1);
+#endif /* CONFIG_TDLS */
+
+	wpa_s->no_keep_alive = 0;
+
+	os_free(wpa_s->disallow_aps_bssid);
+	wpa_s->disallow_aps_bssid = NULL;
+	wpa_s->disallow_aps_bssid_count = 0;
+	os_free(wpa_s->disallow_aps_ssid);
+	wpa_s->disallow_aps_ssid = NULL;
+	wpa_s->disallow_aps_ssid_count = 0;
+
+	wpa_s->set_sta_uapsd = 0;
+	wpa_s->sta_uapsd = 0;
+
+	wpa_drv_radio_disable(wpa_s, 0);
+
+	wpa_bss_flush(wpa_s);
+	wpa_blacklist_clear(wpa_s);
+	wpa_supplicant_ctrl_iface_remove_network(wpa_s, "all");
+	wpa_supplicant_ctrl_iface_remove_cred(wpa_s, "all");
+}
+
+
 char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 					 char *buf, size_t *resp_len)
 {
@@ -5260,10 +5317,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (p2p_ctrl_set(wpa_s, buf + 8) < 0)
 			reply_len = -1;
 	} else if (os_strcmp(buf, "P2P_FLUSH") == 0) {
-		os_memset(wpa_s->p2p_auth_invite, 0, ETH_ALEN);
-		wpa_s->force_long_sd = 0;
-		if (wpa_s->global->p2p)
-			p2p_flush(wpa_s->global->p2p);
+		p2p_ctrl_flush(wpa_s);
 	} else if (os_strncmp(buf, "P2P_UNAUTHORIZE ", 16) == 0) {
 		if (wpas_p2p_unauthorize(wpa_s, buf + 16) < 0)
 			reply_len = -1;
@@ -5516,6 +5570,8 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpas_ctrl_iface_wnm_sleep(wpa_s, buf + 10))
 			reply_len = -1;
 #endif /* CONFIG_WNM */
+	} else if (os_strcmp(buf, "FLUSH") == 0) {
+		wpa_supplicant_ctrl_iface_flush(wpa_s);
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;

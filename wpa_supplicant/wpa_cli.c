@@ -2323,6 +2323,12 @@ static int wpa_cli_cmd_driver(struct wpa_ctrl *ctrl, int argc, char *argv[])
 #endif
 
 
+static int wpa_cli_cmd_flush(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "FLUSH");
+}
+
+
 enum wpa_cli_cmd_flags {
 	cli_cmd_flag_none		= 0x00,
 	cli_cmd_flag_sensitive		= 0x01
@@ -2770,6 +2776,8 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 #endif /* CONFIG_WNM */
 	{ "raw", wpa_cli_cmd_raw, NULL, cli_cmd_flag_sensitive,
 	  "<params..> = Sent unprocessed command" },
+	{ "flush", wpa_cli_cmd_flush, NULL, cli_cmd_flag_none,
+	  "= flush wpa_supplicant state" },
 #ifdef ANDROID
 	{ "driver", wpa_cli_cmd_driver, NULL,
 	  cli_cmd_flag_none,

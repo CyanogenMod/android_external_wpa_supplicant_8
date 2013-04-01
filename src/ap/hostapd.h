@@ -220,7 +220,6 @@ struct hostapd_iface {
 	int num_ap; /* number of entries in ap_list */
 	struct ap_info *ap_list; /* AP info list head */
 	struct ap_info *ap_hash[STA_HASH_SIZE];
-	struct ap_info *ap_iter_list;
 
 	unsigned int drv_flags;
 
@@ -229,6 +228,10 @@ struct hostapd_iface {
 	 * struct wpa_driver_capa in driver.h
 	 */
 	unsigned int probe_resp_offloads;
+
+	/* extended capabilities supported by the driver */
+	const u8 *extended_capa, *extended_capa_mask;
+	unsigned int extended_capa_len;
 
 	struct hostapd_hw_modes *hw_features;
 	int num_hw_features;
