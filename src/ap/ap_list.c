@@ -50,7 +50,7 @@ static int ap_list_beacon_olbc(struct hostapd_iface *iface, struct ap_info *ap)
 }
 
 
-struct ap_info * ap_get_ap(struct hostapd_iface *iface, const u8 *ap)
+static struct ap_info * ap_get_ap(struct hostapd_iface *iface, const u8 *ap)
 {
 	struct ap_info *s;
 
@@ -87,34 +87,6 @@ static void ap_ap_list_del(struct hostapd_iface *iface, struct ap_info *ap)
 }
 
 
-static void ap_ap_iter_list_add(struct hostapd_iface *iface,
-				struct ap_info *ap)
-{
-	if (iface->ap_iter_list) {
-		ap->iter_prev = iface->ap_iter_list->iter_prev;
-		iface->ap_iter_list->iter_prev = ap;
-	} else
-		ap->iter_prev = ap;
-	ap->iter_next = iface->ap_iter_list;
-	iface->ap_iter_list = ap;
-}
-
-
-static void ap_ap_iter_list_del(struct hostapd_iface *iface,
-				struct ap_info *ap)
-{
-	if (iface->ap_iter_list == ap)
-		iface->ap_iter_list = ap->iter_next;
-	else
-		ap->iter_prev->iter_next = ap->iter_next;
-
-	if (ap->iter_next)
-		ap->iter_next->iter_prev = ap->iter_prev;
-	else if (iface->ap_iter_list)
-		iface->ap_iter_list->iter_prev = ap->iter_prev;
-}
-
-
 static void ap_ap_hash_add(struct hostapd_iface *iface, struct ap_info *ap)
 {
 	ap->hnext = iface->ap_hash[STA_HASH(ap->addr)];
@@ -148,7 +120,6 @@ static void ap_free_ap(struct hostapd_iface *iface, struct ap_info *ap)
 {
 	ap_ap_hash_del(iface, ap);
 	ap_ap_list_del(iface, ap);
-	ap_ap_iter_list_del(iface, ap);
 
 	iface->num_ap--;
 	os_free(ap);
@@ -171,25 +142,6 @@ static void hostapd_free_aps(struct hostapd_iface *iface)
 }
 
 
-int ap_ap_for_each(struct hostapd_iface *iface,
-		   int (*func)(struct ap_info *s, void *data), void *data)
-{
-	struct ap_info *s;
-	int ret = 0;
-
-	s = iface->ap_list;
-
-	while (s) {
-		ret = func(s, data);
-		if (ret)
-			break;
-		s = s->next;
-	}
-
-	return ret;
-}
-
-
 static struct ap_info * ap_ap_add(struct hostapd_iface *iface, const u8 *addr)
 {
 	struct ap_info *ap;
@@ -203,7 +155,6 @@ static struct ap_info * ap_ap_add(struct hostapd_iface *iface, const u8 *addr)
 	ap_ap_list_add(iface, ap);
 	iface->num_ap++;
 	ap_ap_hash_add(iface, ap);
-	ap_ap_iter_list_add(iface, ap);
 
 	if (iface->num_ap > iface->conf->ap_table_max_size && ap != ap->prev) {
 		wpa_printf(MSG_DEBUG, "Removing the least recently used AP "
@@ -223,7 +174,6 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 	struct ap_info *ap;
 	struct os_time now;
 	int new_ap = 0;
-	size_t len;
 	int set_beacon = 0;
 
 	if (iface->conf->ap_table_max_size < 1)
@@ -239,23 +189,9 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 		new_ap = 1;
 	}
 
-	ap->beacon_int = le_to_host16(mgmt->u.beacon.beacon_int);
-	ap->capability = le_to_host16(mgmt->u.beacon.capab_info);
-
-	if (elems->ssid) {
-		len = elems->ssid_len;
-		if (len >= sizeof(ap->ssid))
-			len = sizeof(ap->ssid) - 1;
-		os_memcpy(ap->ssid, elems->ssid, len);
-		ap->ssid[len] = '\0';
-		ap->ssid_len = len;
-	}
-
 	merge_byte_arrays(ap->supported_rates, WLAN_SUPP_RATES_MAX,
 			  elems->supp_rates, elems->supp_rates_len,
 			  elems->ext_supp_rates, elems->ext_supp_rates_len);
-
-	ap->wpa = elems->wpa_ie != NULL;
 
 	if (elems->erp_info && elems->erp_info_len == 1)
 		ap->erp = elems->erp_info[0];
@@ -264,6 +200,8 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 
 	if (elems->ds_params && elems->ds_params_len == 1)
 		ap->channel = elems->ds_params[0];
+	else if (elems->ht_operation && elems->ht_operation_len >= 1)
+		ap->channel = elems->ht_operation[0];
 	else if (fi)
 		ap->channel = fi->channel;
 
@@ -272,11 +210,8 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 	else
 		ap->ht_support = 0;
 
-	ap->num_beacons++;
 	os_get_time(&now);
 	ap->last_beacon = now.sec;
-	if (fi)
-		ap->datarate = fi->datarate;
 
 	if (!new_ap && ap != iface->ap_list) {
 		/* move AP entry into the beginning of the list so that the
@@ -288,17 +223,23 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 	if (!iface->olbc &&
 	    ap_list_beacon_olbc(iface, ap)) {
 		iface->olbc = 1;
-		wpa_printf(MSG_DEBUG, "OLBC AP detected: " MACSTR " - enable "
-			   "protection", MAC2STR(ap->addr));
+		wpa_printf(MSG_DEBUG, "OLBC AP detected: " MACSTR
+			   " (channel %d) - enable protection",
+			   MAC2STR(ap->addr), ap->channel);
 		set_beacon++;
 	}
 
 #ifdef CONFIG_IEEE80211N
-	if (!iface->olbc_ht && !ap->ht_support) {
+	if (!iface->olbc_ht && !ap->ht_support &&
+	    (ap->channel == 0 ||
+	     ap->channel == iface->conf->channel ||
+	     ap->channel == iface->conf->channel +
+	     iface->conf->secondary_channel * 4)) {
 		iface->olbc_ht = 1;
 		hostapd_ht_operation_update(iface);
 		wpa_printf(MSG_DEBUG, "OLBC HT AP detected: " MACSTR
-			   " - enable protection", MAC2STR(ap->addr));
+			   " (channel %d) - enable protection",
+			   MAC2STR(ap->addr), ap->channel);
 		set_beacon++;
 	}
 #endif /* CONFIG_IEEE80211N */
