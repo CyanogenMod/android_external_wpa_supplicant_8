@@ -435,9 +435,11 @@ struct wpa_config * wpa_config_read(const char *name, struct wpa_config *cfgp)
 
 	fclose(f);
 
-	config->ssid = head;
+	if (head)
+		config->ssid = head;
 	wpa_config_debug_dump_networks(config);
-	config->cred = cred_head;
+	if (cred_head)
+		config->cred = cred_head;
 
 #ifndef WPA_IGNORE_CONFIG_ERRORS
 	if (errors) {
