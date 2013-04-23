@@ -399,6 +399,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->confname);
 	wpa_s->confname = NULL;
 
+	os_free(wpa_s->confanother);
+	wpa_s->confanother = NULL;
+
 	wpa_sm_set_eapol(wpa_s->wpa, NULL);
 	eapol_sm_deinit(wpa_s->eapol);
 	wpa_s->eapol = NULL;

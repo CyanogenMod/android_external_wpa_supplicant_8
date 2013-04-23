@@ -56,9 +56,10 @@ struct wpa_interface {
 	const char *confname;
 
 	/**
-	 * confanother - Additional Configuration name (file or profile) name
+	 * confanother - Additional configuration name (file or profile) name
 	 *
-	 * This can also be %NULL when a configuration file is not used.
+	 * This can also be %NULL when the additional configuration file is not
+	 * used.
 	 */
 	const char *confanother;
 
