@@ -912,7 +912,7 @@ int wpa_config_process_global(struct wpa_config *config, char *pos, int line);
  * wpa_config_read - Read and parse configuration database
  * @name: Name of the configuration (e.g., path and file name for the
  * configuration file)
- * @cfgp: Pointer to previousely allocated configuration data
+ * @cfgp: Pointer to previously allocated configuration data or %NULL if none
  * Returns: Pointer to allocated configuration data or %NULL on failure
  *
  * This function reads configuration data, parses its contents, and allocates
