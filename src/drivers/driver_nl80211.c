@@ -1308,7 +1308,7 @@ static void mlme_event_mgmt(struct wpa_driver_nl80211_data *drv,
 	u16 fc, stype;
 	int ssi_signal = 0;
 
-	wpa_printf(MSG_DEBUG, "nl80211: Frame event");
+	wpa_printf(MSG_MSGDUMP, "nl80211: Frame event");
 	mgmt = (const struct ieee80211_mgmt *) frame;
 	if (len < 24) {
 		wpa_printf(MSG_DEBUG, "nl80211: Too short action frame");
@@ -1485,12 +1485,16 @@ static void mlme_event_unprot_disconnect(struct wpa_driver_nl80211_data *drv,
 }
 
 
-static void mlme_event(struct wpa_driver_nl80211_data *drv,
+static void mlme_event(struct i802_bss *bss,
 		       enum nl80211_commands cmd, struct nlattr *frame,
 		       struct nlattr *addr, struct nlattr *timed_out,
 		       struct nlattr *freq, struct nlattr *ack,
 		       struct nlattr *cookie, struct nlattr *sig)
 {
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	const u8 *data;
+	size_t len;
+
 	if (timed_out && addr) {
 		mlme_timeout_event(drv, cmd, addr);
 		return;
@@ -1502,7 +1506,23 @@ static void mlme_event(struct wpa_driver_nl80211_data *drv,
 		return;
 	}
 
-	wpa_printf(MSG_DEBUG, "nl80211: MLME event %d", cmd);
+	data = nla_data(frame);
+	len = nla_len(frame);
+	if (len < 4 + ETH_ALEN) {
+		wpa_printf(MSG_MSGDUMP, "nl80211: MLME event %d on %s(" MACSTR
+			   ") - too short",
+			   cmd, bss->ifname, MAC2STR(bss->addr));
+		return;
+	}
+	wpa_printf(MSG_MSGDUMP, "nl80211: MLME event %d on %s(" MACSTR ") A1="
+		   MACSTR, cmd, bss->ifname, MAC2STR(bss->addr),
+		   MAC2STR(data + 4));
+	if (cmd != NL80211_CMD_FRAME_TX_STATUS && !(data[4] & 0x01) &&
+	    os_memcmp(bss->addr, data + 4, ETH_ALEN) != 0) {
+		wpa_printf(MSG_MSGDUMP, "nl80211: %s: Ignore MLME frame event "
+			   "for foreign address", bss->ifname);
+		return;
+	}
 	wpa_hexdump(MSG_MSGDUMP, "nl80211: MLME event frame",
 		    nla_data(frame), nla_len(frame));
 
@@ -2301,7 +2321,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 	case NL80211_CMD_FRAME_TX_STATUS:
 	case NL80211_CMD_UNPROT_DEAUTHENTICATE:
 	case NL80211_CMD_UNPROT_DISASSOCIATE:
-		mlme_event(drv, cmd, tb[NL80211_ATTR_FRAME],
+		mlme_event(bss, cmd, tb[NL80211_ATTR_FRAME],
 			   tb[NL80211_ATTR_MAC], tb[NL80211_ATTR_TIMED_OUT],
 			   tb[NL80211_ATTR_WIPHY_FREQ], tb[NL80211_ATTR_ACK],
 			   tb[NL80211_ATTR_COOKIE],
@@ -2450,7 +2470,7 @@ static int process_bss_event(struct nl_msg *msg, void *arg)
 	switch (gnlh->cmd) {
 	case NL80211_CMD_FRAME:
 	case NL80211_CMD_FRAME_TX_STATUS:
-		mlme_event(bss->drv, gnlh->cmd, tb[NL80211_ATTR_FRAME],
+		mlme_event(bss, gnlh->cmd, tb[NL80211_ATTR_FRAME],
 			   tb[NL80211_ATTR_MAC], tb[NL80211_ATTR_TIMED_OUT],
 			   tb[NL80211_ATTR_WIPHY_FREQ], tb[NL80211_ATTR_ACK],
 			   tb[NL80211_ATTR_COOKIE],
@@ -2477,7 +2497,7 @@ static void wpa_driver_nl80211_event_receive(int sock, void *eloop_ctx,
 {
 	struct nl_cb *cb = eloop_ctx;
 
-	wpa_printf(MSG_DEBUG, "nl80211: Event message available");
+	wpa_printf(MSG_MSGDUMP, "nl80211: Event message available");
 
 	nl_recvmsgs(handle, cb);
 }
@@ -3812,7 +3832,6 @@ nl80211_scan_common(struct wpa_driver_nl80211_data *drv, u8 cmd,
 		    struct wpa_driver_scan_params *params)
 {
 	struct nl_msg *msg;
-	int err;
 	size_t i;
 
 	msg = nlmsg_alloc();
@@ -3825,23 +3844,20 @@ nl80211_scan_common(struct wpa_driver_nl80211_data *drv, u8 cmd,
 		goto fail;
 
 	if (params->num_ssids) {
-		struct nl_msg *ssids = nlmsg_alloc();
+		struct nlattr *ssids;
+
+		ssids = nla_nest_start(msg, NL80211_ATTR_SCAN_SSIDS);
 		if (ssids == NULL)
 			goto fail;
 		for (i = 0; i < params->num_ssids; i++) {
 			wpa_hexdump_ascii(MSG_MSGDUMP, "nl80211: Scan SSID",
 					  params->ssids[i].ssid,
 					  params->ssids[i].ssid_len);
-			if (nla_put(ssids, i + 1, params->ssids[i].ssid_len,
-				    params->ssids[i].ssid) < 0) {
-				nlmsg_free(ssids);
+			if (nla_put(msg, i + 1, params->ssids[i].ssid_len,
+				    params->ssids[i].ssid) < 0)
 				goto fail;
-			}
 		}
-		err = nla_put_nested(msg, NL80211_ATTR_SCAN_SSIDS, ssids);
-		nlmsg_free(ssids);
-		if (err < 0)
-			goto fail;
+		nla_nest_end(msg, ssids);
 	}
 
 	if (params->extra_ies) {
@@ -3853,22 +3869,17 @@ nl80211_scan_common(struct wpa_driver_nl80211_data *drv, u8 cmd,
 	}
 
 	if (params->freqs) {
-		struct nl_msg *freqs = nlmsg_alloc();
+		struct nlattr *freqs;
+		freqs = nla_nest_start(msg, NL80211_ATTR_SCAN_FREQUENCIES);
 		if (freqs == NULL)
 			goto fail;
 		for (i = 0; params->freqs[i]; i++) {
 			wpa_printf(MSG_MSGDUMP, "nl80211: Scan frequency %u "
 				   "MHz", params->freqs[i]);
-			if (nla_put_u32(freqs, i + 1, params->freqs[i]) < 0) {
-				nlmsg_free(freqs);
+			if (nla_put_u32(msg, i + 1, params->freqs[i]) < 0)
 				goto fail;
-			}
 		}
-		err = nla_put_nested(msg, NL80211_ATTR_SCAN_FREQUENCIES,
-				     freqs);
-		nlmsg_free(freqs);
-		if (err < 0)
-			goto fail;
+		nla_nest_end(msg, freqs);
 	}
 
 	os_free(drv->filter_ssids);
@@ -3895,7 +3906,7 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	int ret = -1, timeout;
-	struct nl_msg *msg, *rates = NULL;
+	struct nl_msg *msg = NULL;
 
 	wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: scan request");
 	drv->scan_for_auth = 0;
@@ -3905,9 +3916,11 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 		return -1;
 
 	if (params->p2p_probe) {
+		struct nlattr *rates;
+
 		wpa_printf(MSG_DEBUG, "nl80211: P2P probe - mask SuppRates");
 
-		rates = nlmsg_alloc();
+		rates = nla_nest_start(msg, NL80211_ATTR_SCAN_SUPP_RATES);
 		if (rates == NULL)
 			goto nla_put_failure;
 
@@ -3917,11 +3930,9 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 		 * 9, 12, 18, 24, 36, 48, 54 Mbps from non-MCS rates. All 5 GHz
 		 * rates are left enabled.
 		 */
-		NLA_PUT(rates, NL80211_BAND_2GHZ, 8,
+		NLA_PUT(msg, NL80211_BAND_2GHZ, 8,
 			"\x0c\x12\x18\x24\x30\x48\x60\x6c");
-		if (nla_put_nested(msg, NL80211_ATTR_SCAN_SUPP_RATES, rates) <
-		    0)
-			goto nla_put_failure;
+		nla_nest_end(msg, rates);
 
 		NLA_PUT_FLAG(msg, NL80211_ATTR_TX_NO_CCK_RATE);
 	}
@@ -3975,7 +3986,6 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 
 nla_put_failure:
 	nlmsg_free(msg);
-	nlmsg_free(rates);
 	return ret;
 }
 
@@ -3995,8 +4005,6 @@ static int wpa_driver_nl80211_sched_scan(void *priv,
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	int ret = -1;
 	struct nl_msg *msg;
-	struct nl_msg *match_set_ssid = NULL, *match_sets = NULL;
-	struct nl_msg *match_set_rssi = NULL;
 	size_t i;
 
 	wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: sched_scan request");
@@ -4015,46 +4023,42 @@ static int wpa_driver_nl80211_sched_scan(void *priv,
 	if ((drv->num_filter_ssids &&
 	    (int) drv->num_filter_ssids <= drv->capa.max_match_sets) ||
 	    params->filter_rssi) {
-		match_sets = nlmsg_alloc();
+		struct nlattr *match_sets;
+		match_sets = nla_nest_start(msg, NL80211_ATTR_SCHED_SCAN_MATCH);
 		if (match_sets == NULL)
 			goto nla_put_failure;
 
 		for (i = 0; i < drv->num_filter_ssids; i++) {
+			struct nlattr *match_set_ssid;
 			wpa_hexdump_ascii(MSG_MSGDUMP,
 					  "nl80211: Sched scan filter SSID",
 					  drv->filter_ssids[i].ssid,
 					  drv->filter_ssids[i].ssid_len);
 
-			match_set_ssid = nlmsg_alloc();
+			match_set_ssid = nla_nest_start(msg, i + 1);
 			if (match_set_ssid == NULL)
 				goto nla_put_failure;
-			NLA_PUT(match_set_ssid,
-				NL80211_ATTR_SCHED_SCAN_MATCH_SSID,
+			NLA_PUT(msg, NL80211_ATTR_SCHED_SCAN_MATCH_SSID,
 				drv->filter_ssids[i].ssid_len,
 				drv->filter_ssids[i].ssid);
 
-			if (nla_put_nested(match_sets, i + 1, match_set_ssid) <
-			    0)
-				goto nla_put_failure;
+			nla_nest_end(msg, match_set_ssid);
 		}
 
 		if (params->filter_rssi) {
-			match_set_rssi = nlmsg_alloc();
+			struct nlattr *match_set_rssi;
+			match_set_rssi = nla_nest_start(msg, 0);
 			if (match_set_rssi == NULL)
 				goto nla_put_failure;
-			NLA_PUT_U32(match_set_rssi,
-				    NL80211_SCHED_SCAN_MATCH_ATTR_RSSI,
+			NLA_PUT_U32(msg, NL80211_SCHED_SCAN_MATCH_ATTR_RSSI,
 				    params->filter_rssi);
 			wpa_printf(MSG_MSGDUMP,
 				   "nl80211: Sched scan RSSI filter %d dBm",
 				   params->filter_rssi);
-			if (nla_put_nested(match_sets, 0, match_set_rssi) < 0)
-				goto nla_put_failure;
+			nla_nest_end(msg, match_set_rssi);
 		}
 
-		if (nla_put_nested(msg, NL80211_ATTR_SCHED_SCAN_MATCH,
-				   match_sets) < 0)
-			goto nla_put_failure;
+		nla_nest_end(msg, match_sets);
 	}
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
@@ -4072,9 +4076,6 @@ static int wpa_driver_nl80211_sched_scan(void *priv,
 		   "scan interval %d msec", ret, interval);
 
 nla_put_failure:
-	nlmsg_free(match_set_ssid);
-	nlmsg_free(match_sets);
-	nlmsg_free(match_set_rssi);
 	nlmsg_free(msg);
 	return ret;
 }
@@ -4563,18 +4564,15 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 				    NL80211_KEYTYPE_GROUP);
 		}
 	} else if (addr && is_broadcast_ether_addr(addr)) {
-		struct nl_msg *types;
-		int err;
+		struct nlattr *types;
+
 		wpa_printf(MSG_DEBUG, "   broadcast key");
-		types = nlmsg_alloc();
+
+		types = nla_nest_start(msg, NL80211_ATTR_KEY_DEFAULT_TYPES);
 		if (!types)
 			goto nla_put_failure;
-		NLA_PUT_FLAG(types, NL80211_KEY_DEFAULT_TYPE_MULTICAST);
-		err = nla_put_nested(msg, NL80211_ATTR_KEY_DEFAULT_TYPES,
-				     types);
-		nlmsg_free(types);
-		if (err)
-			goto nla_put_failure;
+		NLA_PUT_FLAG(msg, NL80211_KEY_DEFAULT_TYPE_MULTICAST);
+		nla_nest_end(msg, types);
 	}
 	NLA_PUT_U8(msg, NL80211_ATTR_KEY_IDX, key_idx);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, ifindex);
@@ -4608,29 +4606,21 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	else
 		NLA_PUT_FLAG(msg, NL80211_ATTR_KEY_DEFAULT);
 	if (addr && is_broadcast_ether_addr(addr)) {
-		struct nl_msg *types;
-		int err;
-		types = nlmsg_alloc();
+		struct nlattr *types;
+
+		types = nla_nest_start(msg, NL80211_ATTR_KEY_DEFAULT_TYPES);
 		if (!types)
 			goto nla_put_failure;
-		NLA_PUT_FLAG(types, NL80211_KEY_DEFAULT_TYPE_MULTICAST);
-		err = nla_put_nested(msg, NL80211_ATTR_KEY_DEFAULT_TYPES,
-				     types);
-		nlmsg_free(types);
-		if (err)
-			goto nla_put_failure;
+		NLA_PUT_FLAG(msg, NL80211_KEY_DEFAULT_TYPE_MULTICAST);
+		nla_nest_end(msg, types);
 	} else if (addr) {
-		struct nl_msg *types;
-		int err;
-		types = nlmsg_alloc();
+		struct nlattr *types;
+
+		types = nla_nest_start(msg, NL80211_ATTR_KEY_DEFAULT_TYPES);
 		if (!types)
 			goto nla_put_failure;
-		NLA_PUT_FLAG(types, NL80211_KEY_DEFAULT_TYPE_UNICAST);
-		err = nla_put_nested(msg, NL80211_ATTR_KEY_DEFAULT_TYPES,
-				     types);
-		nlmsg_free(types);
-		if (err)
-			goto nla_put_failure;
+		NLA_PUT_FLAG(msg, NL80211_KEY_DEFAULT_TYPE_UNICAST);
+		nla_nest_end(msg, types);
 	}
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
@@ -6102,7 +6092,7 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct nl_msg *msg, *wme = NULL;
+	struct nl_msg *msg;
 	struct nl80211_sta_flag_update upd;
 	int ret = -ENOBUFS;
 
@@ -6169,18 +6159,18 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	NLA_PUT(msg, NL80211_ATTR_STA_FLAGS2, sizeof(upd), &upd);
 
 	if (params->flags & WPA_STA_WMM) {
-		wme = nlmsg_alloc();
+		struct nlattr *wme = nla_nest_start(msg, NL80211_ATTR_STA_WME);
+
 		if (!wme)
 			goto nla_put_failure;
 
 		wpa_printf(MSG_DEBUG, "  * qosinfo=0x%x", params->qosinfo);
-		NLA_PUT_U8(wme, NL80211_STA_WME_UAPSD_QUEUES,
+		NLA_PUT_U8(msg, NL80211_STA_WME_UAPSD_QUEUES,
 				params->qosinfo & WMM_QOSINFO_STA_AC_MASK);
-		NLA_PUT_U8(wme, NL80211_STA_WME_MAX_SP,
+		NLA_PUT_U8(msg, NL80211_STA_WME_MAX_SP,
 				(params->qosinfo >> WMM_QOSINFO_STA_SP_SHIFT) &
 				WMM_QOSINFO_STA_SP_MASK);
-		if (nla_put_nested(msg, NL80211_ATTR_STA_WME, wme) < 0)
-			goto nla_put_failure;
+		nla_nest_end(msg, wme);
 	}
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
@@ -6192,7 +6182,6 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	if (ret == -EEXIST)
 		ret = 0;
  nla_put_failure:
-	nlmsg_free(wme);
 	nlmsg_free(msg);
 	return ret;
 }
@@ -6276,7 +6265,7 @@ static int nl80211_create_iface_once(struct wpa_driver_nl80211_data *drv,
 				     enum nl80211_iftype iftype,
 				     const u8 *addr, int wds)
 {
-	struct nl_msg *msg, *flags = NULL;
+	struct nl_msg *msg;
 	int ifidx;
 	int ret = -ENOBUFS;
 
@@ -6293,20 +6282,15 @@ static int nl80211_create_iface_once(struct wpa_driver_nl80211_data *drv,
 	NLA_PUT_U32(msg, NL80211_ATTR_IFTYPE, iftype);
 
 	if (iftype == NL80211_IFTYPE_MONITOR) {
-		int err;
+		struct nlattr *flags;
 
-		flags = nlmsg_alloc();
+		flags = nla_nest_start(msg, NL80211_ATTR_MNTR_FLAGS);
 		if (!flags)
 			goto nla_put_failure;
 
-		NLA_PUT_FLAG(flags, NL80211_MNTR_FLAG_COOK_FRAMES);
+		NLA_PUT_FLAG(msg, NL80211_MNTR_FLAG_COOK_FRAMES);
 
-		err = nla_put_nested(msg, NL80211_ATTR_MNTR_FLAGS, flags);
-
-		nlmsg_free(flags);
-
-		if (err)
-			goto nla_put_failure;
+		nla_nest_end(msg, flags);
 	} else if (wds) {
 		NLA_PUT_U8(msg, NL80211_ATTR_4ADDR, wds);
 	}
@@ -6939,18 +6923,13 @@ static int wpa_driver_nl80211_sta_set_flags(void *priv, const u8 *addr,
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct nl_msg *msg, *flags = NULL;
+	struct nl_msg *msg;
+	struct nlattr *flags;
 	struct nl80211_sta_flag_update upd;
 
 	msg = nlmsg_alloc();
 	if (!msg)
 		return -ENOMEM;
-
-	flags = nlmsg_alloc();
-	if (!flags) {
-		nlmsg_free(msg);
-		return -ENOMEM;
-	}
 
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_SET_STATION);
 
@@ -6962,35 +6941,34 @@ static int wpa_driver_nl80211_sta_set_flags(void *priv, const u8 *addr,
 	 * Backwards compatibility version using NL80211_ATTR_STA_FLAGS. This
 	 * can be removed eventually.
 	 */
+	flags = nla_nest_start(msg, NL80211_ATTR_STA_FLAGS);
+	if (!flags)
+		goto nla_put_failure;
 	if (total_flags & WPA_STA_AUTHORIZED)
-		NLA_PUT_FLAG(flags, NL80211_STA_FLAG_AUTHORIZED);
+		NLA_PUT_FLAG(msg, NL80211_STA_FLAG_AUTHORIZED);
 
 	if (total_flags & WPA_STA_WMM)
-		NLA_PUT_FLAG(flags, NL80211_STA_FLAG_WME);
+		NLA_PUT_FLAG(msg, NL80211_STA_FLAG_WME);
 
 	if (total_flags & WPA_STA_SHORT_PREAMBLE)
-		NLA_PUT_FLAG(flags, NL80211_STA_FLAG_SHORT_PREAMBLE);
+		NLA_PUT_FLAG(msg, NL80211_STA_FLAG_SHORT_PREAMBLE);
 
 	if (total_flags & WPA_STA_MFP)
-		NLA_PUT_FLAG(flags, NL80211_STA_FLAG_MFP);
+		NLA_PUT_FLAG(msg, NL80211_STA_FLAG_MFP);
 
 	if (total_flags & WPA_STA_TDLS_PEER)
-		NLA_PUT_FLAG(flags, NL80211_STA_FLAG_TDLS_PEER);
+		NLA_PUT_FLAG(msg, NL80211_STA_FLAG_TDLS_PEER);
 
-	if (nla_put_nested(msg, NL80211_ATTR_STA_FLAGS, flags))
-		goto nla_put_failure;
+	nla_nest_end(msg, flags);
 
 	os_memset(&upd, 0, sizeof(upd));
 	upd.mask = sta_flags_nl80211(flags_or | ~flags_and);
 	upd.set = sta_flags_nl80211(flags_or);
 	NLA_PUT(msg, NL80211_ATTR_STA_FLAGS2, sizeof(upd), &upd);
 
-	nlmsg_free(flags);
-
 	return send_and_recv_msgs(drv, msg, NULL, NULL);
  nla_put_failure:
 	nlmsg_free(msg);
-	nlmsg_free(flags);
 	return -ENOBUFS;
 }
 
@@ -8692,7 +8670,7 @@ static int nl80211_send_frame_cmd(struct i802_bss *bss,
 	if (!msg)
 		return -1;
 
-	wpa_printf(MSG_DEBUG, "nl80211: CMD_FRAME freq=%u wait=%u no_cck=%d "
+	wpa_printf(MSG_MSGDUMP, "nl80211: CMD_FRAME freq=%u wait=%u no_cck=%d "
 		   "no_ack=%d offchanok=%d",
 		   freq, wait, no_cck, no_ack, offchanok);
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_FRAME);
@@ -8719,7 +8697,7 @@ static int nl80211_send_frame_cmd(struct i802_bss *bss,
 			   freq, wait);
 		goto nla_put_failure;
 	}
-	wpa_printf(MSG_DEBUG, "nl80211: Frame TX command accepted%s; "
+	wpa_printf(MSG_MSGDUMP, "nl80211: Frame TX command accepted%s; "
 		   "cookie 0x%llx", no_ack ? " (no ACK)" : "",
 		   (long long unsigned int) cookie);
 
@@ -9068,7 +9046,8 @@ static int nl80211_signal_monitor(void *priv, int threshold, int hysteresis)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct nl_msg *msg, *cqm = NULL;
+	struct nl_msg *msg;
+	struct nlattr *cqm;
 	int ret = -1;
 
 	wpa_printf(MSG_DEBUG, "nl80211: Signal monitor threshold=%d "
@@ -9082,20 +9061,18 @@ static int nl80211_signal_monitor(void *priv, int threshold, int hysteresis)
 
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, bss->ifindex);
 
-	cqm = nlmsg_alloc();
+	cqm = nla_nest_start(msg, NL80211_ATTR_CQM);
 	if (cqm == NULL)
 		goto nla_put_failure;
 
-	NLA_PUT_U32(cqm, NL80211_ATTR_CQM_RSSI_THOLD, threshold);
-	NLA_PUT_U32(cqm, NL80211_ATTR_CQM_RSSI_HYST, hysteresis);
-	if (nla_put_nested(msg, NL80211_ATTR_CQM, cqm) < 0)
-		goto nla_put_failure;
+	NLA_PUT_U32(msg, NL80211_ATTR_CQM_RSSI_THOLD, threshold);
+	NLA_PUT_U32(msg, NL80211_ATTR_CQM_RSSI_HYST, hysteresis);
+	nla_nest_end(msg, cqm);
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	msg = NULL;
 
 nla_put_failure:
-	nlmsg_free(cqm);
 	nlmsg_free(msg);
 	return ret;
 }

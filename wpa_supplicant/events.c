@@ -44,7 +44,8 @@
 #include "interworking.h"
 
 
-static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s);
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
+					      int new_scan);
 
 
 static int wpas_temp_disabled(struct wpa_supplicant *wpa_s,
@@ -1214,11 +1215,12 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 
 	wpa_scan_results_free(scan_res);
 
-	return wpas_select_network_from_last_scan(wpa_s);
+	return wpas_select_network_from_last_scan(wpa_s, 1);
 }
 
 
-static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
+					      int new_scan)
 {
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
@@ -1229,7 +1231,8 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 		int skip;
 		skip = !wpa_supplicant_need_to_roam(wpa_s, selected, ssid);
 		if (skip) {
-			wpa_supplicant_rsn_preauth_scan_results(wpa_s);
+			if (new_scan)
+				wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 			return 0;
 		}
 
@@ -1237,7 +1240,8 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 			wpa_dbg(wpa_s, MSG_DEBUG, "Connect failed");
 			return -1;
 		}
-		wpa_supplicant_rsn_preauth_scan_results(wpa_s);
+		if (new_scan)
+			wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 		/*
 		 * Do not notify other virtual radios of scan results since we do not
 		 * want them to start other associations at the same time.
@@ -1249,7 +1253,8 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 		if (ssid) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "Setup a new network");
 			wpa_supplicant_associate(wpa_s, NULL, ssid);
-			wpa_supplicant_rsn_preauth_scan_results(wpa_s);
+			if (new_scan)
+				wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 		} else {
 			int timeout_sec = wpa_s->scan_interval;
 			int timeout_usec = 0;
@@ -1354,7 +1359,7 @@ int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s)
 		return -1;
 	}
 
-	return wpas_select_network_from_last_scan(wpa_s);
+	return wpas_select_network_from_last_scan(wpa_s, 0);
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 }
 
