@@ -796,52 +796,31 @@ static struct wps_er_sta * wps_er_add_sta_data(struct wps_er_ap *ap,
 
 	if (attr->manufacturer) {
 		os_free(sta->manufacturer);
-		sta->manufacturer = os_malloc(attr->manufacturer_len + 1);
-		if (sta->manufacturer) {
-			os_memcpy(sta->manufacturer, attr->manufacturer,
-				  attr->manufacturer_len);
-			sta->manufacturer[attr->manufacturer_len] = '\0';
-		}
+		sta->manufacturer = dup_binstr(attr->manufacturer,
+					       attr->manufacturer_len);
 	}
 
 	if (attr->model_name) {
 		os_free(sta->model_name);
-		sta->model_name = os_malloc(attr->model_name_len + 1);
-		if (sta->model_name) {
-			os_memcpy(sta->model_name, attr->model_name,
-				  attr->model_name_len);
-			sta->model_name[attr->model_name_len] = '\0';
-		}
+		sta->model_name = dup_binstr(attr->model_name,
+					     attr->model_name_len);
 	}
 
 	if (attr->model_number) {
 		os_free(sta->model_number);
-		sta->model_number = os_malloc(attr->model_number_len + 1);
-		if (sta->model_number) {
-			os_memcpy(sta->model_number, attr->model_number,
-				  attr->model_number_len);
-			sta->model_number[attr->model_number_len] = '\0';
-		}
+		sta->model_number = dup_binstr(attr->model_number,
+					       attr->model_number_len);
 	}
 
 	if (attr->serial_number) {
 		os_free(sta->serial_number);
-		sta->serial_number = os_malloc(attr->serial_number_len + 1);
-		if (sta->serial_number) {
-			os_memcpy(sta->serial_number, attr->serial_number,
-				  attr->serial_number_len);
-			sta->serial_number[attr->serial_number_len] = '\0';
-		}
+		sta->serial_number = dup_binstr(attr->serial_number,
+						attr->serial_number_len);
 	}
 
 	if (attr->dev_name) {
 		os_free(sta->dev_name);
-		sta->dev_name = os_malloc(attr->dev_name_len + 1);
-		if (sta->dev_name) {
-			os_memcpy(sta->dev_name, attr->dev_name,
-				  attr->dev_name_len);
-			sta->dev_name[attr->dev_name_len] = '\0';
-		}
+		sta->dev_name = dup_binstr(attr->dev_name, attr->dev_name_len);
 	}
 
 	eloop_cancel_timeout(wps_er_sta_timeout, sta, NULL);
@@ -1292,6 +1271,22 @@ wps_er_init(struct wps_context *wps, const char *ifname, const char *filter)
 	/* Limit event_id to < 32 bits to avoid issues with atoi() */
 	er->event_id &= 0x0fffffff;
 
+	if (filter && os_strncmp(filter, "ifname=", 7) == 0) {
+		const char *pos, *end;
+		pos = filter + 7;
+		end = os_strchr(pos, ' ');
+		if (end) {
+			size_t len = end - pos;
+			os_strlcpy(er->ifname, pos, len < sizeof(er->ifname) ?
+				   len + 1 : sizeof(er->ifname));
+			filter = end + 1;
+		} else {
+			os_strlcpy(er->ifname, pos, sizeof(er->ifname));
+			filter = NULL;
+		}
+		er->forced_ifname = 1;
+	}
+
 	if (filter) {
 		if (inet_aton(filter, &er->filter_addr) == 0) {
 			wpa_printf(MSG_INFO, "WPS UPnP: Invalid filter "
@@ -1302,10 +1297,10 @@ wps_er_init(struct wps_context *wps, const char *ifname, const char *filter)
 		wpa_printf(MSG_DEBUG, "WPS UPnP: Only accepting connections "
 			   "with %s", filter);
 	}
-	if (get_netif_info(ifname, &er->ip_addr, &er->ip_addr_text,
+	if (get_netif_info(er->ifname, &er->ip_addr, &er->ip_addr_text,
 			   er->mac_addr)) {
 		wpa_printf(MSG_INFO, "WPS UPnP: Could not get IP/MAC address "
-			   "for %s. Does it have IP address?", ifname);
+			   "for %s. Does it have IP address?", er->ifname);
 		wps_er_deinit(er, NULL, NULL);
 		return NULL;
 	}
