@@ -95,6 +95,9 @@ static void wpas_p2p_group_idle_timeout(void *eloop_ctx, void *timeout_ctx);
 static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s);
 static void wpas_p2p_group_formation_timeout(void *eloop_ctx,
 					     void *timeout_ctx);
+#ifdef ANDROID_P2P
+static void wpas_p2p_group_freq_conflict(void *eloop_ctx, void *timeout_ctx);
+#endif
 static void wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
 					int group_added);
 static int wpas_p2p_stop_find_oper(struct wpa_supplicant *wpa_s);
@@ -353,6 +356,9 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 			wpa_s->ifname, gtype, reason);
 	}
 
+#ifdef ANDROID_P2P
+	eloop_cancel_timeout(wpas_p2p_group_freq_conflict, wpa_s, NULL);
+#endif
 	if (eloop_cancel_timeout(wpas_p2p_group_idle_timeout, wpa_s, NULL) > 0)
 		wpa_printf(MSG_DEBUG, "P2P: Cancelled P2P group idle timeout");
 	if (eloop_cancel_timeout(wpas_p2p_group_formation_timeout,
@@ -3180,6 +3186,9 @@ void wpas_p2p_deinit(struct wpa_supplicant *wpa_s)
 
 	os_free(wpa_s->go_params);
 	wpa_s->go_params = NULL;
+#ifdef ANDROID_P2P
+	eloop_cancel_timeout(wpas_p2p_group_freq_conflict, wpa_s, NULL);
+#endif
 	eloop_cancel_timeout(wpas_p2p_group_formation_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_p2p_join_scan, wpa_s, NULL);
 	wpa_s->p2p_long_listen = 0;
@@ -5858,6 +5867,14 @@ void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s)
 }
 
 #ifdef ANDROID_P2P
+static void wpas_p2p_group_freq_conflict(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+
+	wpa_printf(MSG_DEBUG, "P2P: Frequency conflict - terminate group");
+	wpas_p2p_group_delete(wpa_s, P2P_GROUP_REMOVAL_FREQ_CONFLICT);
+}
+
 int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s, int freq,
 	struct wpa_ssid *ssid)
 {
@@ -5890,7 +5907,8 @@ int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s, int freq,
 				 * P2P connection. So remove the interface */
 				wpa_printf(MSG_DEBUG, "P2P: Removing P2P connection due to Single channel"
 						"concurrent mode frequency conflict");
-				wpas_p2p_group_delete(iface, P2P_GROUP_REMOVAL_FREQ_CONFLICT);
+				eloop_register_timeout(0, 0, wpas_p2p_group_freq_conflict,
+						       iface, NULL);
 				/* If connection in progress is p2p connection, do not proceed for the connection */
 				if (wpa_s == iface)
 					return -1;
