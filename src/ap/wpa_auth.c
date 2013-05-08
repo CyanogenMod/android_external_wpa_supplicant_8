@@ -1232,7 +1232,7 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 	else
 		version = WPA_KEY_INFO_TYPE_HMAC_MD5_RC4;
 
-	pairwise = key_info & WPA_KEY_INFO_KEY_TYPE;
+	pairwise = !!(key_info & WPA_KEY_INFO_KEY_TYPE);
 
 	wpa_printf(MSG_DEBUG, "WPA: Send EAPOL(version=%d secure=%d mic=%d "
 		   "ack=%d install=%d pairwise=%d kde_len=%lu keyidx=%d "
@@ -1347,6 +1347,16 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 		}
 		wpa_eapol_key_mic(sm->PTK.kck, version, (u8 *) hdr, len,
 				  key->key_mic);
+#ifdef CONFIG_TESTING_OPTIONS
+		if (!pairwise &&
+		    wpa_auth->conf.corrupt_gtk_rekey_mic_probability > 0.0d &&
+		    drand48() <
+		    wpa_auth->conf.corrupt_gtk_rekey_mic_probability) {
+			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
+					"Corrupting group EAPOL-Key Key MIC");
+			key->key_mic[0]++;
+		}
+#endif /* CONFIG_TESTING_OPTIONS */
 	}
 
 	wpa_auth_set_eapol(sm->wpa_auth, sm->addr, WPA_EAPOL_inc_EapolFramesTx,

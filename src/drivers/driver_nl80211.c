@@ -2747,9 +2747,6 @@ static void wiphy_info_supp_cmds(struct wiphy_info_data *info,
 static void wiphy_info_max_roc(struct wpa_driver_capa *capa,
 			       struct nlattr *tb)
 {
-	/* default to 5000 since early versions of mac80211 don't set it */
-	capa->max_remain_on_chan = 5000;
-
 	if (tb)
 		capa->max_remain_on_chan = nla_get_u32(tb);
 }
@@ -2941,6 +2938,11 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 			   "concurrent (driver advertised support)");
 		drv->capa.flags |= WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT;
 	}
+
+	/* default to 5000 since early versions of mac80211 don't set it */
+	if (!drv->capa.max_remain_on_chan)
+		drv->capa.max_remain_on_chan = 5000;
+
 	return 0;
 nla_put_failure:
 	nlmsg_free(msg);
@@ -6092,8 +6094,18 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	wpa_hexdump(MSG_DEBUG, "  * supported rates", params->supp_rates,
 		    params->supp_rates_len);
 	if (!params->set) {
-		wpa_printf(MSG_DEBUG, "  * aid=%u", params->aid);
-		NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, params->aid);
+		if (params->aid) {
+			wpa_printf(MSG_DEBUG, "  * aid=%u", params->aid);
+			NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, params->aid);
+		} else {
+			/*
+			 * cfg80211 validates that AID is non-zero, so we have
+			 * to make this a non-zero value for the TDLS case where
+			 * a dummy STA entry is used for now.
+			 */
+			wpa_printf(MSG_DEBUG, "  * aid=1 (TDLS workaround)");
+			NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, 1);
+		}
 		wpa_printf(MSG_DEBUG, "  * listen_interval=%u",
 			   params->listen_interval);
 		NLA_PUT_U16(msg, NL80211_ATTR_STA_LISTEN_INTERVAL,

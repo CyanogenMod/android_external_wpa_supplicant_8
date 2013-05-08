@@ -127,6 +127,8 @@ struct wpa_tdls_peer {
 
 	u8 qos_info;
 
+	u16 aid;
+
 	u8 *ext_capab;
 	size_t ext_capab_len;
 };
@@ -696,13 +698,8 @@ int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr, u16 reason_code)
 		return -1;
 	pos = rbuf;
 
-	if (!wpa_tdls_get_privacy(sm) || !peer->tpk_set || !peer->tpk_success) {
-		if (reason_code != WLAN_REASON_DEAUTH_LEAVING) {
-			/* Overwrite the reason code */
-			reason_code = WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED;
-		}
+	if (!wpa_tdls_get_privacy(sm) || !peer->tpk_set || !peer->tpk_success)
 		goto skip_ies;
-	}
 
 	ftie = (struct wpa_tdls_ftie *) pos;
 	ftie->ie_type = WLAN_EID_FAST_BSS_TRANSITION;
@@ -1558,6 +1555,8 @@ static int wpa_tdls_process_tpk_m1(struct wpa_sm *sm, const u8 *src_addr,
 
 	peer->qos_info = kde.qosinfo;
 
+	peer->aid = kde.aid;
+
 #ifdef CONFIG_TDLS_TESTING
 	if (tdls_testing & TDLS_TESTING_CONCURRENT_INIT) {
 		peer = wpa_tdls_add_peer(sm, src_addr, NULL);
@@ -1735,7 +1734,7 @@ skip_rsn:
 
 skip_rsn_check:
 	/* add the peer to the driver as a "setup in progress" peer */
-	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0, NULL, NULL, 0,
+	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, 0, NULL, 0, NULL, NULL, 0,
 				NULL, 0);
 
 	wpa_printf(MSG_DEBUG, "TDLS: Sending TDLS Setup Response / TPK M2");
@@ -1777,7 +1776,8 @@ static int wpa_tdls_enable_link(struct wpa_sm *sm, struct wpa_tdls_peer *peer)
 	}
 
 	/* add supported rates, capabilities, and qos_info to the TDLS peer */
-	if (wpa_sm_tdls_peer_addset(sm, peer->addr, 0, peer->capability,
+	if (wpa_sm_tdls_peer_addset(sm, peer->addr, 0, peer->aid,
+				    peer->capability,
 				    peer->supp_rates, peer->supp_rates_len,
 				    peer->ht_capabilities,
 				    peer->vht_capabilities,
@@ -1907,6 +1907,8 @@ static int wpa_tdls_process_tpk_m2(struct wpa_sm *sm, const u8 *src_addr,
 		goto error;
 
 	peer->qos_info = kde.qosinfo;
+
+	peer->aid = kde.aid;
 
 	if (!wpa_tdls_get_privacy(sm)) {
 		peer->rsnie_p_len = 0;
@@ -2235,7 +2237,7 @@ int wpa_tdls_start(struct wpa_sm *sm, const u8 *addr)
 	peer->initiator = 1;
 
 	/* add the peer to the driver as a "setup in progress" peer */
-	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, NULL, 0, NULL, NULL, 0,
+	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, 0, NULL, 0, NULL, NULL, 0,
 				NULL, 0);
 
 	if (wpa_tdls_send_tpk_m1(sm, peer) < 0) {
