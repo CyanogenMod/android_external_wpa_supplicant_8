@@ -1508,17 +1508,18 @@ static void mlme_event(struct i802_bss *bss,
 
 	data = nla_data(frame);
 	len = nla_len(frame);
-	if (len < 4 + ETH_ALEN) {
+	if (len < 4 + 2 * ETH_ALEN) {
 		wpa_printf(MSG_MSGDUMP, "nl80211: MLME event %d on %s(" MACSTR
 			   ") - too short",
 			   cmd, bss->ifname, MAC2STR(bss->addr));
 		return;
 	}
 	wpa_printf(MSG_MSGDUMP, "nl80211: MLME event %d on %s(" MACSTR ") A1="
-		   MACSTR, cmd, bss->ifname, MAC2STR(bss->addr),
-		   MAC2STR(data + 4));
+		   MACSTR " A2=" MACSTR, cmd, bss->ifname, MAC2STR(bss->addr),
+		   MAC2STR(data + 4), MAC2STR(data + 4 + ETH_ALEN));
 	if (cmd != NL80211_CMD_FRAME_TX_STATUS && !(data[4] & 0x01) &&
-	    os_memcmp(bss->addr, data + 4, ETH_ALEN) != 0) {
+	    os_memcmp(bss->addr, data + 4, ETH_ALEN) != 0 &&
+	    os_memcmp(bss->addr, data + 4 + ETH_ALEN, ETH_ALEN) != 0) {
 		wpa_printf(MSG_MSGDUMP, "nl80211: %s: Ignore MLME frame event "
 			   "for foreign address", bss->ifname);
 		return;
@@ -2249,6 +2250,43 @@ static void nl80211_connect_failed_event(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static void nl80211_radar_event(struct wpa_driver_nl80211_data *drv,
+				struct nlattr **tb)
+{
+	union wpa_event_data data;
+	enum nl80211_radar_event event_type;
+
+	if (!tb[NL80211_ATTR_WIPHY_FREQ] || !tb[NL80211_ATTR_RADAR_EVENT])
+		return;
+
+	os_memset(&data, 0, sizeof(data));
+	data.dfs_event.freq = nla_get_u16(tb[NL80211_ATTR_WIPHY_FREQ]);
+	event_type = nla_get_u8(tb[NL80211_ATTR_RADAR_EVENT]);
+
+	wpa_printf(MSG_DEBUG, "nl80211: DFS event on freq %d MHz",
+		   data.dfs_event.freq);
+
+	switch (event_type) {
+	case NL80211_RADAR_DETECTED:
+		wpa_supplicant_event(drv->ctx, EVENT_DFS_RADAR_DETECTED, &data);
+		break;
+	case NL80211_RADAR_CAC_FINISHED:
+		wpa_supplicant_event(drv->ctx, EVENT_DFS_CAC_FINISHED, &data);
+		break;
+	case NL80211_RADAR_CAC_ABORTED:
+		wpa_supplicant_event(drv->ctx, EVENT_DFS_CAC_ABORTED, &data);
+		break;
+	case NL80211_RADAR_NOP_FINISHED:
+		wpa_supplicant_event(drv->ctx, EVENT_DFS_NOP_FINISHED, &data);
+		break;
+	default:
+		wpa_printf(MSG_DEBUG, "nl80211: Unknown radar event %d "
+			   "received", event_type);
+		break;
+	}
+}
+
+
 static void nl80211_spurious_frame(struct i802_bss *bss, struct nlattr **tb,
 				   int wds)
 {
@@ -2392,6 +2430,9 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 		break;
 	case NL80211_CMD_FT_EVENT:
 		mlme_event_ft_event(drv, tb);
+		break;
+	case NL80211_CMD_RADAR_DETECT:
+		nl80211_radar_event(drv, tb);
 		break;
 	default:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Ignored unknown event "
@@ -2655,6 +2696,7 @@ static int wiphy_info_iface_comb_process(struct wiphy_info_data *info,
 		[NL80211_IFACE_COMB_MAXNUM] = { .type = NLA_U32 },
 		[NL80211_IFACE_COMB_STA_AP_BI_MATCH] = { .type = NLA_FLAG },
 		[NL80211_IFACE_COMB_NUM_CHANNELS] = { .type = NLA_U32 },
+		[NL80211_IFACE_COMB_RADAR_DETECT_WIDTHS] = { .type = NLA_U32 },
 	},
 	iface_limit_policy[NUM_NL80211_IFACE_LIMIT] = {
 		[NL80211_IFACE_LIMIT_TYPES] = { .type = NLA_NESTED },
@@ -2667,6 +2709,9 @@ static int wiphy_info_iface_comb_process(struct wiphy_info_data *info,
 	    !tb_comb[NL80211_IFACE_COMB_MAXNUM] ||
 	    !tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS])
 		return 0; /* broken combination */
+
+	if (tb_comb[NL80211_IFACE_COMB_RADAR_DETECT_WIDTHS])
+		info->capa->flags |= WPA_DRIVER_FLAGS_RADAR;
 
 	nla_for_each_nested(nl_limit, tb_comb[NL80211_IFACE_COMB_LIMITS],
 			    rem_limit) {
@@ -5142,6 +5187,22 @@ static void phy_info_freq(struct hostapd_hw_modes *mode,
 	    !tb_freq[NL80211_FREQUENCY_ATTR_DISABLED])
 		chan->max_tx_power = nla_get_u32(
 			tb_freq[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]) / 100;
+	if (tb_freq[NL80211_FREQUENCY_ATTR_DFS_STATE]) {
+		enum nl80211_dfs_state state =
+			nla_get_u32(tb_freq[NL80211_FREQUENCY_ATTR_DFS_STATE]);
+
+		switch (state) {
+		case NL80211_DFS_USABLE:
+			chan->flag |= HOSTAPD_CHAN_DFS_USABLE;
+			break;
+		case NL80211_DFS_AVAILABLE:
+			chan->flag |= HOSTAPD_CHAN_DFS_AVAILABLE;
+			break;
+		case NL80211_DFS_UNAVAILABLE:
+			chan->flag |= HOSTAPD_CHAN_DFS_UNAVAILABLE;
+			break;
+		}
+	}
 }
 
 
@@ -5155,6 +5216,7 @@ static int phy_info_freqs(struct phy_info_arg *phy_info,
 		[NL80211_FREQUENCY_ATTR_NO_IBSS] = { .type = NLA_FLAG },
 		[NL80211_FREQUENCY_ATTR_RADAR] = { .type = NLA_FLAG },
 		[NL80211_FREQUENCY_ATTR_MAX_TX_POWER] = { .type = NLA_U32 },
+		[NL80211_FREQUENCY_ATTR_DFS_STATE] = { .type = NLA_U32 },
 	};
 	int new_channels = 0;
 	struct hostapd_channel_data *channel;
@@ -8962,6 +9024,18 @@ static int wpa_driver_nl80211_deinit_ap(void *priv)
 }
 
 
+static int wpa_driver_nl80211_stop_ap(void *priv)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	if (!is_ap_interface(drv->nlmode))
+		return -1;
+	wpa_driver_nl80211_del_beacon(drv);
+	bss->beacon_set = 0;
+	return 0;
+}
+
+
 static int wpa_driver_nl80211_deinit_p2p_cli(void *priv)
 {
 	struct i802_bss *bss = priv;
@@ -9439,6 +9513,40 @@ static int nl80211_set_p2p_powersave(void *priv, int legacy_ps, int opp_ps,
 }
 
 
+static int nl80211_start_radar_detection(void *priv, int freq)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct nl_msg *msg;
+	int ret;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Start radar detection (CAC)");
+	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_RADAR)) {
+		wpa_printf(MSG_DEBUG, "nl80211: Driver does not support radar "
+			   "detection");
+		return -1;
+	}
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -1;
+
+	nl80211_cmd(bss->drv, msg, 0, NL80211_CMD_RADAR_DETECT);
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
+
+	/* only HT20 is supported at this point */
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE, NL80211_CHAN_HT20);
+
+	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
+	if (ret == 0)
+		return 0;
+	wpa_printf(MSG_DEBUG, "nl80211: Failed to start radar detection: "
+		   "%d (%s)", ret, strerror(-ret));
+nla_put_failure:
+	return -1;
+}
+
 #ifdef CONFIG_TDLS
 
 static int nl80211_send_tdls_mgmt(void *priv, const u8 *dst, u8 action_code,
@@ -9871,6 +9979,8 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_rekey_info = nl80211_set_rekey_info,
 	.poll_client = nl80211_poll_client,
 	.set_p2p_powersave = nl80211_set_p2p_powersave,
+	.start_dfs_cac = nl80211_start_radar_detection,
+	.stop_ap = wpa_driver_nl80211_stop_ap,
 #ifdef CONFIG_TDLS
 	.send_tdls_mgmt = nl80211_send_tdls_mgmt,
 	.tdls_oper = nl80211_tdls_oper,

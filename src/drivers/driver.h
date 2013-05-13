@@ -29,6 +29,12 @@
 #define HOSTAPD_CHAN_HT40MINUS 0x00000020
 #define HOSTAPD_CHAN_HT40 0x00000040
 
+#define HOSTAPD_CHAN_DFS_UNKNOWN 0x00000000
+#define HOSTAPD_CHAN_DFS_USABLE 0x00000100
+#define HOSTAPD_CHAN_DFS_UNAVAILABLE 0x00000200
+#define HOSTAPD_CHAN_DFS_AVAILABLE 0x00000300
+#define HOSTAPD_CHAN_DFS_MASK 0x00000300
+
 /**
  * struct hostapd_channel_data - Channel information
  */
@@ -866,6 +872,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_OBSS_SCAN			0x04000000
 /* Driver supports IBSS (Ad-hoc) mode */
 #define WPA_DRIVER_FLAGS_IBSS				0x08000000
+/* Driver supports radar detection */
+#define WPA_DRIVER_FLAGS_RADAR				0x10000000
 	unsigned int flags;
 
 	int max_scan_ssids;
@@ -2658,6 +2666,25 @@ struct wpa_driver_ops {
 	 * avoid frequency conflict in single channel concurrency.
 	 */
 	int (*switch_channel)(void *priv, unsigned int freq);
+
+	/**
+	 * start_dfs_cac - Listen for radar interference on the channel
+	 * @priv: Private driver interface data
+	 * @freq: Frequency (in MHz) of the channel
+	 * Returns: 0 on success, -1 on failure
+	 */
+	int (*start_dfs_cac)(void *priv, int freq);
+
+	/**
+	 * stop_ap - Removes beacon from AP
+	 * @priv: Private driver interface data
+	 * Returns: 0 on success, -1 on failure (or if not supported)
+	 *
+	 * This optional function can be used to disable AP mode related
+	 * configuration. Unlike deinit_ap, it does not change to station
+	 * mode.
+	 */
+	int (*stop_ap)(void *priv);
 };
 
 
@@ -3111,7 +3138,38 @@ enum wpa_event_type {
 	 * with the specified client (for example, max client reached, etc.) in
 	 * AP mode.
 	 */
-	EVENT_CONNECT_FAILED_REASON
+	EVENT_CONNECT_FAILED_REASON,
+
+	/**
+	 * EVENT_RADAR_DETECTED - Notify of radar detection
+	 *
+	 * A radar has been detected on the supplied frequency, hostapd should
+	 * react accordingly (e.g., change channel).
+	 */
+	EVENT_DFS_RADAR_DETECTED,
+
+	/**
+	 * EVENT_CAC_FINISHED - Notify that channel availability check has been completed
+	 *
+	 * After a successful CAC, the channel can be marked clear and used.
+	 */
+	EVENT_DFS_CAC_FINISHED,
+
+	/**
+	 * EVENT_CAC_ABORTED - Notify that channel availability check has been aborted
+	 *
+	 * The CAC was not successful, and the channel remains in the previous
+	 * state. This may happen due to a radar beeing detected or other
+	 * external influences.
+	 */
+	EVENT_DFS_CAC_ABORTED,
+
+	/**
+	 * EVENT_DFS_CAC_NOP_FINISHED - Notify that non-occupancy period is over
+	 *
+	 * The channel which was previously unavailable is now available again.
+	 */
+	EVENT_DFS_NOP_FINISHED
 };
 
 
@@ -3749,6 +3807,14 @@ union wpa_event_data {
 			BLOCKED_CLIENT
 		} code;
 	} connect_failed_reason;
+
+	/**
+	 * struct dfs_event - Data for radar detected events
+	 * @freq: Frequency of the channel in MHz
+	 */
+	struct dfs_event {
+		int freq;
+	} dfs_event;
 };
 
 /**

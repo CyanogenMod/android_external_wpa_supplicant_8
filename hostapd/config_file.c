@@ -710,14 +710,14 @@ static int hostapd_config_read_wep(struct hostapd_wep_keys *wep, int keyidx,
 }
 
 
-static int hostapd_parse_rates(int **rate_list, char *val)
+static int hostapd_parse_intlist(int **int_list, char *val)
 {
 	int *list;
 	int count;
 	char *pos, *end;
 
-	os_free(*rate_list);
-	*rate_list = NULL;
+	os_free(*int_list);
+	*int_list = NULL;
 
 	pos = val;
 	count = 0;
@@ -744,7 +744,7 @@ static int hostapd_parse_rates(int **rate_list, char *val)
 	}
 	list[count] = -1;
 
-	*rate_list = list;
+	*int_list = list;
 	return 0;
 }
 
@@ -1220,6 +1220,12 @@ static int hostapd_config_check(struct hostapd_config *conf)
 	if (conf->ieee80211d && (!conf->country[0] || !conf->country[1])) {
 		wpa_printf(MSG_ERROR, "Cannot enable IEEE 802.11d without "
 			   "setting the country_code");
+		return -1;
+	}
+
+	if (conf->ieee80211h && !conf->ieee80211d) {
+		wpa_printf(MSG_ERROR, "Cannot enable IEEE 802.11h without "
+			   "IEEE 802.11d enabled");
 		return -1;
 	}
 
@@ -1784,6 +1790,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			conf->country[2] = ' ';
 		} else if (os_strcmp(buf, "ieee80211d") == 0) {
 			conf->ieee80211d = atoi(pos);
+		} else if (os_strcmp(buf, "ieee80211h") == 0) {
+			conf->ieee80211h = atoi(pos);
 		} else if (os_strcmp(buf, "ieee8021x") == 0) {
 			bss->ieee802_1x = atoi(pos);
 		} else if (os_strcmp(buf, "eapol_version") == 0) {
@@ -2348,13 +2356,14 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			} else
 				conf->send_probe_response = val;
 		} else if (os_strcmp(buf, "supported_rates") == 0) {
-			if (hostapd_parse_rates(&conf->supported_rates, pos)) {
+			if (hostapd_parse_intlist(&conf->supported_rates, pos))
+			{
 				wpa_printf(MSG_ERROR, "Line %d: invalid rate "
 					   "list", line);
 				errors++;
 			}
 		} else if (os_strcmp(buf, "basic_rates") == 0) {
-			if (hostapd_parse_rates(&conf->basic_rates, pos)) {
+			if (hostapd_parse_intlist(&conf->basic_rates, pos)) {
 				wpa_printf(MSG_ERROR, "Line %d: invalid rate "
 					   "list", line);
 				errors++;
@@ -2926,7 +2935,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		} else if (os_strcmp(buf, "sae_anti_clogging_threshold") == 0) {
 			bss->sae_anti_clogging_threshold = atoi(pos);
 		} else if (os_strcmp(buf, "sae_groups") == 0) {
-			if (hostapd_parse_rates(&bss->sae_groups, pos)) {
+			if (hostapd_parse_intlist(&bss->sae_groups, pos)) {
 				wpa_printf(MSG_ERROR, "Line %d: Invalid "
 					   "sae_groups value '%s'", line, pos);
 				return 1;
