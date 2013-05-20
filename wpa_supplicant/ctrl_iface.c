@@ -461,6 +461,14 @@ static int wpa_supplicant_ctrl_iface_get(struct wpa_supplicant *wpa_s,
 			return -1;
 		return res;
 #endif /* CONFIG_WIFI_DISPLAY */
+#ifdef CONFIG_TESTING_GET_GTK
+	} else if (os_strcmp(cmd, "gtk") == 0) {
+		if (wpa_s->last_gtk_len == 0)
+			return -1;
+		res = wpa_snprintf_hex(buf, buflen, wpa_s->last_gtk,
+				       wpa_s->last_gtk_len);
+		return res;
+#endif /* CONFIG_TESTING_GET_GTK */
 	}
 
 	if (res < 0 || (unsigned int) res >= buflen)
@@ -5840,6 +5848,126 @@ static int wpa_supplicant_global_iface_interfaces(struct wpa_global *global,
 }
 
 
+static char * wpas_global_ctrl_iface_ifname(struct wpa_global *global,
+					    const char *ifname,
+					    char *cmd, size_t *resp_len)
+{
+	struct wpa_supplicant *wpa_s;
+
+	for (wpa_s = global->ifaces; wpa_s; wpa_s = wpa_s->next) {
+		if (os_strcmp(ifname, wpa_s->ifname) == 0)
+			break;
+	}
+
+	if (wpa_s == NULL) {
+		char *resp = os_strdup("FAIL-NO-IFNAME-MATCH\n");
+		if (resp)
+			*resp_len = os_strlen(resp);
+		else
+			*resp_len = 1;
+		return resp;
+	}
+
+	return wpa_supplicant_ctrl_iface_process(wpa_s, cmd, resp_len);
+}
+
+
+static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
+					       char *buf, size_t *resp_len)
+{
+#ifdef CONFIG_P2P
+	static const char * cmd[] = {
+		"P2P_FIND",
+		"P2P_STOP_FIND",
+		"P2P_LISTEN",
+		"P2P_GROUP_ADD",
+		"P2P_GET_PASSPHRASE",
+		"P2P_SERVICE_UPDATE",
+		"P2P_SERVICE_FLUSH",
+		"P2P_FLUSH",
+		"P2P_CANCEL",
+		"P2P_PRESENCE_REQ",
+		"P2P_EXT_LISTEN",
+		NULL
+	};
+	static const char * prefix[] = {
+		"P2P_FIND ",
+		"P2P_CONNECT ",
+		"P2P_LISTEN ",
+		"P2P_GROUP_REMOVE ",
+		"P2P_GROUP_ADD ",
+		"P2P_PROV_DISC ",
+		"P2P_SERV_DISC_REQ ",
+		"P2P_SERV_DISC_CANCEL_REQ ",
+		"P2P_SERV_DISC_RESP ",
+		"P2P_SERV_DISC_EXTERNAL ",
+		"P2P_SERVICE_ADD ",
+		"P2P_SERVICE_DEL ",
+		"P2P_REJECT ",
+		"P2P_INVITE ",
+		"P2P_PEER ",
+		"P2P_SET ",
+		"P2P_UNAUTHORIZE ",
+		"P2P_PRESENCE_REQ ",
+		"P2P_EXT_LISTEN ",
+		NULL
+	};
+	int found = 0;
+	int i;
+
+	if (global->p2p_init_wpa_s == NULL)
+		return NULL;
+
+	for (i = 0; !found && cmd[i]; i++) {
+		if (os_strcmp(buf, cmd[i]) == 0)
+			found = 1;
+	}
+
+	for (i = 0; !found && prefix[i]; i++) {
+		if (os_strncmp(buf, prefix[i], os_strlen(prefix[i])) == 0)
+			found = 1;
+	}
+
+	if (found)
+		return wpa_supplicant_ctrl_iface_process(global->p2p_init_wpa_s,
+							 buf, resp_len);
+#endif /* CONFIG_P2P */
+	return NULL;
+}
+
+
+static char * wpas_global_ctrl_iface_redir_wfd(struct wpa_global *global,
+					       char *buf, size_t *resp_len)
+{
+#ifdef CONFIG_WIFI_DISPLAY
+	if (global->p2p_init_wpa_s == NULL)
+		return NULL;
+	if (os_strncmp(buf, "WFD_SUBELEM_SET ", 16) == 0 ||
+	    os_strncmp(buf, "WFD_SUBELEM_GET ", 16) == 0)
+		return wpa_supplicant_ctrl_iface_process(global->p2p_init_wpa_s,
+							 buf, resp_len);
+#endif /* CONFIG_WIFI_DISPLAY */
+	return NULL;
+}
+
+
+static char * wpas_global_ctrl_iface_redir(struct wpa_global *global,
+					   char *buf, size_t *resp_len)
+{
+	char *ret;
+
+	ret = wpas_global_ctrl_iface_redir_p2p(global, buf, resp_len);
+	if (ret)
+		return ret;
+
+	ret = wpas_global_ctrl_iface_redir_wfd(global, buf, resp_len);
+	if (ret)
+		return ret;
+
+	return NULL;
+}
+
+
 char * wpa_supplicant_global_ctrl_iface_process(struct wpa_global *global,
 						char *buf, size_t *resp_len)
 {
@@ -5847,6 +5975,20 @@ char * wpa_supplicant_global_ctrl_iface_process(struct wpa_global *global,
 	const int reply_size = 2048;
 	int reply_len;
 	int level = MSG_DEBUG;
+
+	if (os_strncmp(buf, "IFNAME=", 7) == 0) {
+		char *pos = os_strchr(buf + 7, ' ');
+		if (pos) {
+			*pos++ = '\0';
+			return wpas_global_ctrl_iface_ifname(global,
+							     buf + 7, pos,
+							     resp_len);
+		}
+	}
+
+	reply = wpas_global_ctrl_iface_redir(global, buf, resp_len);
+	if (reply)
+		return reply;
 
 	if (os_strcmp(buf, "PING") == 0)
 		level = MSG_EXCESSIVE;

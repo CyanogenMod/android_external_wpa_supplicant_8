@@ -155,6 +155,11 @@ struct wpa_params {
 	char *ctrl_interface;
 
 	/**
+	 * ctrl_interface_group - Global ctrl_iface group
+	 */
+	char *ctrl_interface_group;
+
+	/**
 	 * dbus_ctrl_interface - Enable the DBus control interface
 	 */
 	int dbus_ctrl_interface;
@@ -347,6 +352,8 @@ struct wpa_supplicant {
 	size_t disallow_aps_bssid_count;
 	struct wpa_ssid_value *disallow_aps_ssid;
 	size_t disallow_aps_ssid_count;
+
+	enum { WPA_SETBAND_AUTO, WPA_SETBAND_5G, WPA_SETBAND_2G } setband;
 
 	/* previous scan was wildcard when interleaving between
 	 * wildcard scans and specific SSID scan when max_ssids=1 */
@@ -701,6 +708,11 @@ struct wpa_supplicant {
 	u8 wnm_bss_termination_duration[12];
 	struct neighbor_report *wnm_neighbor_report_elements;
 #endif /* CONFIG_WNM */
+
+#ifdef CONFIG_TESTING_GET_GTK
+	u8 last_gtk[32];
+	size_t last_gtk_len;
+#endif /* CONFIG_TESTING_GET_GTK */
 };
 
 

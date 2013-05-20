@@ -384,14 +384,17 @@ struct p2p_config {
 #endif
 
 	/**
-	 * msg_ctx - Context to use with wpa_msg() calls
-	 */
-	void *msg_ctx;
-
-	/**
 	 * cb_ctx - Context to use with callback functions
 	 */
 	void *cb_ctx;
+
+	/**
+	 * debug_print - Debug print
+	 * @ctx: Callback context from cb_ctx
+	 * @level: Debug verbosity level (MSG_*)
+	 * @msg: Debug message
+	 */
+	void (*debug_print)(void *ctx, int level, const char *msg);
 
 
 	/* Callbacks to request lower layer driver operations */
@@ -556,6 +559,12 @@ struct p2p_config {
 	 * This callback is used to notify that a P2P Device has been deleted.
 	 */
 	void (*dev_lost)(void *ctx, const u8 *dev_addr);
+
+	/**
+	 * find_stopped - Notification of a p2p_find operation stopping
+	 * @ctx: Callback context from cb_ctx
+	 */
+	void (*find_stopped)(void *ctx);
 
 	/**
 	 * go_neg_req_rx - Notification of a receive GO Negotiation Request

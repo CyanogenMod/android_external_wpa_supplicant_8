@@ -3386,6 +3386,9 @@ static void update_bssid_list(struct wpa_ctrl *ctrl)
 
 static void try_connection(void *eloop_ctx, void *timeout_ctx)
 {
+	if (ctrl_conn)
+		goto done;
+
 	if (ctrl_ifname == NULL)
 		ctrl_ifname = wpa_cli_get_default_ifname();
 
@@ -3404,6 +3407,7 @@ static void try_connection(void *eloop_ctx, void *timeout_ctx)
 	if (warning_displayed)
 		printf("Connection established.\n");
 
+done:
 	start_edit();
 }
 
@@ -3525,7 +3529,7 @@ static char * wpa_cli_get_default_ifname(void)
 #endif /* CONFIG_CTRL_IFACE_UNIX */
 
 #ifdef CONFIG_CTRL_IFACE_NAMED_PIPE
-	char buf[2048], *pos;
+	char buf[4096], *pos;
 	size_t len;
 	struct wpa_ctrl *ctrl;
 	int ret;
@@ -3618,6 +3622,23 @@ int main(int argc, char *argv[])
 				"global interface: %s  error: %s\n",
 				global, strerror(errno));
 			return -1;
+		}
+
+		if (interactive) {
+			mon_conn = wpa_ctrl_open(global);
+			if (mon_conn) {
+				if (wpa_ctrl_attach(mon_conn) == 0) {
+					wpa_cli_attached = 1;
+					eloop_register_read_sock(
+						wpa_ctrl_get_fd(mon_conn),
+						wpa_cli_mon_receive,
+						NULL, NULL);
+				} else {
+					printf("Failed to open monitor "
+					       "connection through global "
+					       "control interface\n");
+				}
+			}
 		}
 	}
 
