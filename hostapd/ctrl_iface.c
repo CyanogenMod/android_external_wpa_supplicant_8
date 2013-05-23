@@ -29,6 +29,7 @@
 #include "ap/wps_hostapd.h"
 #include "ap/ctrl_iface_ap.h"
 #include "ap/ap_drv_ops.h"
+#include "ap/wpa_auth.h"
 #include "wps/wps_defs.h"
 #include "wps/wps.h"
 #include "config_file.h"
@@ -594,6 +595,14 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 	/* send disassociation frame after time-out */
 	if (disassoc_timer) {
 		struct sta_info *sta;
+		int timeout, beacon_int;
+
+		/*
+		 * Prevent STA from reconnecting using cached PMKSA to force
+		 * full authentication with the authentication server (which may
+		 * decide to reject the connection),
+		 */
+		wpa_auth_pmksa_remove(hapd->wpa_auth, addr);
 
 		sta = ap_get_sta(hapd, addr);
 		if (sta == NULL) {
@@ -603,10 +612,18 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 			return -1;
 		}
 
+		beacon_int = hapd->iconf->beacon_int;
+		if (beacon_int < 1)
+			beacon_int = 100; /* best guess */
+		/* Calculate timeout in ms based on beacon_int in TU */
+		timeout = disassoc_timer * beacon_int * 128 / 125;
+		wpa_printf(MSG_DEBUG, "Disassociation timer for " MACSTR
+			   " set to %d ms", MAC2STR(addr), timeout);
+
 		sta->timeout_next = STA_DISASSOC_FROM_CLI;
 		eloop_cancel_timeout(ap_handle_timer, hapd, sta);
-		eloop_register_timeout(disassoc_timer / 1000,
-				       disassoc_timer % 1000 * 1000,
+		eloop_register_timeout(timeout / 1000,
+				       timeout % 1000 * 1000,
 				       ap_handle_timer, hapd, sta);
 	}
 

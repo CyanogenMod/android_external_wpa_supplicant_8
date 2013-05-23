@@ -1,6 +1,6 @@
 /*
  * wpa_supplicant - WNM
- * Copyright (c) 2011-2012, Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2013, Qualcomm Atheros, Inc.
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -10,6 +10,7 @@
 
 #include "utils/common.h"
 #include "common/ieee802_11_defs.h"
+#include "common/wpa_ctrl.h"
 #include "rsn_supp/wpa.h"
 #include "wpa_supplicant_i.h"
 #include "driver_i.h"
@@ -491,9 +492,10 @@ static int compare_scan_neighbor_results(struct wpa_supplicant *wpa_s,
 }
 
 
-static void wnm_send_bss_transition_mgmt_resp(struct wpa_supplicant *wpa_s,
-					      u8 dialog_token, u8 status,
-					      u8 delay, const u8 *target_bssid)
+static void wnm_send_bss_transition_mgmt_resp(
+	struct wpa_supplicant *wpa_s, u8 dialog_token,
+	enum bss_trans_mgmt_status_code status, u8 delay,
+	const u8 *target_bssid)
 {
 	u8 buf[1000], *pos;
 	struct ieee80211_mgmt *mgmt;
@@ -559,7 +561,7 @@ void wnm_scan_response(struct wpa_supplicant *wpa_s,
 		if (wpa_s->wnm_reply) {
 			wnm_send_bss_transition_mgmt_resp(wpa_s,
 						  wpa_s->wnm_dialog_token,
-						  0, /* Accept */
+						  WNM_BSS_TM_ACCEPT,
 						  0, NULL);
 		}
 
@@ -575,7 +577,7 @@ send_bss_resp_fail:
 	if (wpa_s->wnm_reply) {
 		wnm_send_bss_transition_mgmt_resp(wpa_s,
 						  wpa_s->wnm_dialog_token,
-						  1 /* Reject - unspecified */,
+						  WNM_BSS_TM_REJECT_UNSPECIFIED,
 						  0, NULL);
 	}
 	return;
@@ -603,7 +605,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 
 	pos += 5;
 
-	if (wpa_s->wnm_mode & 0x08) {
+	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_BSS_TERMINATION_INCLUDED) {
 		if (pos + 12 > end) {
 			wpa_printf(MSG_DEBUG, "WNM: Too short BSS TM Request");
 			return;
@@ -612,8 +614,10 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		pos += 12; /* BSS Termination Duration */
 	}
 
-	if (wpa_s->wnm_mode & 0x10) {
+	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT) {
 		char url[256];
+		unsigned int beacon_int;
+
 		if (pos + 1 > end || pos + 1 + pos[0] > end) {
 			wpa_printf(MSG_DEBUG, "WNM: Invalid BSS Transition "
 				   "Management Request (URL)");
@@ -622,11 +626,18 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		os_memcpy(url, pos + 1, pos[0]);
 		url[pos[0]] = '\0';
 		pos += 1 + pos[0];
-		wpa_msg(wpa_s, MSG_INFO, "WNM: ESS Disassociation Imminent - "
-			"session_info_url=%s", url);
+
+		if (wpa_s->current_bss)
+			beacon_int = wpa_s->current_bss->beacon_int;
+		else
+			beacon_int = 100; /* best guess */
+
+		wpa_msg(wpa_s, MSG_INFO, ESS_DISASSOC_IMMINENT "%d %u %s",
+			wpa_sm_pmf_enabled(wpa_s->wpa),
+			wpa_s->wnm_dissoc_timer * beacon_int * 128 / 125, url);
 	}
 
-	if (wpa_s->wnm_mode & 0x04) {
+	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_DISASSOC_IMMINENT) {
 		wpa_msg(wpa_s, MSG_INFO, "WNM: Disassociation Imminent - "
 			"Disassociation Timer %u", wpa_s->wnm_dissoc_timer);
 		if (wpa_s->wnm_dissoc_timer && !wpa_s->scanning) {
@@ -637,7 +648,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		}
 	}
 
-	if (wpa_s->wnm_mode & 0x01) {
+	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_PREF_CAND_LIST_INCLUDED) {
 		wpa_msg(wpa_s, MSG_INFO, "WNM: Preferred List Available");
 		wpa_s->wnm_num_neighbor_report = 0;
 		os_free(wpa_s->wnm_neighbor_report_elements);
@@ -671,12 +682,16 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		wpa_s->scan_res_handler = wnm_scan_response;
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
 	} else if (reply) {
-		wpa_msg(wpa_s, MSG_INFO, "WNM: BSS Transition Management "
-			"Request Mode is zero");
+		enum bss_trans_mgmt_status_code status;
+		if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT)
+			status = WNM_BSS_TM_ACCEPT;
+		else {
+			wpa_msg(wpa_s, MSG_INFO, "WNM: BSS Transition Management Request did not include candidates");
+			status = WNM_BSS_TM_REJECT_UNSPECIFIED;
+		}
 		wnm_send_bss_transition_mgmt_resp(wpa_s,
 						  wpa_s->wnm_dialog_token,
-						  1 /* Reject - unspecified */,
-						  0, NULL);
+						  status, 0, NULL);
 	}
 }
 

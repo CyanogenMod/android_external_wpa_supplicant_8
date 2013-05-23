@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant - command line interface for wpa_supplicant daemon
- * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -81,6 +81,7 @@ static const char *pid_file = NULL;
 static const char *action_file = NULL;
 static int ping_interval = 5;
 static int interactive = 0;
+static char *ifname_prefix = NULL;
 #if defined(CONFIG_P2P) && defined(ANDROID_P2P)
 static char* redirect_interface = NULL;
 #endif
@@ -93,6 +94,7 @@ struct cli_txt_entry {
 static DEFINE_DL_LIST(bsses); /* struct cli_txt_entry */
 static DEFINE_DL_LIST(p2p_peers); /* struct cli_txt_entry */
 static DEFINE_DL_LIST(p2p_groups); /* struct cli_txt_entry */
+static DEFINE_DL_LIST(ifnames); /* struct cli_txt_entry */
 
 
 static void print_help(const char *cmd);
@@ -1650,6 +1652,12 @@ static int wpa_ctrl_command_sta(struct wpa_ctrl *ctrl, char *cmd,
 		printf("Not connected to hostapd - command dropped.\n");
 		return -1;
 	}
+	if (ifname_prefix) {
+		os_snprintf(buf, sizeof(buf), "IFNAME=%s %s",
+			    ifname_prefix, cmd);
+		buf[sizeof(buf) - 1] = '\0';
+		cmd = buf;
+	}
 	len = sizeof(buf) - 1;
 	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len,
 			       wpa_cli_msg_cb);
@@ -2874,9 +2882,12 @@ static char ** wpa_list_cmd_list(void)
 {
 	char **res;
 	int i, count;
+	struct cli_txt_entry *e;
 
 	count = sizeof(wpa_cli_commands) / sizeof(wpa_cli_commands[0]);
-	res = os_calloc(count, sizeof(char *));
+	count += dl_list_len(&p2p_groups);
+	count += dl_list_len(&ifnames);
+	res = os_calloc(count + 1, sizeof(char *));
 	if (res == NULL)
 		return NULL;
 
@@ -2884,6 +2895,22 @@ static char ** wpa_list_cmd_list(void)
 		res[i] = os_strdup(wpa_cli_commands[i].cmd);
 		if (res[i] == NULL)
 			break;
+	}
+
+	dl_list_for_each(e, &p2p_groups, struct cli_txt_entry, list) {
+		size_t len = 8 + os_strlen(e->txt);
+		res[i] = os_malloc(len);
+		if (res[i] == NULL)
+			break;
+		os_snprintf(res[i], len, "ifname=%s", e->txt);
+		i++;
+	}
+
+	dl_list_for_each(e, &ifnames, struct cli_txt_entry, list) {
+		res[i] = os_strdup(e->txt);
+		if (res[i] == NULL)
+			break;
+		i++;
 	}
 
 	return res;
@@ -2917,6 +2944,14 @@ static char ** wpa_cli_edit_completion_cb(void *ctx, const char *str, int pos)
 	const char *end;
 	char *cmd;
 
+	if (pos > 7 && os_strncasecmp(str, "IFNAME=", 7) == 0) {
+		end = os_strchr(str, ' ');
+		if (end && pos > end - str) {
+			pos -= end - str + 1;
+			str = end + 1;
+		}
+	}
+
 	end = os_strchr(str, ' ');
 	if (end == NULL || str + pos < end)
 		return wpa_list_cmd_list();
@@ -2937,6 +2972,16 @@ static int wpa_request(struct wpa_ctrl *ctrl, int argc, char *argv[])
 	struct wpa_cli_cmd *cmd, *match = NULL;
 	int count;
 	int ret = 0;
+
+	if (argc > 1 && os_strncasecmp(argv[0], "IFNAME=", 7) == 0) {
+		ifname_prefix = argv[0] + 7;
+		argv = &argv[1];
+		argc--;
+	} else
+		ifname_prefix = NULL;
+
+	if (argc == 0)
+		return -1;
 
 	count = 0;
 	cmd = wpa_cli_commands;
@@ -3091,6 +3136,8 @@ static void wpa_cli_action_process(const char *msg)
 	} else if (str_match(pos, AP_STA_CONNECTED)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, AP_STA_DISCONNECTED)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, ESS_DISASSOC_IMMINENT)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, WPA_EVENT_TERMINATING)) {
 		printf("wpa_supplicant is terminating - stop monitoring\n");
@@ -3384,6 +3431,38 @@ static void update_bssid_list(struct wpa_ctrl *ctrl)
 }
 
 
+static void update_ifnames(struct wpa_ctrl *ctrl)
+{
+	char buf[4096];
+	size_t len = sizeof(buf);
+	int ret;
+	char *cmd = "INTERFACES";
+	char *pos, *end;
+	char txt[200];
+
+	cli_txt_list_flush(&ifnames);
+
+	if (ctrl == NULL)
+		return;
+	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len, NULL);
+	if (ret < 0)
+		return;
+	buf[len] = '\0';
+
+	pos = buf;
+	while (pos) {
+		end = os_strchr(pos, '\n');
+		if (end == NULL)
+			break;
+		*end = '\0';
+		ret = os_snprintf(txt, sizeof(txt), "ifname=%s", pos);
+		if (ret > 0 && ret < (int) sizeof(txt))
+			cli_txt_list_add(&ifnames, txt);
+		pos = end + 1;
+	}
+}
+
+
 static void try_connection(void *eloop_ctx, void *timeout_ctx)
 {
 	if (ctrl_conn)
@@ -3423,6 +3502,7 @@ static void wpa_cli_interactive(void)
 	cli_txt_list_flush(&p2p_peers);
 	cli_txt_list_flush(&p2p_groups);
 	cli_txt_list_flush(&bsses);
+	cli_txt_list_flush(&ifnames);
 	if (edit_started)
 		edit_deinit(hfile, wpa_cli_edit_filter_history_cb);
 	os_free(hfile);
@@ -3625,6 +3705,7 @@ int main(int argc, char *argv[])
 		}
 
 		if (interactive) {
+			update_ifnames(ctrl_conn);
 			mon_conn = wpa_ctrl_open(global);
 			if (mon_conn) {
 				if (wpa_ctrl_attach(mon_conn) == 0) {
