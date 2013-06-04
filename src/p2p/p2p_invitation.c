@@ -533,11 +533,8 @@ void p2p_invitation_req_cb(struct p2p_data *p2p, int success)
 	 * channel.
 	 */
 	p2p_set_state(p2p, P2P_INVITE);
-#ifdef ANDROID_P2P
-	p2p_set_timeout(p2p, 0, 350000);
-#else
-	p2p_set_timeout(p2p, 0, 100000);
-#endif
+
+	p2p_set_timeout(p2p, 0, success ? 350000 : 100000);
 }
 
 
