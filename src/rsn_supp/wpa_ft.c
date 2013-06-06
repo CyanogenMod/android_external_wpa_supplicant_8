@@ -533,11 +533,13 @@ int wpa_ft_is_completed(struct wpa_sm *sm)
 	return sm->ft_completed;
 }
 
+
 void wpa_reset_ft_completed(struct wpa_sm *sm)
 {
 	if (sm != NULL)
 		sm->ft_completed = 0;
 }
+
 
 static int wpa_ft_process_gtk_subelem(struct wpa_sm *sm, const u8 *gtk_elem,
 				      size_t gtk_elem_len)
