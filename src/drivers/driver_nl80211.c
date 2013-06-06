@@ -225,7 +225,9 @@ struct wpa_driver_nl80211_data {
 	struct nl_cb *nl_cb;
 
 	u8 auth_bssid[ETH_ALEN];
+	u8 auth_attempt_bssid[ETH_ALEN];
 	u8 bssid[ETH_ALEN];
+	u8 prev_bssid[ETH_ALEN];
 	int associated;
 	u8 ssid[32];
 	size_t ssid_len;
@@ -373,6 +375,15 @@ static int is_p2p_interface(enum nl80211_iftype nlmode)
 {
 	return (nlmode == NL80211_IFTYPE_P2P_CLIENT ||
 		nlmode == NL80211_IFTYPE_P2P_GO);
+}
+
+
+static void nl80211_mark_disconnected(struct wpa_driver_nl80211_data *drv)
+{
+	if (drv->associated)
+		os_memcpy(drv->prev_bssid, drv->bssid, ETH_ALEN);
+	drv->associated = 0;
+	os_memset(drv->bssid, 0, ETH_ALEN);
 }
 
 
@@ -1053,6 +1064,7 @@ static void mlme_event_auth(struct wpa_driver_nl80211_data *drv,
 	}
 
 	os_memcpy(drv->auth_bssid, mgmt->sa, ETH_ALEN);
+	os_memset(drv->auth_attempt_bssid, 0, ETH_ALEN);
 	os_memset(&event, 0, sizeof(event));
 	os_memcpy(event.auth.peer, mgmt->sa, ETH_ALEN);
 	event.auth.auth_type = le_to_host16(mgmt->u.auth.auth_alg);
@@ -1132,6 +1144,7 @@ static void mlme_event_assoc(struct wpa_driver_nl80211_data *drv,
 
 	drv->associated = 1;
 	os_memcpy(drv->bssid, mgmt->sa, ETH_ALEN);
+	os_memcpy(drv->prev_bssid, mgmt->sa, ETH_ALEN);
 
 	os_memset(&event, 0, sizeof(event));
 	if (len > 24 + sizeof(mgmt->u.assoc_resp)) {
@@ -1183,8 +1196,10 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 	}
 
 	drv->associated = 1;
-	if (addr)
+	if (addr) {
 		os_memcpy(drv->bssid, nla_data(addr), ETH_ALEN);
+		os_memcpy(drv->prev_bssid, drv->bssid, ETH_ALEN);
+	}
 
 	if (req_ie) {
 		event.assoc_info.req_ies = nla_data(req_ie);
@@ -1231,7 +1246,7 @@ static void mlme_event_disconnect(struct wpa_driver_nl80211_data *drv,
 	}
 
 	wpa_printf(MSG_DEBUG, "nl80211: Disconnect event");
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 	os_memset(&data, 0, sizeof(data));
 	if (reason)
 		data.deauth_info.reason_code = nla_get_u16(reason);
@@ -1400,6 +1415,22 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 	if (len >= 24) {
 		bssid = mgmt->bssid;
 
+		if ((drv->capa.flags & WPA_DRIVER_FLAGS_SME) &&
+		    !drv->associated &&
+		    os_memcmp(bssid, drv->auth_bssid, ETH_ALEN) != 0 &&
+		    os_memcmp(bssid, drv->auth_attempt_bssid, ETH_ALEN) != 0 &&
+		    os_memcmp(bssid, drv->prev_bssid, ETH_ALEN) == 0) {
+			/*
+			 * Avoid issues with some roaming cases where
+			 * disconnection event for the old AP may show up after
+			 * we have started connection with the new AP.
+			 */
+			wpa_printf(MSG_DEBUG, "nl80211: Ignore deauth/disassoc event from old AP " MACSTR " when already authenticating with " MACSTR,
+				   MAC2STR(bssid),
+				   MAC2STR(drv->auth_attempt_bssid));
+			return;
+		}
+
 		if (drv->associated != 0 &&
 		    os_memcmp(bssid, drv->bssid, ETH_ALEN) != 0 &&
 		    os_memcmp(bssid, drv->auth_bssid, ETH_ALEN) != 0) {
@@ -1415,7 +1446,7 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 		}
 	}
 
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 	os_memset(&event, 0, sizeof(event));
 
 	/* Note: Same offset for Reason Code in both frame subtypes */
@@ -2876,6 +2907,10 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 	if (tb[NL80211_ATTR_MAX_MATCH_SETS])
 		capa->max_match_sets =
 			nla_get_u8(tb[NL80211_ATTR_MAX_MATCH_SETS]);
+
+	if (tb[NL80211_ATTR_MAC_ACL_MAX])
+		capa->max_acl_mac_addrs =
+			nla_get_u8(tb[NL80211_ATTR_MAC_ACL_MAX]);
 
 	wiphy_info_supported_iftypes(info, tb[NL80211_ATTR_SUPPORTED_IFTYPES]);
 	wiphy_info_iface_comb(info, tb[NL80211_ATTR_INTERFACE_COMBINATIONS]);
@@ -4841,7 +4876,7 @@ static int wpa_driver_nl80211_disconnect(struct wpa_driver_nl80211_data *drv,
 					 int reason_code)
 {
 	wpa_printf(MSG_DEBUG, "%s(reason_code=%d)", __func__, reason_code);
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 	drv->ignore_next_local_disconnect = 0;
 	/* Disconnect command doesn't need BSSID - it uses cached value */
 	return wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
@@ -4857,7 +4892,7 @@ static int wpa_driver_nl80211_deauthenticate(struct i802_bss *bss,
 		return wpa_driver_nl80211_disconnect(drv, reason_code);
 	wpa_printf(MSG_DEBUG, "%s(addr=" MACSTR " reason_code=%d)",
 		   __func__, MAC2STR(addr), reason_code);
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 	if (drv->nlmode == NL80211_IFTYPE_ADHOC)
 		return nl80211_leave_ibss(drv);
 	return wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DEAUTHENTICATE,
@@ -4925,8 +4960,12 @@ static int wpa_driver_nl80211_authenticate(
 	is_retry = drv->retry_auth;
 	drv->retry_auth = 0;
 
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 	os_memset(drv->auth_bssid, 0, ETH_ALEN);
+	if (params->bssid)
+		os_memcpy(drv->auth_attempt_bssid, params->bssid, ETH_ALEN);
+	else
+		os_memset(drv->auth_attempt_bssid, 0, ETH_ALEN);
 	/* FIX: IBSS mode */
 	nlmode = params->p2p ?
 		NL80211_IFTYPE_P2P_CLIENT : NL80211_IFTYPE_STATION;
@@ -5837,6 +5876,60 @@ static int nl80211_set_bss(struct i802_bss *bss, int cts, int preamble,
 }
 
 
+static int wpa_driver_nl80211_set_acl(void *priv,
+				      struct hostapd_acl_params *params)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct nl_msg *msg;
+	struct nlattr *acl;
+	unsigned int i;
+	int ret = 0;
+
+	if (!(drv->capa.max_acl_mac_addrs))
+		return -ENOTSUP;
+
+	if (params->num_mac_acl > drv->capa.max_acl_mac_addrs)
+		return -ENOTSUP;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOMEM;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Set %s ACL (num_mac_acl=%u)",
+		   params->acl_policy ? "Accept" : "Deny", params->num_mac_acl);
+
+	nl80211_cmd(drv, msg, 0, NL80211_CMD_SET_MAC_ACL);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_ACL_POLICY, params->acl_policy ?
+		    NL80211_ACL_POLICY_DENY_UNLESS_LISTED :
+		    NL80211_ACL_POLICY_ACCEPT_UNLESS_LISTED);
+
+	acl = nla_nest_start(msg, NL80211_ATTR_MAC_ADDRS);
+	if (acl == NULL)
+		goto nla_put_failure;
+
+	for (i = 0; i < params->num_mac_acl; i++)
+		NLA_PUT(msg, i + 1, ETH_ALEN, params->mac_acl[i].addr);
+
+	nla_nest_end(msg, acl);
+
+	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
+	msg = NULL;
+	if (ret) {
+		wpa_printf(MSG_DEBUG, "nl80211: Failed to set MAC ACL: %d (%s)",
+			   ret, strerror(-ret));
+	}
+
+nla_put_failure:
+	nlmsg_free(msg);
+
+	return ret;
+}
+
+
 static int wpa_driver_nl80211_set_ap(void *priv,
 				     struct wpa_driver_ap_params *params)
 {
@@ -6172,6 +6265,9 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 			   params->listen_interval);
 		NLA_PUT_U16(msg, NL80211_ATTR_STA_LISTEN_INTERVAL,
 			    params->listen_interval);
+	} else if (params->aid && (params->flags & WPA_STA_TDLS_PEER)) {
+		wpa_printf(MSG_DEBUG, "  * peer_aid=%u", params->aid);
+		NLA_PUT_U16(msg, NL80211_ATTR_PEER_AID, params->aid);
 	}
 	if (params->ht_capabilities) {
 		wpa_hexdump(MSG_DEBUG, "  * ht_capabilities",
@@ -7444,7 +7540,7 @@ static int wpa_driver_nl80211_associate(
 		return wpa_driver_nl80211_connect(drv, params);
 	}
 
-	drv->associated = 0;
+	nl80211_mark_disconnected(drv);
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -7757,6 +7853,9 @@ static int wpa_driver_nl80211_set_supp_port(void *priv, int authorized)
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	struct nl80211_sta_flag_update upd;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Set supplicant port %sauthorized for "
+		   MACSTR, authorized ? "" : "un", MAC2STR(drv->bssid));
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -9936,6 +10035,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_supp_port = wpa_driver_nl80211_set_supp_port,
 	.set_country = wpa_driver_nl80211_set_country,
 	.set_ap = wpa_driver_nl80211_set_ap,
+	.set_acl = wpa_driver_nl80211_set_acl,
 	.if_add = wpa_driver_nl80211_if_add,
 	.if_remove = driver_nl80211_if_remove,
 	.send_mlme = driver_nl80211_send_mlme,
