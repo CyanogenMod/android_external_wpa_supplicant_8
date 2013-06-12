@@ -241,8 +241,7 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 	if (op_freq) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Invitation "
 			"processing forced frequency %d MHz", op_freq);
-		if (p2p_freq_to_channel(p2p->cfg->country, op_freq,
-					&reg_class, &channel) < 0) {
+		if (p2p_freq_to_channel(op_freq, &reg_class, &channel) < 0) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Unknown forced freq %d MHz from "
 				"invitation_process()", op_freq);
@@ -277,7 +276,6 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 		if (msg.operating_channel) {
 			int req_freq;
 			req_freq = p2p_channel_to_freq(
-				(const char *) msg.operating_channel,
 				msg.operating_channel[3],
 				msg.operating_channel[4]);
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Peer "
@@ -333,8 +331,7 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 			p2p_reselect_channel(p2p, &intersection);
 		}
 
-		op_freq = p2p_channel_to_freq(p2p->cfg->country,
-					      p2p->op_reg_class,
+		op_freq = p2p_channel_to_freq(p2p->op_reg_class,
 					      p2p->op_channel);
 		if (op_freq < 0) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -369,8 +366,7 @@ fail:
 	if (rx_freq > 0)
 		freq = rx_freq;
 	else
-		freq = p2p_channel_to_freq(p2p->cfg->country,
-					   p2p->cfg->reg_class,
+		freq = p2p_channel_to_freq(p2p->cfg->reg_class,
 					   p2p->cfg->channel);
 	if (freq < 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
