@@ -111,6 +111,7 @@ static int hostapd_setup_radius_srv(struct hostapd_data *hapd)
 	srv.eap_req_id_text = conf->eap_req_id_text;
 	srv.eap_req_id_text_len = conf->eap_req_id_text_len;
 	srv.pwd_group = conf->pwd_group;
+	srv.server_id = conf->server_id ? conf->server_id : "hostapd";
 #ifdef CONFIG_RADIUS_TEST
 	srv.dump_msk_file = conf->dump_msk_file;
 #endif /* CONFIG_RADIUS_TEST */
@@ -148,6 +149,8 @@ int authsrv_init(struct hostapd_data *hapd)
 		params.private_key = hapd->conf->private_key;
 		params.private_key_passwd = hapd->conf->private_key_passwd;
 		params.dh_file = hapd->conf->dh_file;
+		params.ocsp_stapling_response =
+			hapd->conf->ocsp_stapling_response;
 
 		if (tls_global_set_params(hapd->ssl_ctx, &params)) {
 			wpa_printf(MSG_ERROR, "Failed to set TLS parameters");

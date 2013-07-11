@@ -180,6 +180,7 @@ struct hostapd_nai_realm_data {
 struct hostapd_bss_config {
 	char iface[IFNAMSIZ + 1];
 	char bridge[IFNAMSIZ + 1];
+	char vlan_bridge[IFNAMSIZ + 1];
 	char wds_bridge[IFNAMSIZ + 1];
 
 	enum hostapd_logger_level logger_syslog_level, logger_stdout_level;
@@ -294,6 +295,7 @@ struct hostapd_bss_config {
 	char *private_key;
 	char *private_key_passwd;
 	int check_crl;
+	char *ocsp_stapling_response;
 	char *dh_file;
 	u8 *pac_opaque_encr_key;
 	u8 *eap_fast_a_id;
@@ -373,6 +375,7 @@ struct hostapd_bss_config {
 	struct wpabuf *wps_nfc_dev_pw;
 #endif /* CONFIG_WPS */
 	int pbc_in_m1;
+	char *server_id;
 
 #define P2P_ENABLED BIT(0)
 #define P2P_GROUP_OWNER BIT(1)
@@ -546,6 +549,7 @@ int hostapd_wep_key_cmp(struct hostapd_wep_keys *a,
 const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
 			   const u8 *addr, const u8 *prev_psk);
 int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
+int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id);
 const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 					int vlan_id);
 struct hostapd_radius_attr *

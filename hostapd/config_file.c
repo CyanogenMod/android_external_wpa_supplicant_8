@@ -1689,6 +1689,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				   sizeof(conf->bss[0].iface));
 		} else if (os_strcmp(buf, "bridge") == 0) {
 			os_strlcpy(bss->bridge, pos, sizeof(bss->bridge));
+		} else if (os_strcmp(buf, "vlan_bridge") == 0) {
+			os_strlcpy(bss->vlan_bridge, pos,
+			           sizeof(bss->vlan_bridge));
 		} else if (os_strcmp(buf, "wds_bridge") == 0) {
 			os_strlcpy(bss->wds_bridge, pos,
 				   sizeof(bss->wds_bridge));
@@ -1830,6 +1833,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			bss->private_key_passwd = os_strdup(pos);
 		} else if (os_strcmp(buf, "check_crl") == 0) {
 			bss->check_crl = atoi(pos);
+		} else if (os_strcmp(buf, "ocsp_stapling_response") == 0) {
+			os_free(bss->ocsp_stapling_response);
+			bss->ocsp_stapling_response = os_strdup(pos);
 		} else if (os_strcmp(buf, "dh_file") == 0) {
 			os_free(bss->dh_file);
 			bss->dh_file = os_strdup(pos);
@@ -2628,6 +2634,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			bss->upc = os_strdup(pos);
 		} else if (os_strcmp(buf, "pbc_in_m1") == 0) {
 			bss->pbc_in_m1 = atoi(pos);
+		} else if (os_strcmp(buf, "server_id") == 0) {
+			os_free(bss->server_id);
+			bss->server_id = os_strdup(pos);
 #ifdef CONFIG_WPS_NFC
 		} else if (os_strcmp(buf, "wps_nfc_dev_pw_id") == 0) {
 			bss->wps_nfc_dev_pw_id = atoi(pos);

@@ -65,6 +65,8 @@
 #define P2P_CONCURRENT_SEARCH_DELAY 500
 #endif /* P2P_CONCURRENT_SEARCH_DELAY */
 
+#define P2P_MGMT_DEVICE_PREFIX		"p2p-dev-"
+
 enum p2p_group_removal_reason {
 	P2P_GROUP_REMOVAL_UNKNOWN,
 	P2P_GROUP_REMOVAL_SILENT,
@@ -1013,6 +1015,26 @@ static void wpas_p2p_clone_config(struct wpa_supplicant *dst,
 }
 
 
+static void wpas_p2p_get_group_ifname(struct wpa_supplicant *wpa_s,
+				      char *ifname, size_t len)
+{
+	char *ifname_ptr = wpa_s->ifname;
+
+	if (os_strncmp(wpa_s->ifname, P2P_MGMT_DEVICE_PREFIX,
+		       os_strlen(P2P_MGMT_DEVICE_PREFIX)) == 0) {
+		ifname_ptr = os_strrchr(wpa_s->ifname, '-') + 1;
+	}
+
+	os_snprintf(ifname, len, "p2p-%s-%d", ifname_ptr, wpa_s->p2p_group_idx);
+	if (os_strlen(ifname) >= IFNAMSIZ &&
+	    os_strlen(wpa_s->ifname) < IFNAMSIZ) {
+		/* Try to avoid going over the IFNAMSIZ length limit */
+		os_snprintf(ifname, sizeof(ifname), "p2p-%d",
+			    wpa_s->p2p_group_idx);
+	}
+}
+
+
 static int wpas_p2p_add_group_interface(struct wpa_supplicant *wpa_s,
 					enum wpa_driver_if_type type)
 {
@@ -1030,14 +1052,7 @@ static int wpas_p2p_add_group_interface(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
-	os_snprintf(ifname, sizeof(ifname), "p2p-%s-%d", wpa_s->ifname,
-		    wpa_s->p2p_group_idx);
-	if (os_strlen(ifname) >= IFNAMSIZ &&
-	    os_strlen(wpa_s->ifname) < IFNAMSIZ) {
-		/* Try to avoid going over the IFNAMSIZ length limit */
-		os_snprintf(ifname, sizeof(ifname), "p2p-%d",
-			    wpa_s->p2p_group_idx);
-	}
+	wpas_p2p_get_group_ifname(wpa_s, ifname, sizeof(ifname));
 	force_ifname[0] = '\0';
 
 	wpa_printf(MSG_DEBUG, "P2P: Create a new interface %s for the group",
@@ -1107,7 +1122,13 @@ wpas_p2p_init_group_interface(struct wpa_supplicant *wpa_s, int go)
 	os_memset(&iface, 0, sizeof(iface));
 	iface.ifname = wpa_s->pending_interface_name;
 	iface.driver = wpa_s->driver->name;
-	iface.ctrl_interface = wpa_s->conf->ctrl_interface;
+	if (wpa_s->conf->ctrl_interface == NULL &&
+	    wpa_s->parent != wpa_s &&
+	    wpa_s->p2p_mgmt &&
+	    (wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE))
+		iface.ctrl_interface = wpa_s->parent->conf->ctrl_interface;
+	else
+		iface.ctrl_interface = wpa_s->conf->ctrl_interface;
 	iface.driver_param = wpa_s->conf->driver_param;
 	group_wpa_s = wpa_supplicant_add_iface(wpa_s->global, &iface);
 	if (group_wpa_s == NULL) {
@@ -1132,6 +1153,14 @@ static void wpas_p2p_group_formation_timeout(void *eloop_ctx,
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 	wpa_printf(MSG_DEBUG, "P2P: Group Formation timed out");
+	wpas_p2p_group_formation_failed(wpa_s);
+}
+
+
+void wpas_p2p_group_formation_failed(struct wpa_supplicant *wpa_s)
+{
+	eloop_cancel_timeout(wpas_p2p_group_formation_timeout,
+			     wpa_s->parent, NULL);
 	if (wpa_s->global->p2p)
 		p2p_group_formation_failed(wpa_s->global->p2p);
 	else if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_MGMT)
@@ -3048,6 +3077,45 @@ static void wpas_p2p_debug_print(void *ctx, int level, const char *msg)
 }
 
 
+int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_interface iface;
+	struct wpa_supplicant *p2pdev_wpa_s;
+	char ifname[100];
+	char force_name[100];
+	int ret;
+
+	os_snprintf(ifname, sizeof(ifname), P2P_MGMT_DEVICE_PREFIX "%s",
+		    wpa_s->ifname);
+	force_name[0] = '\0';
+	wpa_s->pending_interface_type = WPA_IF_P2P_DEVICE;
+	ret = wpa_drv_if_add(wpa_s, WPA_IF_P2P_DEVICE, ifname, NULL, NULL,
+			     force_name, wpa_s->pending_interface_addr, NULL);
+	if (ret < 0) {
+		wpa_printf(MSG_DEBUG, "P2P: Failed to create P2P Device interface");
+		return ret;
+	}
+	os_strlcpy(wpa_s->pending_interface_name, ifname,
+		   sizeof(wpa_s->pending_interface_name));
+
+	os_memset(&iface, 0, sizeof(iface));
+	iface.p2p_mgmt = 1;
+	iface.ifname = wpa_s->pending_interface_name;
+	iface.driver = wpa_s->driver->name;
+	iface.driver_param = wpa_s->conf->driver_param;
+	iface.confname = wpa_s->confname;
+	p2pdev_wpa_s = wpa_supplicant_add_iface(wpa_s->global, &iface);
+	if (!p2pdev_wpa_s) {
+		wpa_printf(MSG_DEBUG, "P2P: Failed to add P2P Device interface");
+		return -1;
+	}
+	p2pdev_wpa_s->parent = wpa_s;
+
+	wpa_s->pending_interface_name[0] = '\0';
+	return 0;
+}
+
+
 /**
  * wpas_p2p_init - Initialize P2P module for %wpa_supplicant
  * @global: Pointer to global data from wpa_supplicant_init()
@@ -3312,7 +3380,8 @@ void wpas_p2p_deinit_global(struct wpa_global *global)
 
 static int wpas_p2p_create_iface(struct wpa_supplicant *wpa_s)
 {
-	if (wpa_s->conf->p2p_no_group_iface)
+	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
+	    wpa_s->conf->p2p_no_group_iface)
 		return 0; /* separate interface disabled per configuration */
 	if (wpa_s->drv_flags &
 	    (WPA_DRIVER_FLAGS_P2P_DEDICATED_INTERFACE |
@@ -5595,14 +5664,7 @@ int wpas_p2p_notif_pbc_overlap(struct wpa_supplicant *wpa_s)
 		   "session overlap");
 	if (wpa_s != wpa_s->parent)
 		wpa_msg_ctrl(wpa_s->parent, MSG_INFO, WPS_EVENT_OVERLAP);
-
-	if (wpa_s->global->p2p)
-		p2p_group_formation_failed(wpa_s->global->p2p);
-
-	eloop_cancel_timeout(wpas_p2p_group_formation_timeout,
-			     wpa_s->parent, NULL);
-
-	wpas_group_formation_completed(wpa_s, 0);
+	wpas_p2p_group_formation_failed(wpa_s);
 	return 1;
 }
 

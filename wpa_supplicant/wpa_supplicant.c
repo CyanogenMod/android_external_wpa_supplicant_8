@@ -17,6 +17,7 @@
 #include "crypto/sha1.h"
 #include "eapol_supp/eapol_supp_sm.h"
 #include "eap_peer/eap.h"
+#include "eap_peer/eap_proxy.h"
 #include "eap_server/eap_methods.h"
 #include "rsn_supp/wpa.h"
 #include "eloop.h"
@@ -2348,7 +2349,10 @@ int wpa_supplicant_update_mac_addr(struct wpa_supplicant *wpa_s)
 		const u8 *addr = wpa_drv_get_mac_addr(wpa_s);
 		if (addr)
 			os_memcpy(wpa_s->own_addr, addr, ETH_ALEN);
-	} else if (!(wpa_s->drv_flags &
+	} else if ((!wpa_s->p2p_mgmt ||
+		    !(wpa_s->drv_flags &
+		      WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE)) &&
+		   !(wpa_s->drv_flags &
 		     WPA_DRIVER_FLAGS_P2P_DEDICATED_INTERFACE)) {
 		l2_packet_deinit(wpa_s->l2);
 		wpa_s->l2 = l2_packet_init(wpa_s->ifname,
@@ -2367,10 +2371,6 @@ int wpa_supplicant_update_mac_addr(struct wpa_supplicant *wpa_s)
 		wpa_msg(wpa_s, MSG_ERROR, "Failed to get own L2 address");
 		return -1;
 	}
-
-	wpa_dbg(wpa_s, MSG_DEBUG, "Own MAC address: " MACSTR,
-		MAC2STR(wpa_s->own_addr));
-	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
 
 	return 0;
 }
@@ -2416,6 +2416,10 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 
 	if (wpa_supplicant_update_mac_addr(wpa_s) < 0)
 		return -1;
+
+	wpa_dbg(wpa_s, MSG_DEBUG, "Own MAC address: " MACSTR,
+		MAC2STR(wpa_s->own_addr));
+	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
 
 	if (wpa_s->bridge_ifname[0]) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Receiving packets from bridge "
@@ -2855,6 +2859,11 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 			wpa_s->conf->driver_param =
 				os_strdup(iface->driver_param);
 		}
+
+		if (iface->p2p_mgmt && !iface->ctrl_interface) {
+			os_free(wpa_s->conf->ctrl_interface);
+			wpa_s->conf->ctrl_interface = NULL;
+		}
 	} else
 		wpa_s->conf = wpa_config_alloc_empty(iface->ctrl_interface,
 						     iface->driver_param);
@@ -2980,11 +2989,24 @@ next_driver:
 	if (wpa_s->max_remain_on_chan == 0)
 		wpa_s->max_remain_on_chan = 1000;
 
+	/*
+	 * Only take p2p_mgmt parameters when P2P Device is supported.
+	 * Doing it here as it determines whether l2_packet_init() will be done
+	 * during wpa_supplicant_driver_init().
+	 */
+	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE)
+		wpa_s->p2p_mgmt = iface->p2p_mgmt;
+	else
+		iface->p2p_mgmt = 1;
+
 	if (wpa_supplicant_driver_init(wpa_s) < 0)
 		return -1;
 
 #ifdef CONFIG_TDLS
-	if (wpa_tdls_init(wpa_s->wpa))
+	if ((!iface->p2p_mgmt ||
+	     !(wpa_s->drv_flags &
+	       WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE)) &&
+	    wpa_tdls_init(wpa_s->wpa))
 		return -1;
 #endif /* CONFIG_TDLS */
 
@@ -3022,7 +3044,7 @@ next_driver:
 	}
 
 #ifdef CONFIG_P2P
-	if (wpas_p2p_init(wpa_s->global, wpa_s) < 0) {
+	if (iface->p2p_mgmt && wpas_p2p_init(wpa_s->global, wpa_s) < 0) {
 		wpa_msg(wpa_s, MSG_ERROR, "Failed to init P2P");
 		return -1;
 	}
@@ -3030,6 +3052,20 @@ next_driver:
 
 	if (wpa_bss_init(wpa_s) < 0)
 		return -1;
+
+#ifdef CONFIG_EAP_PROXY
+{
+	size_t len;
+	wpa_s->mnc_len = eap_proxy_get_imsi(wpa_s->imsi, &len);
+	if (wpa_s->mnc_len > 0) {
+		wpa_s->imsi[len] = '\0';
+		wpa_printf(MSG_DEBUG, "eap_proxy: IMSI %s (MNC length %d)",
+			   wpa_s->imsi, wpa_s->mnc_len);
+	} else {
+		wpa_printf(MSG_DEBUG, "eap_proxy: IMSI not available");
+	}
+}
+#endif /* CONFIG_EAP_PROXY */
 
 	if (pcsc_reader_init(wpa_s) < 0)
 		return -1;
@@ -3422,9 +3458,6 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 #ifdef CONFIG_WIFI_DISPLAY
 	wifi_display_deinit(global);
 #endif /* CONFIG_WIFI_DISPLAY */
-#ifdef CONFIG_P2P
-	wpas_p2p_deinit_global(global);
-#endif /* CONFIG_P2P */
 
 	while (global->ifaces)
 		wpa_supplicant_remove_iface(global, global->ifaces, 1);

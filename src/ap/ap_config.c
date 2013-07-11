@@ -440,6 +440,7 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->server_cert);
 	os_free(conf->private_key);
 	os_free(conf->private_key_passwd);
+	os_free(conf->ocsp_stapling_response);
 	os_free(conf->dh_file);
 	os_free(conf->pac_opaque_encr_key);
 	os_free(conf->eap_fast_a_id);
@@ -531,6 +532,8 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	wpabuf_free(conf->vendor_elements);
 
 	os_free(conf->sae_groups);
+
+	os_free(conf->server_id);
 }
 
 
@@ -606,11 +609,23 @@ int hostapd_rate_found(int *list, int rate)
 }
 
 
-const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
+int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id)
 {
 	struct hostapd_vlan *v = vlan;
 	while (v) {
 		if (v->vlan_id == vlan_id || v->vlan_id == VLAN_ID_WILDCARD)
+			return 1;
+		v = v->next;
+	}
+	return 0;
+}
+
+
+const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
+{
+	struct hostapd_vlan *v = vlan;
+	while (v) {
+		if (v->vlan_id == vlan_id)
 			return v->ifname;
 		v = v->next;
 	}

@@ -14,10 +14,12 @@ struct p2p_go_neg_results;
 enum p2p_send_action_result;
 struct p2p_peer_info;
 struct p2p_channels;
+struct wps_event_fail;
 
 int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit(struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit_global(struct wpa_global *global);
+int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s);
 int wpas_p2p_connect(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		     const char *pin, enum p2p_wps_method wps_method,
 		     int persistent_group, int auto_join, int join,
@@ -76,6 +78,7 @@ void wpas_p2p_group_deinit(struct wpa_supplicant *wpa_s);
 void wpas_dev_found(void *ctx, const u8 *addr,
 		    const struct p2p_peer_info *info,
 		    int new_device);
+void wpas_p2p_group_formation_failed(struct wpa_supplicant *wpa_s);
 void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res);
 void wpas_go_neg_req_rx(void *ctx, const u8 *src, u16 dev_passwd_id);
 void wpas_prov_disc_req(void *ctx, const u8 *peer, u16 config_methods,
