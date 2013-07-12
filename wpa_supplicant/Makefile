@@ -215,7 +215,7 @@ NEED_SHA1=y
 NEED_MD5=y
 NEED_RC4=y
 else
-CFLAGS += -DCONFIG_NO_WPA -DCONFIG_NO_WPA2
+CFLAGS += -DCONFIG_NO_WPA
 endif
 
 ifdef CONFIG_IBSS_RSN
@@ -263,10 +263,6 @@ ifdef CONFIG_INTERWORKING
 OBJS += interworking.o
 CFLAGS += -DCONFIG_INTERWORKING
 NEED_GAS=y
-endif
-
-ifdef CONFIG_NO_WPA2
-CFLAGS += -DCONFIG_NO_WPA2
 endif
 
 include ../src/drivers/drivers.mak
@@ -576,6 +572,22 @@ CFLAGS += -DEAP_PWD
 OBJS += ../src/eap_peer/eap_pwd.o ../src/eap_common/eap_pwd_common.o
 OBJS_h += ../src/eap_server/eap_server_pwd.o
 CONFIG_IEEE8021X_EAPOL=y
+NEED_SHA256=y
+endif
+
+ifdef CONFIG_EAP_EKE
+# EAP-EKE
+ifeq ($(CONFIG_EAP_EKE), dyn)
+CFLAGS += -DEAP_EKE_DYNAMIC
+EAPDYN += ../src/eap_peer/eap_eke.so
+else
+CFLAGS += -DEAP_EKE
+OBJS += ../src/eap_peer/eap_eke.o ../src/eap_common/eap_eke_common.o
+OBJS_h += ../src/eap_server/eap_server_eke.o
+endif
+CONFIG_IEEE8021X_EAPOL=y
+NEED_DH_GROUPS=y
+NEED_DH_GROUPS_ALL=y
 NEED_SHA256=y
 endif
 
@@ -1580,6 +1592,10 @@ eap_wsc.so: ../src/eap_peer/eap_wsc.c ../src/eap_common/eap_wsc_common.c ../src/
 eap_ikev2.so: ../src/eap_peer/eap_ikev2.c ../src/eap_peer/ikev2.c ../src/eap_common/eap_ikev2_common.o ../src/eap_common/ikev2_common.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $^ \
 		-Deap_peer_ikev2_register=eap_peer_method_dynamic_init
+
+eap_eke.so: ../src/eap_peer/eap_eke.c ../src/eap_common/eap_eke_common.c
+	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $^ \
+		-Deap_peer_eke_register=eap_peer_method_dynamic_init
 
 %.so: %.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $< \
