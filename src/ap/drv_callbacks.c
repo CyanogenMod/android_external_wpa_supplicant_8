@@ -13,6 +13,7 @@
 #include "drivers/driver.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
+#include "common/wpa_ctrl.h"
 #include "crypto/random.h"
 #include "p2p/p2p.h"
 #include "wps/wps.h"
@@ -108,6 +109,15 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 							  P2P_IE_VENDOR_TYPE);
 	}
 #endif /* CONFIG_P2P */
+
+#ifdef CONFIG_HS20
+	wpabuf_free(sta->hs20_ie);
+	if (elems.hs20 && elems.hs20_len > 4) {
+		sta->hs20_ie = wpabuf_alloc_copy(elems.hs20 + 4,
+						 elems.hs20_len - 4);
+	} else
+		sta->hs20_ie = NULL;
+#endif /* CONFIG_HS20 */
 
 	if (hapd->conf->wpa) {
 		if (ie == NULL || ielen == 0) {
@@ -384,6 +394,22 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 }
 
 
+void hostapd_event_connect_failed_reason(struct hostapd_data *hapd,
+					 const u8 *addr, int reason_code)
+{
+	switch (reason_code) {
+	case MAX_CLIENT_REACHED:
+		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_REJECTED_MAX_STA MACSTR,
+			MAC2STR(addr));
+		break;
+	case BLOCKED_CLIENT:
+		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_REJECTED_BLOCKED_STA MACSTR,
+			MAC2STR(addr));
+		break;
+	}
+}
+
+
 int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
 			 const u8 *bssid, const u8 *ie, size_t ie_len,
 			 int ssi_signal)
@@ -503,13 +529,13 @@ static void hostapd_action_rx(struct hostapd_data *hapd,
 					   action->data + 2);
 	}
 #endif /* CONFIG_IEEE80211W */
-#ifdef CONFIG_IEEE80211V
+#ifdef CONFIG_WNM
 	if (action->category == WLAN_ACTION_WNM) {
 		wpa_printf(MSG_DEBUG, "%s: WNM_ACTION length %d",
 			   __func__, (int) action->len);
 		ieee802_11_rx_wnm_action_ap(hapd, action);
 	}
-#endif /* CONFIG_IEEE80211V */
+#endif /* CONFIG_WNM */
 }
 
 
@@ -672,12 +698,15 @@ static void hostapd_event_eapol_rx(struct hostapd_data *hapd, const u8 *src,
 				   const u8 *data, size_t data_len)
 {
 	struct hostapd_iface *iface = hapd->iface;
+	struct sta_info *sta;
 	size_t j;
 
 	for (j = 0; j < iface->num_bss; j++) {
-		if (ap_get_sta(iface->bss[j], src)) {
-			hapd = iface->bss[j];
-			break;
+		if ((sta = ap_get_sta(iface->bss[j], src))) {
+			if (sta->flags & WLAN_STA_ASSOC) {
+				hapd = iface->bss[j];
+				break;
+			}
 		}
 	}
 
@@ -815,6 +844,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		hostapd_event_ch_switch(hapd, data->ch_switch.freq,
 					data->ch_switch.ht_enabled,
 					data->ch_switch.ch_offset);
+		break;
+	case EVENT_CONNECT_FAILED_REASON:
+		if (!data)
+			break;
+		hostapd_event_connect_failed_reason(
+			hapd, data->connect_failed_reason.addr,
+			data->connect_failed_reason.code);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown event %d", event);

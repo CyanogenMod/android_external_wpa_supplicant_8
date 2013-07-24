@@ -41,7 +41,7 @@ struct hostapd_channel_data {
 	/**
 	 * freq - Frequency in MHz
 	 */
-	short freq;
+	int freq;
 
 	/**
 	 * flag - Channel flags (HOSTAPD_CHAN_*)
@@ -122,6 +122,13 @@ struct hostapd_hw_modes {
 #define IEEE80211_CAP_IBSS	0x0002
 #define IEEE80211_CAP_PRIVACY	0x0010
 
+/* DMG (60 GHz) IEEE 802.11ad */
+/* type - bits 0..1 */
+#define IEEE80211_CAP_DMG_MASK	0x0003
+#define IEEE80211_CAP_DMG_IBSS	0x0001 /* Tx by: STA */
+#define IEEE80211_CAP_DMG_PBSS	0x0002 /* Tx by: PCP */
+#define IEEE80211_CAP_DMG_AP	0x0003 /* Tx by: AP */
+
 #define WPA_SCAN_QUAL_INVALID		BIT(0)
 #define WPA_SCAN_NOISE_INVALID		BIT(1)
 #define WPA_SCAN_LEVEL_INVALID		BIT(2)
@@ -180,10 +187,12 @@ struct wpa_scan_res {
  * struct wpa_scan_results - Scan results
  * @res: Array of pointers to allocated variable length scan result entries
  * @num: Number of entries in the scan result array
+ * @fetch_time: Time when the results were fetched from the driver
  */
 struct wpa_scan_results {
 	struct wpa_scan_res **res;
 	size_t num;
+	struct os_time fetch_time;
 };
 
 /**
@@ -313,6 +322,9 @@ struct wpa_driver_auth_params {
 	 * p2p - Whether this connection is a P2P group
 	 */
 	int p2p;
+
+	const u8 *sae_data;
+	size_t sae_data_len;
 
 };
 
@@ -556,6 +568,19 @@ struct wpa_driver_associate_params {
 	 */
 	const u8 *htcaps;       /* struct ieee80211_ht_capabilities * */
 	const u8 *htcaps_mask;  /* struct ieee80211_ht_capabilities * */
+
+#ifdef CONFIG_VHT_OVERRIDES
+	/**
+	 * disable_vht - Disable VHT for this connection
+	 */
+	int disable_vht;
+
+	/**
+	 * VHT capability overrides.
+	 */
+	const struct ieee80211_vht_capabilities *vhtcaps;
+	const struct ieee80211_vht_capabilities *vhtcaps_mask;
+#endif /* CONFIG_VHT_OVERRIDES */
 };
 
 enum hide_ssid {
@@ -758,6 +783,7 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_CAPA_KEY_MGMT_WPA_NONE	0x00000010
 #define WPA_DRIVER_CAPA_KEY_MGMT_FT		0x00000020
 #define WPA_DRIVER_CAPA_KEY_MGMT_FT_PSK		0x00000040
+#define WPA_DRIVER_CAPA_KEY_MGMT_WAPI_PSK	0x00000080
 	unsigned int key_mgmt;
 
 #define WPA_DRIVER_CAPA_ENC_WEP40	0x00000001
@@ -834,6 +860,12 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_INACTIVITY_TIMER		0x00800000
 /* Driver expects user space implementation of MLME in AP mode */
 #define WPA_DRIVER_FLAGS_AP_MLME			0x01000000
+/* Driver supports SAE with user space SME */
+#define WPA_DRIVER_FLAGS_SAE				0x02000000
+/* Driver makes use of OBSS scan mechanism in wpa_supplicant */
+#define WPA_DRIVER_FLAGS_OBSS_SCAN			0x04000000
+/* Driver supports IBSS (Ad-hoc) mode */
+#define WPA_DRIVER_FLAGS_IBSS				0x08000000
 	unsigned int flags;
 
 	int max_scan_ssids;
@@ -865,6 +897,15 @@ struct wpa_driver_capa {
 /* Driver Probe Response offloading support for IEEE 802.11u (Interworking) */
 #define WPA_DRIVER_PROBE_RESP_OFFLOAD_INTERWORKING	0x00000008
 	unsigned int probe_resp_offloads;
+
+	/**
+	 * extended_capa - extended capabilities in driver/device
+	 *
+	 * Must be allocated and freed by driver and the pointers must be
+	 * valid for the lifetime of the driver, i.e., freed in deinit()
+	 */
+	const u8 *extended_capa, *extended_capa_mask;
+	unsigned int extended_capa_len;
 };
 
 
@@ -890,19 +931,31 @@ struct hostapd_sta_add_params {
 	size_t supp_rates_len;
 	u16 listen_interval;
 	const struct ieee80211_ht_capabilities *ht_capabilities;
+	const struct ieee80211_vht_capabilities *vht_capabilities;
 	u32 flags; /* bitmask of WPA_STA_* flags */
 	int set; /* Set STA parameters instead of add */
 	u8 qosinfo;
+	const u8 *ext_capab;
+	size_t ext_capab_len;
 };
 
 struct hostapd_freq_params {
 	int mode;
 	int freq;
 	int channel;
+	/* for HT */
 	int ht_enabled;
 	int sec_channel_offset; /* 0 = HT40 disabled, -1 = HT40 enabled,
 				 * secondary channel below primary, 1 = HT40
 				 * enabled, secondary channel above primary */
+
+	/* for VHT */
+	int vht_enabled;
+
+	/* valid for both HT and VHT, center_freq2 is non-zero
+	 * only for bandwidth 80 and an 80+80 channel */
+	int center_freq1, center_freq2;
+	int bandwidth;
 };
 
 enum wpa_driver_if_type {
@@ -1193,17 +1246,6 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*deauthenticate)(void *priv, const u8 *addr, int reason_code);
-
-	/**
-	 * disassociate - Request driver to disassociate
-	 * @priv: private driver interface data
-	 * @addr: peer address (BSSID of the AP)
-	 * @reason_code: 16-bit reason code to be sent in the disassociation
-	 *	frame
-	 *
-	 * Returns: 0 on success, -1 on failure
-	 */
-	int (*disassociate)(void *priv, const u8 *addr, int reason_code);
 
 	/**
 	 * associate - Request driver to associate
@@ -3060,7 +3102,16 @@ enum wpa_event_type {
 	 *
 	 * This event can be used to request a WNM operation to be performed.
 	 */
-	EVENT_WNM
+	EVENT_WNM,
+
+	/**
+	 * EVENT_CONNECT_FAILED_REASON - Connection failure reason in AP mode
+	 *
+	 * This event indicates that the driver reported a connection failure
+	 * with the specified client (for example, max client reached, etc.) in
+	 * AP mode.
+	 */
+	EVENT_CONNECT_FAILED_REASON
 };
 
 
@@ -3685,6 +3736,19 @@ union wpa_event_data {
 		int ht_enabled;
 		int ch_offset;
 	} ch_switch;
+
+	/**
+	 * struct connect_failed - Data for EVENT_CONNECT_FAILED_REASON
+	 * @addr: Remote client address
+	 * @code: Reason code for connection failure
+	 */
+	struct connect_failed_reason {
+		u8 addr[ETH_ALEN];
+		enum {
+			MAX_CLIENT_REACHED,
+			BLOCKED_CLIENT
+		} code;
+	} connect_failed_reason;
 };
 
 /**

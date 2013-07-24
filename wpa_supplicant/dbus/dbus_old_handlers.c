@@ -331,7 +331,7 @@ DBusMessage * wpas_dbus_global_set_debugparams(DBusMessage *message,
 DBusMessage * wpas_dbus_iface_scan(DBusMessage *message,
 				   struct wpa_supplicant *wpa_s)
 {
-	wpa_s->scan_req = 2;
+	wpa_s->scan_req = MANUAL_SCAN_REQ;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
 	return wpas_dbus_new_success_reply(message);
 }
@@ -1300,6 +1300,8 @@ DBusMessage * wpas_dbus_iface_get_scanning(DBusMessage *message,
 }
 
 
+#ifndef CONFIG_NO_CONFIG_BLOBS
+
 /**
  * wpas_dbus_iface_set_blobs - Store named binary blobs (ie, for certificates)
  * @message: Pointer to incoming dbus message
@@ -1428,6 +1430,8 @@ DBusMessage * wpas_dbus_iface_remove_blobs(DBusMessage *message,
 
 	return wpas_dbus_new_success_reply(message);
 }
+
+#endif /* CONFIG_NO_CONFIG_BLOBS */
 
 
 /**

@@ -13,6 +13,7 @@ enum p2p_wps_method;
 struct p2p_go_neg_results;
 enum p2p_send_action_result;
 struct p2p_peer_info;
+struct p2p_channels;
 
 int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit(struct wpa_supplicant *wpa_s);
@@ -28,14 +29,15 @@ void wpas_p2p_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 					  unsigned int freq);
 #ifdef ANDROID_P2P
 int wpas_p2p_handle_frequency_conflicts(struct wpa_supplicant *wpa_s,
-                                          int freq);
+                                          int freq, struct wpa_ssid *ssid);
 #endif
 int wpas_p2p_group_remove(struct wpa_supplicant *wpa_s, const char *ifname);
 int wpas_p2p_group_add(struct wpa_supplicant *wpa_s, int persistent_group,
 		       int freq, int ht40);
 int wpas_p2p_group_add_persistent(struct wpa_supplicant *wpa_s,
 				  struct wpa_ssid *ssid, int addr_allocated,
-				  int freq, int ht40);
+				  int freq, int ht40,
+				  const struct p2p_channels *channels);
 struct p2p_group * wpas_p2p_group_init(struct wpa_supplicant *wpa_s,
 				       struct wpa_ssid *ssid);
 void wpas_p2p_wps_success(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
@@ -113,7 +115,7 @@ int wpas_p2p_service_del_upnp(struct wpa_supplicant *wpa_s, u8 version,
 int wpas_p2p_reject(struct wpa_supplicant *wpa_s, const u8 *addr);
 int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		    struct wpa_ssid *ssid, const u8 *go_dev_addr, int freq,
-		    int ht40);
+		    int ht40, int pref_freq);
 int wpas_p2p_invite_group(struct wpa_supplicant *wpa_s, const char *ifname,
 			  const u8 *peer_addr, const u8 *go_dev_addr);
 void wpas_p2p_completed(struct wpa_supplicant *wpa_s);
@@ -155,5 +157,13 @@ int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s);
 int wpas_p2p_get_ht40_mode(struct wpa_supplicant *wpa_s,
 			   struct hostapd_hw_modes *mode, u8 channel);
 unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s);
+
+#ifdef CONFIG_P2P
+void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s);
+#else /* CONFIG_P2P */
+static inline void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s)
+{
+}
+#endif /* CONFIG_P2P */
 
 #endif /* P2P_SUPPLICANT_H */

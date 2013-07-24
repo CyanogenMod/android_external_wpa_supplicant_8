@@ -1,6 +1,6 @@
 /*
  * Event loop - empty template (basic structure, but no OS specific operations)
- * Copyright (c) 2002-2005, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -9,6 +9,7 @@
 #include "includes.h"
 
 #include "common.h"
+#include "list.h"
 #include "eloop.h"
 
 
@@ -16,21 +17,21 @@ struct eloop_sock {
 	int sock;
 	void *eloop_data;
 	void *user_data;
-	void (*handler)(int sock, void *eloop_ctx, void *sock_ctx);
+	eloop_sock_handler handler;
 };
 
 struct eloop_timeout {
+	struct dl_list list;
 	struct os_time time;
 	void *eloop_data;
 	void *user_data;
-	void (*handler)(void *eloop_ctx, void *sock_ctx);
-	struct eloop_timeout *next;
+	eloop_timeout_handler handler;
 };
 
 struct eloop_signal {
 	int sig;
 	void *user_data;
-	void (*handler)(int sig, void *eloop_ctx, void *signal_ctx);
+	eloop_signal_handler handler;
 	int signaled;
 };
 
@@ -38,7 +39,7 @@ struct eloop_data {
 	int max_sock, reader_count;
 	struct eloop_sock *readers;
 
-	struct eloop_timeout *timeout;
+	struct dl_list timeout;
 
 	int signal_count;
 	struct eloop_signal *signals;
@@ -54,21 +55,19 @@ static struct eloop_data eloop;
 
 int eloop_init(void)
 {
-	memset(&eloop, 0, sizeof(eloop));
+	os_memset(&eloop, 0, sizeof(eloop));
+	dl_list_init(&eloop.timeout);
 	return 0;
 }
 
 
-int eloop_register_read_sock(int sock,
-			     void (*handler)(int sock, void *eloop_ctx,
-					     void *sock_ctx),
+int eloop_register_read_sock(int sock, eloop_sock_handler handler,
 			     void *eloop_data, void *user_data)
 {
 	struct eloop_sock *tmp;
 
-	tmp = (struct eloop_sock *)
-		realloc(eloop.readers,
-			(eloop.reader_count + 1) * sizeof(struct eloop_sock));
+	tmp = os_realloc_array(eloop.readers, eloop.reader_count + 1,
+			       sizeof(struct eloop_sock));
 	if (tmp == NULL)
 		return -1;
 
@@ -100,9 +99,9 @@ void eloop_unregister_read_sock(int sock)
 	if (i == eloop.reader_count)
 		return;
 	if (i != eloop.reader_count - 1) {
-		memmove(&eloop.readers[i], &eloop.readers[i + 1],
-			(eloop.reader_count - i - 1) *
-			sizeof(struct eloop_sock));
+		os_memmove(&eloop.readers[i], &eloop.readers[i + 1],
+			   (eloop.reader_count - i - 1) *
+			   sizeof(struct eloop_sock));
 	}
 	eloop.reader_count--;
 	eloop.reader_table_changed = 1;
@@ -110,16 +109,31 @@ void eloop_unregister_read_sock(int sock)
 
 
 int eloop_register_timeout(unsigned int secs, unsigned int usecs,
-			   void (*handler)(void *eloop_ctx, void *timeout_ctx),
+			   eloop_timeout_handler handler,
 			   void *eloop_data, void *user_data)
 {
-	struct eloop_timeout *timeout, *tmp, *prev;
+	struct eloop_timeout *timeout, *tmp;
+	os_time_t now_sec;
 
-	timeout = (struct eloop_timeout *) malloc(sizeof(*timeout));
+	timeout = os_zalloc(sizeof(*timeout));
 	if (timeout == NULL)
 		return -1;
-	os_get_time(&timeout->time);
+	if (os_get_time(&timeout->time) < 0) {
+		os_free(timeout);
+		return -1;
+	}
+	now_sec = timeout->time.sec;
 	timeout->time.sec += secs;
+	if (timeout->time.sec < now_sec) {
+		/*
+		 * Integer overflow - assume long enough timeout to be assumed
+		 * to be infinite, i.e., the timeout would never happen.
+		 */
+		wpa_printf(MSG_DEBUG, "ELOOP: Too long timeout (secs=%u) to "
+			   "ever happen - ignore it", secs);
+		os_free(timeout);
+		return 0;
+	}
 	timeout->time.usec += usecs;
 	while (timeout->time.usec >= 1000000) {
 		timeout->time.sec++;
@@ -128,80 +142,86 @@ int eloop_register_timeout(unsigned int secs, unsigned int usecs,
 	timeout->eloop_data = eloop_data;
 	timeout->user_data = user_data;
 	timeout->handler = handler;
-	timeout->next = NULL;
 
-	if (eloop.timeout == NULL) {
-		eloop.timeout = timeout;
-		return 0;
+	/* Maintain timeouts in order of increasing time */
+	dl_list_for_each(tmp, &eloop.timeout, struct eloop_timeout, list) {
+		if (os_time_before(&timeout->time, &tmp->time)) {
+			dl_list_add(tmp->list.prev, &timeout->list);
+			return 0;
+		}
 	}
-
-	prev = NULL;
-	tmp = eloop.timeout;
-	while (tmp != NULL) {
-		if (os_time_before(&timeout->time, &tmp->time))
-			break;
-		prev = tmp;
-		tmp = tmp->next;
-	}
-
-	if (prev == NULL) {
-		timeout->next = eloop.timeout;
-		eloop.timeout = timeout;
-	} else {
-		timeout->next = prev->next;
-		prev->next = timeout;
-	}
+	dl_list_add_tail(&eloop.timeout, &timeout->list);
 
 	return 0;
 }
 
 
-int eloop_cancel_timeout(void (*handler)(void *eloop_ctx, void *sock_ctx),
+static void eloop_remove_timeout(struct eloop_timeout *timeout)
+{
+	dl_list_del(&timeout->list);
+	os_free(timeout);
+}
+
+
+int eloop_cancel_timeout(eloop_timeout_handler handler,
 			 void *eloop_data, void *user_data)
 {
-	struct eloop_timeout *timeout, *prev, *next;
+	struct eloop_timeout *timeout, *prev;
 	int removed = 0;
 
-	prev = NULL;
-	timeout = eloop.timeout;
-	while (timeout != NULL) {
-		next = timeout->next;
-
+	dl_list_for_each_safe(timeout, prev, &eloop.timeout,
+			      struct eloop_timeout, list) {
 		if (timeout->handler == handler &&
 		    (timeout->eloop_data == eloop_data ||
 		     eloop_data == ELOOP_ALL_CTX) &&
 		    (timeout->user_data == user_data ||
 		     user_data == ELOOP_ALL_CTX)) {
-			if (prev == NULL)
-				eloop.timeout = next;
-			else
-				prev->next = next;
-			free(timeout);
+			eloop_remove_timeout(timeout);
 			removed++;
-		} else
-			prev = timeout;
-
-		timeout = next;
+		}
 	}
 
 	return removed;
 }
 
 
-int eloop_is_timeout_registered(void (*handler)(void *eloop_ctx,
-						void *timeout_ctx),
+int eloop_cancel_timeout_one(eloop_timeout_handler handler,
+			     void *eloop_data, void *user_data,
+			     struct os_time *remaining)
+{
+	struct eloop_timeout *timeout, *prev;
+	int removed = 0;
+	struct os_time now;
+
+	os_get_time(&now);
+	remaining->sec = remaining->usec = 0;
+
+	dl_list_for_each_safe(timeout, prev, &eloop.timeout,
+			      struct eloop_timeout, list) {
+		if (timeout->handler == handler &&
+		    (timeout->eloop_data == eloop_data) &&
+		    (timeout->user_data == user_data)) {
+			removed = 1;
+			if (os_time_before(&now, &timeout->time))
+				os_time_sub(&timeout->time, &now, remaining);
+			eloop_remove_timeout(timeout);
+			break;
+		}
+	}
+	return removed;
+}
+
+
+int eloop_is_timeout_registered(eloop_timeout_handler handler,
 				void *eloop_data, void *user_data)
 {
 	struct eloop_timeout *tmp;
 
-	tmp = eloop.timeout;
-	while (tmp != NULL) {
+	dl_list_for_each(tmp, &eloop.timeout, struct eloop_timeout, list) {
 		if (tmp->handler == handler &&
 		    tmp->eloop_data == eloop_data &&
 		    tmp->user_data == user_data)
 			return 1;
-
-		tmp = tmp->next;
 	}
 
 	return 0;
@@ -241,24 +261,19 @@ static void eloop_process_pending_signals(void)
 		if (eloop.signals[i].signaled) {
 			eloop.signals[i].signaled = 0;
 			eloop.signals[i].handler(eloop.signals[i].sig,
-						 eloop.user_data,
 						 eloop.signals[i].user_data);
 		}
 	}
 }
 
 
-int eloop_register_signal(int sig,
-			  void (*handler)(int sig, void *eloop_ctx,
-					  void *signal_ctx),
+int eloop_register_signal(int sig, eloop_signal_handler handler,
 			  void *user_data)
 {
 	struct eloop_signal *tmp;
 
-	tmp = (struct eloop_signal *)
-		realloc(eloop.signals,
-			(eloop.signal_count + 1) *
-			sizeof(struct eloop_signal));
+	tmp = os_realloc_array(eloop.signals, eloop.signal_count + 1,
+			       sizeof(struct eloop_signal));
 	if (tmp == NULL)
 		return -1;
 
@@ -275,8 +290,7 @@ int eloop_register_signal(int sig,
 }
 
 
-int eloop_register_signal_terminate(void (*handler)(int sig, void *eloop_ctx,
-						    void *signal_ctx),
+int eloop_register_signal_terminate(eloop_signal_handler handler,
 				    void *user_data)
 {
 #if 0
@@ -290,8 +304,7 @@ int eloop_register_signal_terminate(void (*handler)(int sig, void *eloop_ctx,
 }
 
 
-int eloop_register_signal_reconfig(void (*handler)(int sig, void *eloop_ctx,
-						   void *signal_ctx),
+int eloop_register_signal_reconfig(eloop_signal_handler handler,
 				   void *user_data)
 {
 #if 0
@@ -308,11 +321,14 @@ void eloop_run(void)
 	struct os_time tv, now;
 
 	while (!eloop.terminate &&
-		(eloop.timeout || eloop.reader_count > 0)) {
-		if (eloop.timeout) {
+		(!dl_list_empty(&eloop.timeout) || eloop.reader_count > 0)) {
+		struct eloop_timeout *timeout;
+		timeout = dl_list_first(&eloop.timeout, struct eloop_timeout,
+					list);
+		if (timeout) {
 			os_get_time(&now);
-			if (os_time_before(&now, &eloop.timeout->time))
-				os_time_sub(&eloop.timeout->time, &now, &tv);
+			if (os_time_before(&now, &timeout->time))
+				os_time_sub(&timeout->time, &now, &tv);
 			else
 				tv.sec = tv.usec = 0;
 		}
@@ -326,16 +342,17 @@ void eloop_run(void)
 		eloop_process_pending_signals();
 
 		/* check if some registered timeouts have occurred */
-		if (eloop.timeout) {
-			struct eloop_timeout *tmp;
-
+		timeout = dl_list_first(&eloop.timeout, struct eloop_timeout,
+					list);
+		if (timeout) {
 			os_get_time(&now);
-			if (!os_time_before(&now, &eloop.timeout->time)) {
-				tmp = eloop.timeout;
-				eloop.timeout = eloop.timeout->next;
-				tmp->handler(tmp->eloop_data,
-					     tmp->user_data);
-				free(tmp);
+			if (!os_time_before(&now, &timeout->time)) {
+				void *eloop_data = timeout->eloop_data;
+				void *user_data = timeout->user_data;
+				eloop_timeout_handler handler =
+					timeout->handler;
+				eloop_remove_timeout(timeout);
+				handler(eloop_data, user_data);
 			}
 
 		}
@@ -369,14 +386,12 @@ void eloop_destroy(void)
 {
 	struct eloop_timeout *timeout, *prev;
 
-	timeout = eloop.timeout;
-	while (timeout != NULL) {
-		prev = timeout;
-		timeout = timeout->next;
-		free(prev);
+	dl_list_for_each_safe(timeout, prev, &eloop.timeout,
+			      struct eloop_timeout, list) {
+		eloop_remove_timeout(timeout);
 	}
-	free(eloop.readers);
-	free(eloop.signals);
+	os_free(eloop.readers);
+	os_free(eloop.signals);
 }
 
 

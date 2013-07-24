@@ -177,7 +177,7 @@ struct wpa_auth_callbacks {
 	void (*logger)(void *ctx, const u8 *addr, logger_level level,
 		       const char *txt);
 	void (*disconnect)(void *ctx, const u8 *addr, u16 reason);
-	void (*mic_failure_report)(void *ctx, const u8 *addr);
+	int (*mic_failure_report)(void *ctx, const u8 *addr);
 	void (*set_eapol)(void *ctx, const u8 *addr, wpa_eapol_variable var,
 			  int value);
 	int (*get_eapol)(void *ctx, const u8 *addr, wpa_eapol_variable var);
@@ -282,13 +282,11 @@ int wpa_ft_rrb_rx(struct wpa_authenticator *wpa_auth, const u8 *src_addr,
 void wpa_ft_push_pmk_r1(struct wpa_authenticator *wpa_auth, const u8 *addr);
 #endif /* CONFIG_IEEE80211R */
 
-#ifdef CONFIG_IEEE80211V
 void wpa_wnmsleep_rekey_gtk(struct wpa_state_machine *sm);
 void wpa_set_wnmsleep(struct wpa_state_machine *sm, int flag);
 int wpa_wnmsleep_gtk_subelem(struct wpa_state_machine *sm, u8 *pos);
-#ifdef CONFIG_IEEE80211W
 int wpa_wnmsleep_igtk_subelem(struct wpa_state_machine *sm, u8 *pos);
-#endif /* CONFIG_IEEE80211W */
-#endif /* CONFIG_IEEE80211V */
+
+int wpa_auth_uses_sae(struct wpa_state_machine *sm);
 
 #endif /* WPA_AUTH_H */

@@ -1,6 +1,6 @@
 /*
  * BSS table
- * Copyright (c) 2009-2010, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2009-2012, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -51,6 +51,14 @@ static void wpa_bss_set_hessid(struct wpa_bss *bss)
 }
 
 
+/**
+ * wpa_bss_anqp_alloc - Allocate ANQP data structure for a BSS entry
+ * Returns: Allocated ANQP data structure or %NULL on failure
+ *
+ * The allocated ANQP data structure has its users count set to 1. It may be
+ * shared by multiple BSS entries and each shared entry is freed with
+ * wpa_bss_anqp_free().
+ */
 struct wpa_bss_anqp * wpa_bss_anqp_alloc(void)
 {
 	struct wpa_bss_anqp *anqp;
@@ -62,6 +70,77 @@ struct wpa_bss_anqp * wpa_bss_anqp_alloc(void)
 }
 
 
+/**
+ * wpa_bss_anqp_clone - Clone an ANQP data structure
+ * @anqp: ANQP data structure from wpa_bss_anqp_alloc()
+ * Returns: Cloned ANQP data structure or %NULL on failure
+ */
+static struct wpa_bss_anqp * wpa_bss_anqp_clone(struct wpa_bss_anqp *anqp)
+{
+	struct wpa_bss_anqp *n;
+
+	n = os_zalloc(sizeof(*n));
+	if (n == NULL)
+		return NULL;
+
+#define ANQP_DUP(f) if (anqp->f) n->f = wpabuf_dup(anqp->f)
+#ifdef CONFIG_INTERWORKING
+	ANQP_DUP(venue_name);
+	ANQP_DUP(network_auth_type);
+	ANQP_DUP(roaming_consortium);
+	ANQP_DUP(ip_addr_type_availability);
+	ANQP_DUP(nai_realm);
+	ANQP_DUP(anqp_3gpp);
+	ANQP_DUP(domain_name);
+#endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_HS20
+	ANQP_DUP(hs20_operator_friendly_name);
+	ANQP_DUP(hs20_wan_metrics);
+	ANQP_DUP(hs20_connection_capability);
+	ANQP_DUP(hs20_operating_class);
+#endif /* CONFIG_HS20 */
+#undef ANQP_DUP
+
+	return n;
+}
+
+
+/**
+ * wpa_bss_anqp_unshare_alloc - Unshare ANQP data (if shared) in a BSS entry
+ * @bss: BSS entry
+ * Returns: 0 on success, -1 on failure
+ *
+ * This function ensures the specific BSS entry has an ANQP data structure that
+ * is not shared with any other BSS entry.
+ */
+int wpa_bss_anqp_unshare_alloc(struct wpa_bss *bss)
+{
+	struct wpa_bss_anqp *anqp;
+
+	if (bss->anqp && bss->anqp->users > 1) {
+		/* allocated, but shared - clone an unshared copy */
+		anqp = wpa_bss_anqp_clone(bss->anqp);
+		if (anqp == NULL)
+			return -1;
+		anqp->users = 1;
+		bss->anqp->users--;
+		bss->anqp = anqp;
+		return 0;
+	}
+
+	if (bss->anqp)
+		return 0; /* already allocated and not shared */
+
+	/* not allocated - allocate a new storage area */
+	bss->anqp = wpa_bss_anqp_alloc();
+	return bss->anqp ? 0 : -1;
+}
+
+
+/**
+ * wpa_bss_anqp_free - Free an ANQP data structure
+ * @anqp: ANQP data structure from wpa_bss_anqp_alloc() or wpa_bss_anqp_clone()
+ */
 static void wpa_bss_anqp_free(struct wpa_bss_anqp *anqp)
 {
 	if (anqp == NULL)
@@ -121,6 +200,14 @@ static void wpa_bss_remove(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 }
 
 
+/**
+ * wpa_bss_get - Fetch a BSS table entry based on BSSID and SSID
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @bssid: BSSID
+ * @ssid: SSID
+ * @ssid_len: Length of @ssid
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ */
 struct wpa_bss * wpa_bss_get(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			     const u8 *ssid, size_t ssid_len)
 {
@@ -137,10 +224,27 @@ struct wpa_bss * wpa_bss_get(struct wpa_supplicant *wpa_s, const u8 *bssid,
 }
 
 
-static void wpa_bss_copy_res(struct wpa_bss *dst, struct wpa_scan_res *src)
+static void calculate_update_time(const struct os_time *fetch_time,
+				  unsigned int age_ms,
+				  struct os_time *update_time)
 {
 	os_time_t usec;
 
+	update_time->sec = fetch_time->sec;
+	update_time->usec = fetch_time->usec;
+	update_time->sec -= age_ms / 1000;
+	usec = (age_ms % 1000) * 1000;
+	if (update_time->usec < usec) {
+		update_time->sec--;
+		update_time->usec += 1000000;
+	}
+	update_time->usec -= usec;
+}
+
+
+static void wpa_bss_copy_res(struct wpa_bss *dst, struct wpa_scan_res *src,
+			     struct os_time *fetch_time)
+{
 	dst->flags = src->flags;
 	os_memcpy(dst->bssid, src->bssid, ETH_ALEN);
 	dst->freq = src->freq;
@@ -151,14 +255,7 @@ static void wpa_bss_copy_res(struct wpa_bss *dst, struct wpa_scan_res *src)
 	dst->level = src->level;
 	dst->tsf = src->tsf;
 
-	os_get_time(&dst->last_update);
-	dst->last_update.sec -= src->age / 1000;
-	usec = (src->age % 1000) * 1000;
-	if (dst->last_update.usec < usec) {
-		dst->last_update.sec--;
-		dst->last_update.usec += 1000000;
-	}
-	dst->last_update.usec -= usec;
+	calculate_update_time(fetch_time, src->age, &dst->last_update);
 }
 
 
@@ -228,7 +325,8 @@ static int wpa_bss_remove_oldest(struct wpa_supplicant *wpa_s)
 
 static struct wpa_bss * wpa_bss_add(struct wpa_supplicant *wpa_s,
 				    const u8 *ssid, size_t ssid_len,
-				    struct wpa_scan_res *res)
+				    struct wpa_scan_res *res,
+				    struct os_time *fetch_time)
 {
 	struct wpa_bss *bss;
 
@@ -237,7 +335,7 @@ static struct wpa_bss * wpa_bss_add(struct wpa_supplicant *wpa_s,
 		return NULL;
 	bss->id = wpa_s->bss_next_id++;
 	bss->last_update_idx = wpa_s->bss_update_idx;
-	wpa_bss_copy_res(bss, res);
+	wpa_bss_copy_res(bss, res, fetch_time);
 	os_memcpy(bss->ssid, ssid, ssid_len);
 	bss->ssid_len = ssid_len;
 	bss->ie_len = res->ie_len;
@@ -393,14 +491,14 @@ static void notify_bss_changes(struct wpa_supplicant *wpa_s, u32 changes,
 
 static struct wpa_bss *
 wpa_bss_update(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
-	       struct wpa_scan_res *res)
+	       struct wpa_scan_res *res, struct os_time *fetch_time)
 {
 	u32 changes;
 
 	changes = wpa_bss_compare_res(bss, res);
 	bss->scan_miss_count = 0;
 	bss->last_update_idx = wpa_s->bss_update_idx;
-	wpa_bss_copy_res(bss, res);
+	wpa_bss_copy_res(bss, res, fetch_time);
 	/* Move the entry to the end of the list */
 	dl_list_del(&bss->list);
 	if (bss->ie_len + bss->beacon_ie_len >=
@@ -442,6 +540,15 @@ wpa_bss_update(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 }
 
 
+/**
+ * wpa_bss_update_start - Start a BSS table update from scan results
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * This function is called at the start of each BSS table update round for new
+ * scan results. The actual scan result entries are indicated with calls to
+ * wpa_bss_update_scan_res() and the update round is finished with a call to
+ * wpa_bss_update_end().
+ */
 void wpa_bss_update_start(struct wpa_supplicant *wpa_s)
 {
 	wpa_s->bss_update_idx++;
@@ -451,11 +558,37 @@ void wpa_bss_update_start(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * wpa_bss_update_scan_res - Update a BSS table entry based on a scan result
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @res: Scan result
+ * @fetch_time: Time when the result was fetched from the driver
+ *
+ * This function updates a BSS table entry (or adds one) based on a scan result.
+ * This is called separately for each scan result between the calls to
+ * wpa_bss_update_start() and wpa_bss_update_end().
+ */
 void wpa_bss_update_scan_res(struct wpa_supplicant *wpa_s,
-			     struct wpa_scan_res *res)
+			     struct wpa_scan_res *res,
+			     struct os_time *fetch_time)
 {
 	const u8 *ssid, *p2p;
 	struct wpa_bss *bss;
+
+	if (wpa_s->conf->ignore_old_scan_res) {
+		struct os_time update;
+		calculate_update_time(fetch_time, res->age, &update);
+		if (os_time_before(&update, &wpa_s->scan_trigger_time)) {
+			struct os_time age;
+			os_time_sub(&wpa_s->scan_trigger_time, &update, &age);
+			wpa_dbg(wpa_s, MSG_DEBUG, "BSS: Ignore driver BSS "
+				"table entry that is %u.%06u seconds older "
+				"than our scan trigger",
+				(unsigned int) age.sec,
+				(unsigned int) age.usec);
+			return;
+		}
+	}
 
 	ssid = wpa_scan_get_ie(res, WLAN_EID_SSID);
 	if (ssid == NULL) {
@@ -490,9 +623,9 @@ void wpa_bss_update_scan_res(struct wpa_supplicant *wpa_s,
 	 * (to save memory) */
 	bss = wpa_bss_get(wpa_s, res->bssid, ssid + 2, ssid[1]);
 	if (bss == NULL)
-		bss = wpa_bss_add(wpa_s, ssid + 2, ssid[1], res);
+		bss = wpa_bss_add(wpa_s, ssid + 2, ssid[1], res, fetch_time);
 	else
-		bss = wpa_bss_update(wpa_s, bss, res);
+		bss = wpa_bss_update(wpa_s, bss, res, fetch_time);
 
 	if (bss == NULL)
 		return;
@@ -556,6 +689,16 @@ static int wpa_bss_included_in_scan(const struct wpa_bss *bss,
 }
 
 
+/**
+ * wpa_bss_update_end - End a BSS table update from scan results
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @info: Information about scan parameters
+ * @new_scan: Whether this update round was based on a new scan
+ *
+ * This function is called at the end of each BSS table update round for new
+ * scan results. The start of the update was indicated with a call to
+ * wpa_bss_update_start().
+ */
 void wpa_bss_update_end(struct wpa_supplicant *wpa_s, struct scan_info *info,
 			int new_scan)
 {
@@ -601,6 +744,13 @@ void wpa_bss_update_end(struct wpa_supplicant *wpa_s, struct scan_info *info,
 }
 
 
+/**
+ * wpa_bss_flush_by_age - Flush old BSS entries
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @age: Maximum entry age in seconds
+ *
+ * Remove BSS entries that have not been updated during the last @age seconds.
+ */
 void wpa_bss_flush_by_age(struct wpa_supplicant *wpa_s, int age)
 {
 	struct wpa_bss *bss, *n;
@@ -634,6 +784,14 @@ static void wpa_bss_timeout(void *eloop_ctx, void *timeout_ctx)
 }
 
 
+/**
+ * wpa_bss_init - Initialize BSS table
+ * @wpa_s: Pointer to wpa_supplicant data
+ * Returns: 0 on success, -1 on failure
+ *
+ * This prepares BSS table lists and timer for periodic updates. The BSS table
+ * is deinitialized with wpa_bss_deinit() once not needed anymore.
+ */
 int wpa_bss_init(struct wpa_supplicant *wpa_s)
 {
 	dl_list_init(&wpa_s->bss);
@@ -644,6 +802,10 @@ int wpa_bss_init(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * wpa_bss_flush - Flush all unused BSS entries
+ * @wpa_s: Pointer to wpa_supplicant data
+ */
 void wpa_bss_flush(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_bss *bss, *n;
@@ -659,6 +821,10 @@ void wpa_bss_flush(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * wpa_bss_deinit - Deinitialize BSS table
+ * @wpa_s: Pointer to wpa_supplicant data
+ */
 void wpa_bss_deinit(struct wpa_supplicant *wpa_s)
 {
 	eloop_cancel_timeout(wpa_bss_timeout, wpa_s, NULL);
@@ -666,6 +832,12 @@ void wpa_bss_deinit(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * wpa_bss_get_bssid - Fetch a BSS table entry based on BSSID
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @bssid: BSSID
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ */
 struct wpa_bss * wpa_bss_get_bssid(struct wpa_supplicant *wpa_s,
 				   const u8 *bssid)
 {
@@ -680,7 +852,41 @@ struct wpa_bss * wpa_bss_get_bssid(struct wpa_supplicant *wpa_s,
 }
 
 
+/**
+ * wpa_bss_get_bssid_latest - Fetch the latest BSS table entry based on BSSID
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @bssid: BSSID
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ *
+ * This function is like wpa_bss_get_bssid(), but full BSS table is iterated to
+ * find the entry that has the most recent update. This can help in finding the
+ * correct entry in cases where the SSID of the AP may have changed recently
+ * (e.g., in WPS reconfiguration cases).
+ */
+struct wpa_bss * wpa_bss_get_bssid_latest(struct wpa_supplicant *wpa_s,
+					  const u8 *bssid)
+{
+	struct wpa_bss *bss, *found = NULL;
+	if (!wpa_supplicant_filter_bssid_match(wpa_s, bssid))
+		return NULL;
+	dl_list_for_each_reverse(bss, &wpa_s->bss, struct wpa_bss, list) {
+		if (os_memcmp(bss->bssid, bssid, ETH_ALEN) != 0)
+			continue;
+		if (found == NULL ||
+		    os_time_before(&found->last_update, &bss->last_update))
+			found = bss;
+	}
+	return found;
+}
+
+
 #ifdef CONFIG_P2P
+/**
+ * wpa_bss_get_p2p_dev_addr - Fetch a BSS table entry based on P2P Device Addr
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @dev_addr: P2P Device Address of the GO
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ */
 struct wpa_bss * wpa_bss_get_p2p_dev_addr(struct wpa_supplicant *wpa_s,
 					  const u8 *dev_addr)
 {
@@ -697,6 +903,12 @@ struct wpa_bss * wpa_bss_get_p2p_dev_addr(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_P2P */
 
 
+/**
+ * wpa_bss_get_id - Fetch a BSS table entry based on identifier
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @id: Unique identifier (struct wpa_bss::id) assigned for the entry
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ */
 struct wpa_bss * wpa_bss_get_id(struct wpa_supplicant *wpa_s, unsigned int id)
 {
 	struct wpa_bss *bss;
@@ -708,6 +920,38 @@ struct wpa_bss * wpa_bss_get_id(struct wpa_supplicant *wpa_s, unsigned int id)
 }
 
 
+/**
+ * wpa_bss_get_id_range - Fetch a BSS table entry based on identifier range
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @idf: Smallest allowed identifier assigned for the entry
+ * @idf: Largest allowed identifier assigned for the entry
+ * Returns: Pointer to the BSS entry or %NULL if not found
+ *
+ * This function is similar to wpa_bss_get_id() but allows a BSS entry with the
+ * smallest id value to be fetched within the specified range without the
+ * caller having to know the exact id.
+ */
+struct wpa_bss * wpa_bss_get_id_range(struct wpa_supplicant *wpa_s,
+				      unsigned int idf, unsigned int idl)
+{
+	struct wpa_bss *bss;
+	dl_list_for_each(bss, &wpa_s->bss_id, struct wpa_bss, list_id) {
+		if (bss->id >= idf && bss->id <= idl)
+			return bss;
+	}
+	return NULL;
+}
+
+
+/**
+ * wpa_bss_get_ie - Fetch a specified information element from a BSS entry
+ * @bss: BSS table entry
+ * @ie: Information element identitifier (WLAN_EID_*)
+ * Returns: Pointer to the information element (id field) or %NULL if not found
+ *
+ * This function returns the first matching information element in the BSS
+ * entry.
+ */
 const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie)
 {
 	const u8 *end, *pos;
@@ -727,6 +971,15 @@ const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie)
 }
 
 
+/**
+ * wpa_bss_get_vendor_ie - Fetch a vendor information element from a BSS entry
+ * @bss: BSS table entry
+ * @vendor_type: Vendor type (four octets starting the IE payload)
+ * Returns: Pointer to the information element (id field) or %NULL if not found
+ *
+ * This function returns the first matching information element in the BSS
+ * entry.
+ */
 const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type)
 {
 	const u8 *end, *pos;
@@ -747,6 +1000,16 @@ const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type)
 }
 
 
+/**
+ * wpa_bss_get_vendor_ie_multi - Fetch vendor IE data from a BSS entry
+ * @bss: BSS table entry
+ * @vendor_type: Vendor type (four octets starting the IE payload)
+ * Returns: Pointer to the information element payload or %NULL if not found
+ *
+ * This function returns concatenated payload of possibly fragmented vendor
+ * specific information elements in the BSS entry. The caller is responsible for
+ * freeing the returned buffer.
+ */
 struct wpabuf * wpa_bss_get_vendor_ie_multi(const struct wpa_bss *bss,
 					    u32 vendor_type)
 {
@@ -778,6 +1041,19 @@ struct wpabuf * wpa_bss_get_vendor_ie_multi(const struct wpa_bss *bss,
 }
 
 
+/**
+ * wpa_bss_get_vendor_ie_multi_beacon - Fetch vendor IE data from a BSS entry
+ * @bss: BSS table entry
+ * @vendor_type: Vendor type (four octets starting the IE payload)
+ * Returns: Pointer to the information element payload or %NULL if not found
+ *
+ * This function returns concatenated payload of possibly fragmented vendor
+ * specific information elements in the BSS entry. The caller is responsible for
+ * freeing the returned buffer.
+ *
+ * This function is like wpa_bss_get_vendor_ie_multi(), but uses IE buffer only
+ * from Beacon frames instead of either Beacon or Probe Response frames.
+ */
 struct wpabuf * wpa_bss_get_vendor_ie_multi_beacon(const struct wpa_bss *bss,
 						   u32 vendor_type)
 {
@@ -810,6 +1086,11 @@ struct wpabuf * wpa_bss_get_vendor_ie_multi_beacon(const struct wpa_bss *bss,
 }
 
 
+/**
+ * wpa_bss_get_max_rate - Get maximum legacy TX rate supported in a BSS
+ * @bss: BSS table entry
+ * Returns: Maximum legacy rate in units of 500 kbps
+ */
 int wpa_bss_get_max_rate(const struct wpa_bss *bss)
 {
 	int rate = 0;
@@ -832,6 +1113,15 @@ int wpa_bss_get_max_rate(const struct wpa_bss *bss)
 }
 
 
+/**
+ * wpa_bss_get_bit_rates - Get legacy TX rates supported in a BSS
+ * @bss: BSS table entry
+ * @rates: Buffer for returning a pointer to the rates list (units of 500 kbps)
+ * Returns: number of legacy TX rates or -1 on failure
+ *
+ * The caller is responsible for freeing the returned buffer with os_free() in
+ * case of success.
+ */
 int wpa_bss_get_bit_rates(const struct wpa_bss *bss, u8 **rates)
 {
 	const u8 *ie, *ie2;

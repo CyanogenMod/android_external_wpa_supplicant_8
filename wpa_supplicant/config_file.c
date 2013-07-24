@@ -17,6 +17,8 @@
 #include "base64.h"
 #include "uuid.h"
 #include "p2p/p2p.h"
+#include "eap_peer/eap_methods.h"
+#include "eap_peer/eap.h"
 
 
 static int newline_terminated(const char *buf, size_t buflen)
@@ -343,7 +345,7 @@ static int wpa_config_process_blob(struct wpa_config *config, FILE *f,
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 
 
-struct wpa_config * wpa_config_read(const char *name)
+struct wpa_config * wpa_config_read(const char *name, struct wpa_config *cfgp)
 {
 	FILE *f;
 	char buf[512], *pos;
@@ -354,12 +356,19 @@ struct wpa_config * wpa_config_read(const char *name)
 	int id = 0;
 	int cred_id = 0;
 
-	config = wpa_config_alloc_empty(NULL, NULL);
+	if (name == NULL)
+		return NULL;
+	if (cfgp)
+		config = cfgp;
+	else
+		config = wpa_config_alloc_empty(NULL, NULL);
 	if (config == NULL) {
 		wpa_printf(MSG_ERROR, "Failed to allocate config file "
 			   "structure");
 		return NULL;
 	}
+	head = config->ssid;
+	cred_head = config->cred;
 
 	wpa_printf(MSG_DEBUG, "Reading configuration file '%s'", name);
 	f = fopen(name, "r");
@@ -676,16 +685,20 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT_DEFe(fragment_size, DEFAULT_FRAGMENT_SIZE);
 #endif /* IEEE8021X_EAPOL */
 	INT(mode);
-	INT(proactive_key_caching);
+	INT(frequency);
+	write_int(f, "proactive_key_caching", ssid->proactive_key_caching, -1);
 	INT(disabled);
 	INT(peerkey);
 #ifdef CONFIG_IEEE80211W
-	INT(ieee80211w);
+	write_int(f, "ieee80211w", ssid->ieee80211w,
+		  MGMT_FRAME_PROTECTION_DEFAULT);
 #endif /* CONFIG_IEEE80211W */
 	STR(id_str);
 #ifdef CONFIG_P2P
 	write_p2p_client_list(f, ssid);
 #endif /* CONFIG_P2P */
+	INT(dtim_period);
+	INT(beacon_int);
 
 #undef STR
 #undef INT
@@ -703,16 +716,52 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 		fprintf(f, "\trealm=\"%s\"\n", cred->realm);
 	if (cred->username)
 		fprintf(f, "\tusername=\"%s\"\n", cred->username);
-	if (cred->password)
+	if (cred->password && cred->ext_password)
+		fprintf(f, "\tpassword=ext:%s\n", cred->password);
+	else if (cred->password)
 		fprintf(f, "\tpassword=\"%s\"\n", cred->password);
 	if (cred->ca_cert)
 		fprintf(f, "\tca_cert=\"%s\"\n", cred->ca_cert);
+	if (cred->client_cert)
+		fprintf(f, "\tclient_cert=\"%s\"\n", cred->client_cert);
+	if (cred->private_key)
+		fprintf(f, "\tprivate_key=\"%s\"\n", cred->private_key);
+	if (cred->private_key_passwd)
+		fprintf(f, "\tprivate_key_passwd=\"%s\"\n",
+			cred->private_key_passwd);
 	if (cred->imsi)
 		fprintf(f, "\timsi=\"%s\"\n", cred->imsi);
 	if (cred->milenage)
 		fprintf(f, "\tmilenage=\"%s\"\n", cred->milenage);
 	if (cred->domain)
 		fprintf(f, "\tdomain=\"%s\"\n", cred->domain);
+	if (cred->roaming_consortium_len) {
+		size_t i;
+		fprintf(f, "\troaming_consortium=");
+		for (i = 0; i < cred->roaming_consortium_len; i++)
+			fprintf(f, "%02x", cred->roaming_consortium[i]);
+		fprintf(f, "\n");
+	}
+	if (cred->eap_method) {
+		const char *name;
+		name = eap_get_name(cred->eap_method[0].vendor,
+				    cred->eap_method[0].method);
+		fprintf(f, "\teap=%s\n", name);
+	}
+	if (cred->phase1)
+		fprintf(f, "\tphase1=\"%s\"\n", cred->phase1);
+	if (cred->phase2)
+		fprintf(f, "\tphase2=\"%s\"\n", cred->phase2);
+	if (cred->excluded_ssid) {
+		size_t i, j;
+		for (i = 0; i < cred->num_excluded_ssid; i++) {
+			struct excluded_ssid *e = &cred->excluded_ssid[i];
+			fprintf(f, "\texcluded_ssid=");
+			for (j = 0; j < e->ssid_len; j++)
+				fprintf(f, "%02x", e->ssid[j]);
+			fprintf(f, "\n");
+		}
+	}
 }
 
 
@@ -868,6 +917,16 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 		}
 		fprintf(f, "\n");
 	}
+	if (config->p2p_go_ht40)
+		fprintf(f, "p2p_go_ht40=%u\n", config->p2p_go_ht40);
+	if (config->p2p_disabled)
+		fprintf(f, "p2p_disabled=%u\n", config->p2p_disabled);
+	if (config->p2p_no_group_iface)
+		fprintf(f, "p2p_no_group_iface=%u\n",
+			config->p2p_no_group_iface);
+	if (config->p2p_ignore_shared_freq)
+		fprintf(f, "p2p_ignore_shared_freq=%u\n",
+			config->p2p_ignore_shared_freq);
 #endif /* CONFIG_P2P */
 	if (config->country[0] && config->country[1]) {
 		fprintf(f, "country=%c%c\n",
@@ -903,12 +962,16 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 #endif /* CONFIG_INTERWORKING */
 	if (config->pbc_in_m1)
 		fprintf(f, "pbc_in_m1=%u\n", config->pbc_in_m1);
-	if (config->wps_nfc_dev_pw_id)
-		fprintf(f, "wps_nfc_dev_pw_id=%d\n",
-			config->wps_nfc_dev_pw_id);
-	write_global_bin(f, "wps_nfc_dh_pubkey", config->wps_nfc_dh_pubkey);
-	write_global_bin(f, "wps_nfc_dh_privkey", config->wps_nfc_dh_privkey);
-	write_global_bin(f, "wps_nfc_dev_pw", config->wps_nfc_dev_pw);
+	if (config->wps_nfc_pw_from_config) {
+		if (config->wps_nfc_dev_pw_id)
+			fprintf(f, "wps_nfc_dev_pw_id=%d\n",
+				config->wps_nfc_dev_pw_id);
+		write_global_bin(f, "wps_nfc_dh_pubkey",
+				 config->wps_nfc_dh_pubkey);
+		write_global_bin(f, "wps_nfc_dh_privkey",
+				 config->wps_nfc_dh_privkey);
+		write_global_bin(f, "wps_nfc_dev_pw", config->wps_nfc_dev_pw);
+	}
 
 	if (config->ext_password_backend)
 		fprintf(f, "ext_password_backend=%s\n",
@@ -919,6 +982,39 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->auto_interworking)
 		fprintf(f, "auto_interworking=%d\n",
 			config->auto_interworking);
+	if (config->okc)
+		fprintf(f, "okc=%d\n", config->okc);
+	if (config->pmf)
+		fprintf(f, "pmf=%d\n", config->pmf);
+	if (config->dtim_period)
+		fprintf(f, "dtim_period=%d\n", config->dtim_period);
+	if (config->beacon_int)
+		fprintf(f, "beacon_int=%d\n", config->beacon_int);
+
+	if (config->sae_groups) {
+		int i;
+		fprintf(f, "sae_groups=");
+		for (i = 0; config->sae_groups[i] >= 0; i++) {
+			fprintf(f, "%s%d", i > 0 ? " " : "",
+				config->sae_groups[i]);
+		}
+		fprintf(f, "\n");
+	}
+
+	if (config->ap_vendor_elements) {
+		int i, len = wpabuf_len(config->ap_vendor_elements);
+		const u8 *p = wpabuf_head_u8(config->ap_vendor_elements);
+		if (len > 0) {
+			fprintf(f, "ap_vendor_elements=");
+			for (i = 0; i < len; i++)
+				fprintf(f, "%02x", *p++);
+			fprintf(f, "\n");
+		}
+	}
+
+	if (config->ignore_old_scan_res)
+		fprintf(f, "ignore_old_scan_res=%d\n",
+			config->ignore_old_scan_res);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */

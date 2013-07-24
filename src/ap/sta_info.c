@@ -12,6 +12,7 @@
 #include "utils/eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "common/wpa_ctrl.h"
+#include "common/sae.h"
 #include "radius/radius.h"
 #include "radius/radius_client.h"
 #include "drivers/driver.h"
@@ -20,6 +21,7 @@
 #include "accounting.h"
 #include "ieee802_1x.h"
 #include "ieee802_11.h"
+#include "ieee802_11_auth.h"
 #include "wpa_auth.h"
 #include "preauth_auth.h"
 #include "ap_config.h"
@@ -232,11 +234,17 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
 
 	wpabuf_free(sta->wps_ie);
 	wpabuf_free(sta->p2p_ie);
+	wpabuf_free(sta->hs20_ie);
 
 	os_free(sta->ht_capabilities);
-	os_free(sta->psk);
+	hostapd_free_psk_list(sta->psk);
 	os_free(sta->identity);
 	os_free(sta->radius_cui);
+
+#ifdef CONFIG_SAE
+	sae_clear_data(sta->sae);
+	os_free(sta->sae);
+#endif /* CONFIG_SAE */
 
 	os_free(sta);
 }
@@ -491,6 +499,7 @@ struct sta_info * ap_sta_add(struct hostapd_data *hapd, const u8 *addr)
 		return NULL;
 	}
 	sta->acct_interim_interval = hapd->conf->acct_interim_interval;
+	accounting_sta_get_id(hapd, sta);
 
 	/* initialize STA info data */
 	wpa_printf(MSG_DEBUG, "%s: register ap_handle_timer timeout "
@@ -567,7 +576,7 @@ void ap_sta_disassociate(struct hostapd_data *hapd, struct sta_info *sta,
 {
 	wpa_printf(MSG_DEBUG, "%s: disassociate STA " MACSTR,
 		   hapd->conf->iface, MAC2STR(sta->addr));
-	sta->flags &= ~WLAN_STA_ASSOC;
+	sta->flags &= ~(WLAN_STA_ASSOC | WLAN_STA_ASSOC_REQ_OK);
 	ap_sta_set_authorized(hapd, sta, 0);
 	sta->timeout_next = STA_DEAUTH;
 	wpa_printf(MSG_DEBUG, "%s: reschedule ap_handle_timer timeout "

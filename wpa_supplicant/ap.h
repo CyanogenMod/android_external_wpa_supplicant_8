@@ -18,7 +18,8 @@ void wpa_supplicant_ap_rx_eapol(struct wpa_supplicant *wpa_s,
 int wpa_supplicant_ap_wps_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			      const u8 *p2p_dev_addr);
 int wpa_supplicant_ap_wps_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
-			      const char *pin, char *buf, size_t buflen);
+			      const char *pin, char *buf, size_t buflen,
+			      int timeout);
 int wpa_supplicant_ap_wps_cancel(struct wpa_supplicant *wpa_s);
 void wpas_wps_ap_pin_disable(struct wpa_supplicant *wpa_s);
 const char * wpas_wps_ap_pin_random(struct wpa_supplicant *wpa_s, int timeout);
@@ -51,5 +52,9 @@ int wpa_supplicant_ap_mac_addr_filter(struct wpa_supplicant *wpa_s,
 void wpa_supplicant_ap_pwd_auth_fail(struct wpa_supplicant *wpa_s);
 void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
 		       int offset);
+struct wpabuf * wpas_ap_wps_nfc_config_token(struct wpa_supplicant *wpa_s,
+					     int ndef);
+struct wpabuf * wpas_ap_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s,
+					     int ndef);
 
 #endif /* AP_H */

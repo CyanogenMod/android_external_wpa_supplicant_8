@@ -150,10 +150,12 @@ extern "C" {
 #define AP_STA_CONNECTED "AP-STA-CONNECTED "
 #define AP_STA_DISCONNECTED "AP-STA-DISCONNECTED "
 
+#define AP_REJECTED_MAX_STA "AP-REJECTED-MAX-STA "
+#define AP_REJECTED_BLOCKED_STA "AP-REJECTED-BLOCKED-STA "
 
 /* BSS command information masks */
 
-#define WPA_BSS_MASK_ALL		0xFFFFFFFF
+#define WPA_BSS_MASK_ALL		0xFFFDFFFF
 #define WPA_BSS_MASK_ID			BIT(0)
 #define WPA_BSS_MASK_BSSID		BIT(1)
 #define WPA_BSS_MASK_FREQ		BIT(2)
@@ -171,6 +173,7 @@ extern "C" {
 #define WPA_BSS_MASK_P2P_SCAN		BIT(14)
 #define WPA_BSS_MASK_INTERNETW		BIT(15)
 #define WPA_BSS_MASK_WIFI_DISPLAY	BIT(16)
+#define WPA_BSS_MASK_DELIM		BIT(17)
 
 
 /* wpa_supplicant/hostapd control interface access */

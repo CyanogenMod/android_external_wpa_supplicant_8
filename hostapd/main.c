@@ -9,6 +9,7 @@
 #include "utils/includes.h"
 #ifndef CONFIG_NATIVE_WINDOWS
 #include <syslog.h>
+#include <grp.h>
 #endif /* CONFIG_NATIVE_WINDOWS */
 
 #include "utils/common.h"
@@ -273,6 +274,9 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 	    hapd->driver->get_capa(hapd->drv_priv, &capa) == 0) {
 		iface->drv_flags = capa.flags;
 		iface->probe_resp_offloads = capa.probe_resp_offloads;
+		iface->extended_capa = capa.extended_capa;
+		iface->extended_capa_mask = capa.extended_capa_mask;
+		iface->extended_capa_len = capa.extended_capa_len;
 	}
 
 	return 0;
@@ -468,7 +472,7 @@ static void show_version(void)
 		"hostapd v" VERSION_STR "\n"
 		"User space daemon for IEEE 802.11 AP management,\n"
 		"IEEE 802.1X/WPA/WPA2/EAP/RADIUS Authenticator\n"
-		"Copyright (c) 2002-2012, Jouni Malinen <j@w1.fi> "
+		"Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi> "
 		"and contributors\n");
 }
 
@@ -480,7 +484,8 @@ static void usage(void)
 		"\n"
 		"usage: hostapd [-hdBKtv] [-P <PID file>] [-e <entropy file>] "
 		"\\\n"
-		"         [-g <global ctrl_iface>] <configuration file(s)>\n"
+		"         [-g <global ctrl_iface>] [-G <group>] \\\n"
+		"         <configuration file(s)>\n"
 		"\n"
 		"options:\n"
 		"   -h   show this usage\n"
@@ -488,6 +493,7 @@ static void usage(void)
 		"   -B   run daemon in the background\n"
 		"   -e   entropy file\n"
 		"   -g   global control interface path\n"
+		"   -G   group for control interfaces\n"
 		"   -P   PID file\n"
 		"   -K   include key data in debug messages\n"
 #ifdef CONFIG_DEBUG_FILE
@@ -519,6 +525,8 @@ static int hostapd_get_global_ctrl_iface(struct hapd_interfaces *interfaces,
 		return -1;
 	pos = os_strrchr(interfaces->global_iface_path, '/');
 	if (pos == NULL) {
+		wpa_printf(MSG_ERROR, "No '/' in the global control interface "
+			   "file");
 		os_free(interfaces->global_iface_path);
 		interfaces->global_iface_path = NULL;
 		return -1;
@@ -527,6 +535,22 @@ static int hostapd_get_global_ctrl_iface(struct hapd_interfaces *interfaces,
 	*pos = '\0';
 	interfaces->global_iface_name = pos + 1;
 
+	return 0;
+}
+
+
+static int hostapd_get_ctrl_iface_group(struct hapd_interfaces *interfaces,
+					const char *group)
+{
+#ifndef CONFIG_NATIVE_WINDOWS
+	struct group *grp;
+	grp = getgrnam(group);
+	if (grp == NULL) {
+		wpa_printf(MSG_ERROR, "Unknown group '%s'", group);
+		return -1;
+	}
+	interfaces->ctrl_iface_group = grp->gr_gid;
+#endif /* CONFIG_NATIVE_WINDOWS */
 	return 0;
 }
 
@@ -556,7 +580,7 @@ int main(int argc, char *argv[])
 	interfaces.global_ctrl_sock = -1;
 
 	for (;;) {
-		c = getopt(argc, argv, "Bde:f:hKP:tvg:");
+		c = getopt(argc, argv, "Bde:f:hKP:tvg:G:");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -592,9 +616,13 @@ int main(int argc, char *argv[])
 			exit(1);
 			break;
 		case 'g':
-			hostapd_get_global_ctrl_iface(&interfaces, optarg);
+			if (hostapd_get_global_ctrl_iface(&interfaces, optarg))
+				return -1;
 			break;
-
+		case 'G':
+			if (hostapd_get_ctrl_iface_group(&interfaces, optarg))
+				return -1;
+			break;
 		default:
 			usage();
 			break;

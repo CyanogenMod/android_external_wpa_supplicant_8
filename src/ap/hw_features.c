@@ -122,6 +122,8 @@ int hostapd_prepare_rates(struct hostapd_iface *iface,
 	case HOSTAPD_MODE_IEEE80211G:
 		basic_rates = basic_rates_g;
 		break;
+	case HOSTAPD_MODE_IEEE80211AD:
+		return 0; /* No basic rates for 11ad */
 	default:
 		return -1;
 	}
@@ -441,7 +443,6 @@ static void ieee80211n_check_scan(struct hostapd_iface *iface)
 			   iface->conf->channel +
 			   iface->conf->secondary_channel * 4);
 		iface->conf->secondary_channel = 0;
-		iface->conf->ht_capab &= ~HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET;
 	}
 
 	res = ieee80211n_allowed_ht40_channel_pair(iface);
@@ -756,6 +757,8 @@ const char * hostapd_hw_mode_txt(int mode)
 		return "IEEE 802.11b";
 	case HOSTAPD_MODE_IEEE80211G:
 		return "IEEE 802.11g";
+	case HOSTAPD_MODE_IEEE80211AD:
+		return "IEEE 802.11ad";
 	default:
 		return "UNKNOWN";
 	}

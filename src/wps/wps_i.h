@@ -71,6 +71,9 @@ struct wps_data {
 	size_t dev_password_len;
 	u16 dev_pw_id;
 	int pbc;
+	u8 *alt_dev_password;
+	size_t alt_dev_password_len;
+	u16 alt_dev_pw_id;
 
 	/**
 	 * request_type - Request Type attribute from (Re)AssocReq
@@ -137,10 +140,6 @@ void wps_pwd_auth_fail_event(struct wps_context *wps, int enrollee, int part);
 void wps_pbc_overlap_event(struct wps_context *wps);
 void wps_pbc_timeout_event(struct wps_context *wps);
 
-extern struct oob_device_data oob_ufd_device_data;
-extern struct oob_device_data oob_nfc_device_data;
-extern struct oob_nfc_device_data oob_nfc_pn531_device_data;
-
 struct wpabuf * wps_build_wsc_ack(struct wps_data *wps);
 struct wpabuf * wps_build_wsc_nack(struct wps_data *wps);
 
@@ -169,7 +168,6 @@ int wps_build_assoc_state(struct wps_data *wps, struct wpabuf *msg);
 int wps_build_oob_dev_pw(struct wpabuf *msg, u16 dev_pw_id,
 			 const struct wpabuf *pubkey, const u8 *dev_pw,
 			 size_t dev_pw_len);
-int wps_build_oob_dev_password(struct wpabuf *msg, struct wps_context *wps);
 struct wpabuf * wps_ie_encapsulate(struct wpabuf *data);
 
 /* wps_attr_process.c */

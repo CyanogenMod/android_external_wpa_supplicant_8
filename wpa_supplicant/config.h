@@ -196,6 +196,12 @@ struct wpa_cred {
 	 * Pre-configured EAP parameters or %NULL.
 	 */
 	char *phase2;
+
+	struct excluded_ssid {
+		u8 ssid[MAX_SSID_LEN];
+		size_t ssid_len;
+	} *excluded_ssid;
+	size_t num_excluded_ssid;
 };
 
 
@@ -214,6 +220,7 @@ struct wpa_cred {
 #define CFG_CHANGED_P2P_OPER_CHANNEL BIT(12)
 #define CFG_CHANGED_P2P_PREF_CHAN BIT(13)
 #define CFG_CHANGED_EXT_PW_BACKEND BIT(14)
+#define CFG_CHANGED_NFC_PASSWORD_TOKEN BIT(15)
 
 /**
  * struct wpa_config - wpa_supplicant configuration data
@@ -564,6 +571,7 @@ struct wpa_config {
 	int p2p_intra_bss;
 	unsigned int num_p2p_pref_chan;
 	struct p2p_channel *p2p_pref_chan;
+	int p2p_ignore_shared_freq;
 
 	struct wpabuf *wps_vendor_ext_m1;
 
@@ -700,6 +708,15 @@ struct wpa_config {
 	char *autoscan;
 
 	/**
+	 * wps_nfc_pw_from_config - NFC Device Password was read from config
+	 *
+	 * This parameter can be determined whether the NFC Device Password was
+	 * included in the configuration (1) or generated dynamically (0). Only
+	 * the former case is re-written back to the configuration file.
+	 */
+	int wps_nfc_pw_from_config;
+
+	/**
 	 * wps_nfc_dev_pw_id - NFC Device Password ID for password token
 	 */
 	int wps_nfc_dev_pw_id;
@@ -710,12 +727,12 @@ struct wpa_config {
 	struct wpabuf *wps_nfc_dh_pubkey;
 
 	/**
-	 * wps_nfc_dh_pubkey - NFC DH Private Key for password token
+	 * wps_nfc_dh_privkey - NFC DH Private Key for password token
 	 */
 	struct wpabuf *wps_nfc_dh_privkey;
 
 	/**
-	 * wps_nfc_dh_pubkey - NFC Device Password for password token
+	 * wps_nfc_dev_pw - NFC Device Password for password token
 	 */
 	struct wpabuf *wps_nfc_dev_pw;
 
@@ -747,6 +764,96 @@ struct wpa_config {
 	 *     matching network block
 	 */
 	int auto_interworking;
+
+	/**
+	 * p2p_go_ht40 - Default mode for HT40 enable when operating as GO.
+	 *
+	 * This will take effect for p2p_group_add, p2p_connect, and p2p_invite.
+	 * Note that regulatory constraints and driver capabilities are
+	 * consulted anyway, so setting it to 1 can't do real harm.
+	 * By default: 0 (disabled)
+	 */
+	int p2p_go_ht40;
+
+	/**
+	 * p2p_disabled - Whether P2P operations are disabled for this interface
+	 */
+	int p2p_disabled;
+
+	/**
+	 * p2p_no_group_iface - Whether group interfaces can be used
+	 *
+	 * By default, wpa_supplicant will create a separate interface for P2P
+	 * group operations if the driver supports this. This functionality can
+	 * be disabled by setting this parameter to 1. In that case, the same
+	 * interface that was used for the P2P management operations is used
+	 * also for the group operation.
+	 */
+	int p2p_no_group_iface;
+
+	/**
+	 * okc - Whether to enable opportunistic key caching by default
+	 *
+	 * By default, OKC is disabled unless enabled by the per-network
+	 * proactive_key_caching=1 parameter. okc=1 can be used to change this
+	 * default behavior.
+	 */
+	int okc;
+
+	/**
+	 * pmf - Whether to enable/require PMF by default
+	 *
+	 * By default, PMF is disabled unless enabled by the per-network
+	 * ieee80211w=1 or ieee80211w=2 parameter. pmf=1/2 can be used to change
+	 * this default behavior.
+	 */
+	enum mfp_options pmf;
+
+	/**
+	 * sae_groups - Preference list of enabled groups for SAE
+	 *
+	 * By default (if this parameter is not set), the mandatory group 19
+	 * (ECC group defined over a 256-bit prime order field) is preferred,
+	 * but other groups are also enabled. If this parameter is set, the
+	 * groups will be tried in the indicated order.
+	 */
+	int *sae_groups;
+
+	/**
+	 * dtim_period - Default DTIM period in Beacon intervals
+	 *
+	 * This parameter can be used to set the default value for network
+	 * blocks that do not specify dtim_period.
+	 */
+	int dtim_period;
+
+	/**
+	 * beacon_int - Default Beacon interval in TU
+	 *
+	 * This parameter can be used to set the default value for network
+	 * blocks that do not specify beacon_int.
+	 */
+	int beacon_int;
+
+	/**
+	 * ap_vendor_elements: Vendor specific elements for Beacon/ProbeResp
+	 *
+	 * This parameter can be used to define additional vendor specific
+	 * elements for Beacon and Probe Response frames in AP/P2P GO mode. The
+	 * format for these element(s) is a hexdump of the raw information
+	 * elements (id+len+payload for one or more elements).
+	 */
+	struct wpabuf *ap_vendor_elements;
+
+	/**
+	 * ignore_old_scan_res - Ignore scan results older than request
+	 *
+	 * The driver may have a cache of scan results that makes it return
+	 * information that is older than our scan trigger. This parameter can
+	 * be used to configure such old information to be ignored instead of
+	 * allowing it to update the internal BSS table.
+	 */
+	int ignore_old_scan_res;
 };
 
 
@@ -805,6 +912,7 @@ int wpa_config_process_global(struct wpa_config *config, char *pos, int line);
  * wpa_config_read - Read and parse configuration database
  * @name: Name of the configuration (e.g., path and file name for the
  * configuration file)
+ * @cfgp: Pointer to previously allocated configuration data or %NULL if none
  * Returns: Pointer to allocated configuration data or %NULL on failure
  *
  * This function reads configuration data, parses its contents, and allocates
@@ -813,7 +921,7 @@ int wpa_config_process_global(struct wpa_config *config, char *pos, int line);
  *
  * Each configuration backend needs to implement this function.
  */
-struct wpa_config * wpa_config_read(const char *name);
+struct wpa_config * wpa_config_read(const char *name, struct wpa_config *cfgp);
 
 /**
  * wpa_config_write - Write or update configuration data

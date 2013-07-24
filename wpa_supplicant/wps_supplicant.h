@@ -9,7 +9,6 @@
 #ifndef WPS_SUPPLICANT_H
 #define WPS_SUPPLICANT_H
 
-struct wpa_scan_res;
 struct wpa_scan_results;
 
 #ifdef CONFIG_WPS
@@ -35,8 +34,6 @@ int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 int wpas_wps_start_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		       const char *pin, int p2p_group, u16 dev_pw_id);
 int wpas_wps_cancel(struct wpa_supplicant *wpa_s);
-int wpas_wps_start_oob(struct wpa_supplicant *wpa_s, char *device_type,
-		       char *path, char *method, char *name);
 int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		       const char *pin, struct wps_new_ap_settings *settings);
 int wpas_wps_ssid_bss_match(struct wpa_supplicant *wpa_s,
@@ -65,10 +62,22 @@ struct wpabuf * wpas_wps_er_nfc_config_token(struct wpa_supplicant *wpa_s,
 int wpas_wps_terminate_pending(struct wpa_supplicant *wpa_s);
 int wpas_wps_in_progress(struct wpa_supplicant *wpa_s);
 void wpas_wps_update_config(struct wpa_supplicant *wpa_s);
+struct wpabuf * wpas_wps_nfc_config_token(struct wpa_supplicant *wpa_s,
+					  int ndef, const char *id_str);
 struct wpabuf * wpas_wps_nfc_token(struct wpa_supplicant *wpa_s, int ndef);
 int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *bssid);
 int wpas_wps_nfc_tag_read(struct wpa_supplicant *wpa_s,
 			  const struct wpabuf *data);
+struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s, int cr);
+struct wpabuf * wpas_wps_nfc_handover_sel(struct wpa_supplicant *wpa_s,
+					  int ndef, int cr, const char *uuid);
+int wpas_wps_nfc_rx_handover_req(struct wpa_supplicant *wpa_s,
+				 const struct wpabuf *data);
+int wpas_wps_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
+				 const struct wpabuf *data);
+int wpas_wps_nfc_report_handover(struct wpa_supplicant *wpa_s,
+				 const struct wpabuf *req,
+				 const struct wpabuf *sel);
 void wpas_wps_update_ap_info(struct wpa_supplicant *wpa_s,
 			     struct wpa_scan_results *scan_res);
 void wpas_wps_notify_assoc(struct wpa_supplicant *wpa_s, const u8 *bssid);
@@ -96,14 +105,14 @@ static inline u8 wpas_wps_get_req_type(struct wpa_ssid *ssid)
 
 static inline int wpas_wps_ssid_bss_match(struct wpa_supplicant *wpa_s,
 					  struct wpa_ssid *ssid,
-					  struct wpa_scan_res *bss)
+					  struct wpa_bss *bss)
 {
 	return -1;
 }
 
 static inline int wpas_wps_ssid_wildcard_ok(struct wpa_supplicant *wpa_s,
 					    struct wpa_ssid *ssid,
-					    struct wpa_scan_res *bss)
+					    struct wpa_bss *bss)
 {
 	return 0;
 }

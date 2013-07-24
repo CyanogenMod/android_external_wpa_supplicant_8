@@ -1,6 +1,6 @@
 /*
  * hostapd / Configuration file parser
- * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -199,6 +199,12 @@ static int hostapd_config_read_eap_user(const char *fname,
 
 	if (!fname)
 		return 0;
+
+	if (os_strncmp(fname, "sqlite:", 7) == 0) {
+		os_free(conf->eap_user_sqlite);
+		conf->eap_user_sqlite = os_strdup(fname + 7);
+		return 0;
+	}
 
 	f = fopen(fname, "r");
 	if (!f) {
@@ -624,6 +630,12 @@ static int hostapd_config_parse_key_mgmt(int line, const char *value)
 		else if (os_strcmp(start, "WPA-EAP-SHA256") == 0)
 			val |= WPA_KEY_MGMT_IEEE8021X_SHA256;
 #endif /* CONFIG_IEEE80211W */
+#ifdef CONFIG_SAE
+		else if (os_strcmp(start, "SAE") == 0)
+			val |= WPA_KEY_MGMT_SAE;
+		else if (os_strcmp(start, "FT-SAE") == 0)
+			val |= WPA_KEY_MGMT_FT_SAE;
+#endif /* CONFIG_SAE */
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -649,49 +661,12 @@ static int hostapd_config_parse_key_mgmt(int line, const char *value)
 
 static int hostapd_config_parse_cipher(int line, const char *value)
 {
-	int val = 0, last;
-	char *start, *end, *buf;
-
-	buf = os_strdup(value);
-	if (buf == NULL)
+	int val = wpa_parse_cipher(value);
+	if (val < 0) {
+		wpa_printf(MSG_ERROR, "Line %d: invalid cipher '%s'.",
+			   line, value);
 		return -1;
-	start = buf;
-
-	while (*start != '\0') {
-		while (*start == ' ' || *start == '\t')
-			start++;
-		if (*start == '\0')
-			break;
-		end = start;
-		while (*end != ' ' && *end != '\t' && *end != '\0')
-			end++;
-		last = *end == '\0';
-		*end = '\0';
-		if (os_strcmp(start, "CCMP") == 0)
-			val |= WPA_CIPHER_CCMP;
-		else if (os_strcmp(start, "GCMP") == 0)
-			val |= WPA_CIPHER_GCMP;
-		else if (os_strcmp(start, "TKIP") == 0)
-			val |= WPA_CIPHER_TKIP;
-		else if (os_strcmp(start, "WEP104") == 0)
-			val |= WPA_CIPHER_WEP104;
-		else if (os_strcmp(start, "WEP40") == 0)
-			val |= WPA_CIPHER_WEP40;
-		else if (os_strcmp(start, "NONE") == 0)
-			val |= WPA_CIPHER_NONE;
-		else {
-			wpa_printf(MSG_ERROR, "Line %d: invalid cipher '%s'.",
-				   line, start);
-			os_free(buf);
-			return -1;
-		}
-
-		if (last)
-			break;
-		start = end + 1;
 	}
-	os_free(buf);
-
 	if (val == 0) {
 		wpa_printf(MSG_ERROR, "Line %d: no cipher values configured.",
 			   line);
@@ -1768,6 +1743,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				bss->ssid.ssid_set = 1;
 			}
 			os_free(str);
+		} else if (os_strcmp(buf, "utf8_ssid") == 0) {
+			bss->ssid.utf8_ssid = atoi(pos) > 0;
 		} else if (os_strcmp(buf, "macaddr_acl") == 0) {
 			bss->macaddr_acl = atoi(pos);
 			if (bss->macaddr_acl != ACCEPT_UNLESS_DENIED &&
@@ -2299,6 +2276,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				conf->hw_mode = HOSTAPD_MODE_IEEE80211B;
 			else if (os_strcmp(pos, "g") == 0)
 				conf->hw_mode = HOSTAPD_MODE_IEEE80211G;
+			else if (os_strcmp(pos, "ad") == 0)
+				conf->hw_mode = HOSTAPD_MODE_IEEE80211AD;
 			else {
 				wpa_printf(MSG_ERROR, "Line %d: unknown "
 					   "hw_mode '%s'", line, pos);
@@ -2512,6 +2491,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		} else if (os_strcmp(buf, "vht_oper_centr_freq_seg0_idx") == 0)
 		{
 			conf->vht_oper_centr_freq_seg0_idx = atoi(pos);
+		} else if (os_strcmp(buf, "vht_oper_centr_freq_seg1_idx") == 0)
+		{
+			conf->vht_oper_centr_freq_seg1_idx = atoi(pos);
 #endif /* CONFIG_IEEE80211AC */
 		} else if (os_strcmp(buf, "max_listen_interval") == 0) {
 			bss->max_listen_interval = atoi(pos);
@@ -2527,6 +2509,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 					   "wps_state", line);
 				errors++;
 			}
+		} else if (os_strcmp(buf, "wps_independent") == 0) {
+			bss->wps_independent = atoi(pos);
 		} else if (os_strcmp(buf, "ap_setup_locked") == 0) {
 			bss->ap_setup_locked = atoi(pos);
 		} else if (os_strcmp(buf, "uuid") == 0) {
@@ -2645,15 +2629,19 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 					   "wps_nfc_dev_pw_id value", line);
 				errors++;
 			}
+			bss->wps_nfc_pw_from_config = 1;
 		} else if (os_strcmp(buf, "wps_nfc_dh_pubkey") == 0) {
 			wpabuf_free(bss->wps_nfc_dh_pubkey);
 			bss->wps_nfc_dh_pubkey = hostapd_parse_bin(pos);
+			bss->wps_nfc_pw_from_config = 1;
 		} else if (os_strcmp(buf, "wps_nfc_dh_privkey") == 0) {
 			wpabuf_free(bss->wps_nfc_dh_privkey);
 			bss->wps_nfc_dh_privkey = hostapd_parse_bin(pos);
+			bss->wps_nfc_pw_from_config = 1;
 		} else if (os_strcmp(buf, "wps_nfc_dev_pw") == 0) {
 			wpabuf_free(bss->wps_nfc_dev_pw);
 			bss->wps_nfc_dev_pw = hostapd_parse_bin(pos);
+			bss->wps_nfc_pw_from_config = 1;
 #endif /* CONFIG_WPS_NFC */
 #endif /* CONFIG_WPS */
 #ifdef CONFIG_P2P_MANAGER
@@ -2702,6 +2690,12 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			bss->time_zone = os_strdup(pos);
 			if (bss->time_zone == NULL)
 				errors++;
+#ifdef CONFIG_WNM
+		} else if (os_strcmp(buf, "wnm_sleep_mode") == 0) {
+			bss->wnm_sleep_mode = atoi(pos);
+		} else if (os_strcmp(buf, "bss_transition") == 0) {
+			bss->bss_transition = atoi(pos);
+#endif /* CONFIG_WNM */
 #ifdef CONFIG_INTERWORKING
 		} else if (os_strcmp(buf, "interworking") == 0) {
 			bss->interworking = atoi(pos);
@@ -2910,6 +2904,14 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 
 			wpabuf_free(bss->vendor_elements);
 			bss->vendor_elements = elems;
+		} else if (os_strcmp(buf, "sae_anti_clogging_threshold") == 0) {
+			bss->sae_anti_clogging_threshold = atoi(pos);
+		} else if (os_strcmp(buf, "sae_groups") == 0) {
+			if (hostapd_parse_rates(&bss->sae_groups, pos)) {
+				wpa_printf(MSG_ERROR, "Line %d: Invalid "
+					   "sae_groups value '%s'", line, pos);
+				return 1;
+			}
 		} else {
 			wpa_printf(MSG_ERROR, "Line %d: unknown configuration "
 				   "item '%s'", line, buf);
@@ -2923,31 +2925,16 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 
 static void hostapd_set_security_params(struct hostapd_bss_config *bss)
 {
-	int pairwise;
-
 	if (bss->individual_wep_key_len == 0) {
 		/* individual keys are not use; can use key idx0 for
 		 * broadcast keys */
 		bss->broadcast_key_idx_min = 0;
 	}
 
-	/* Select group cipher based on the enabled pairwise cipher
-	 * suites */
-	pairwise = 0;
-	if (bss->wpa & 1)
-		pairwise |= bss->wpa_pairwise;
-	if (bss->wpa & 2) {
-		if (bss->rsn_pairwise == 0)
-			bss->rsn_pairwise = bss->wpa_pairwise;
-		pairwise |= bss->rsn_pairwise;
-	}
-	if (pairwise & WPA_CIPHER_TKIP)
-		bss->wpa_group = WPA_CIPHER_TKIP;
-	else if ((pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP)) ==
-		 WPA_CIPHER_GCMP)
-		bss->wpa_group = WPA_CIPHER_GCMP;
-	else
-		bss->wpa_group = WPA_CIPHER_CCMP;
+	if ((bss->wpa & 2) && bss->rsn_pairwise == 0)
+		bss->rsn_pairwise = bss->wpa_pairwise;
+	bss->wpa_group = wpa_select_ap_group_cipher(bss->wpa, bss->wpa_pairwise,
+						    bss->rsn_pairwise);
 
 	bss->radius->auth_server = bss->radius->auth_servers;
 	bss->radius->acct_server = bss->radius->acct_servers;

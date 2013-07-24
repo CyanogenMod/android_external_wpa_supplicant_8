@@ -191,7 +191,13 @@ group interface is used as a parameter for this command.
 
 p2p_cancel
 
-Cancel an ongoing P2P group formation related operation.
+Cancel an ongoing P2P group formation and joining-a-group related
+operation. This operations unauthorizes the specific peer device (if any
+had been authorized to start group formation), stops P2P find (if in
+progress), stops pending operations for join-a-group, and removes the
+P2P group interface (if one was used) that is in the WPS provisioning
+step. If the WPS provisioning step has been completed, the group is not
+terminated.
 
 Service Discovery
 
@@ -218,6 +224,19 @@ This command returns an identifier for the pending query (e.g.,
 "1f77628") that can be used to cancel the request. Directed requests
 will be automatically removed when the specified peer has replied to
 it.
+
+Service Query TLV has following format:
+Length (2 octets, little endian) - length of following data
+Service Protocol Type (1 octet) - see the table below
+Service Transaction ID (1 octet) - nonzero identifier for the TLV
+Query Data (Length - 2 octets of data) - service protocol specific data
+
+Service Protocol Types:
+0 = All service protocols
+1 = Bonjour
+2 = UPnP
+3 = WS-Discovery
+4 = Wi-Fi Display
 
 For UPnP, an alternative command format can be used to specify a
 single query TLV (i.e., a service discovery for a specific UPnP
@@ -346,7 +365,7 @@ Remove all local services from internal SD query processing.
 Invitation
 
 p2p_invite [persistent=<network id>|group=<group ifname>] [peer=address]
-	[go_dev_addr=address] [freq=<freq in MHz>] [ht40]
+	[go_dev_addr=address] [freq=<freq in MHz>] [ht40] [pref=<MHz>]
 
 Invite a peer to join a group (e.g., group=wlan1) or to reinvoke a
 persistent group (e.g., persistent=4). If the peer device is the GO of
@@ -355,7 +374,11 @@ used to specify which device to invite. go_dev_addr parameter can be
 used to override the GO device address for Invitation Request should
 it be not known for some reason (this should not be needed in most
 cases). When reinvoking a persistent group, the GO device can specify
-the frequency for the group with the freq parameter.
+the frequency for the group with the freq parameter. When reinvoking a
+persistent group, the P2P client device can use freq parameter to force
+a specific operating channel (or invitation failure if GO rejects that)
+or pref parameter to request a specific channel (while allowing GO to
+select to use another channel, if needed).
 
 Group Operations
 

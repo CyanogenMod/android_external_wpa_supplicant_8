@@ -76,6 +76,7 @@
 #define WLAN_AUTH_OPEN			0
 #define WLAN_AUTH_SHARED_KEY		1
 #define WLAN_AUTH_FT			2
+#define WLAN_AUTH_SAE			3
 #define WLAN_AUTH_LEAP			128
 
 #define WLAN_AUTH_CHALLENGE_LEN 128
@@ -157,6 +158,8 @@
 #define WLAN_STATUS_REQ_REFUSED_SSPN 67
 #define WLAN_STATUS_REQ_REFUSED_UNAUTH_ACCESS 68
 #define WLAN_STATUS_INVALID_RSNIE 72
+#define WLAN_STATUS_ANTI_CLOGGING_TOKEN_REQ 76
+#define WLAN_STATUS_FINITE_CYCLIC_GROUP_NOT_SUPPORTED 77
 #define WLAN_STATUS_TRANSMISSION_FAILURE 79
 
 /* Reason codes (IEEE 802.11-2007, 7.3.1.7, Table 7-22) */
@@ -215,6 +218,7 @@
 /* EIDs defined by IEEE 802.11h - END */
 #define WLAN_EID_ERP_INFO 42
 #define WLAN_EID_HT_CAP 45
+#define WLAN_EID_QOS 46
 #define WLAN_EID_RSN 48
 #define WLAN_EID_EXT_SUPP_RATES 50
 #define WLAN_EID_MOBILITY_DOMAIN 54
@@ -223,11 +227,13 @@
 #define WLAN_EID_RIC_DATA 57
 #define WLAN_EID_HT_OPERATION 61
 #define WLAN_EID_SECONDARY_CHANNEL_OFFSET 62
+#define WLAN_EID_WAPI 68
 #define WLAN_EID_TIME_ADVERTISEMENT 69
 #define WLAN_EID_20_40_BSS_COEXISTENCE 72
 #define WLAN_EID_20_40_BSS_INTOLERANT 73
 #define WLAN_EID_OVERLAPPING_BSS_SCAN_PARAMS 74
 #define WLAN_EID_MMIE 76
+#define WLAN_EID_SSID_LIST 84
 #define WLAN_EID_BSS_MAX_IDLE_PERIOD 90
 #define WLAN_EID_TFS_REQ 91
 #define WLAN_EID_TFS_RESP 92
@@ -238,6 +244,7 @@
 #define WLAN_EID_ADV_PROTO 108
 #define WLAN_EID_ROAMING_CONSORTIUM 111
 #define WLAN_EID_EXT_CAPAB 127
+#define WLAN_EID_CCKM 156
 #define WLAN_EID_VHT_CAP 191
 #define WLAN_EID_VHT_OPERATION 192
 #define WLAN_EID_VHT_EXTENDED_BSS_LOAD 193
@@ -532,6 +539,16 @@ struct ieee80211_mgmt {
 					 * Entries */
 					u8 variable[0];
 				} STRUCT_PACKED bss_tm_req;
+				struct {
+					u8 action; /* 8 */
+					u8 dialog_token;
+					u8 status_code;
+					u8 bss_termination_delay;
+					/* Target BSSID (optional),
+					 * BSS Transition Candidate List
+					 * Entries (optional) */
+					u8 variable[0];
+				} STRUCT_PACKED bss_tm_resp;
 			} u;
 		} STRUCT_PACKED action;
 	} u;
@@ -562,7 +579,12 @@ struct ieee80211_ht_operation {
 
 struct ieee80211_vht_capabilities {
 	le32 vht_capabilities_info;
-	u8 vht_supported_mcs_set[8];
+	struct {
+		le16 rx_map;
+		le16 rx_highest;
+		le16 tx_map;
+		le16 tx_highest;
+	} vht_supported_mcs_set;
 } STRUCT_PACKED;
 
 struct ieee80211_vht_operation {
@@ -666,6 +688,7 @@ struct ieee80211_vht_operation {
 #define HT_INFO_STBC_PARAM_PCO_ACTIVE			((u16) BIT(10))
 #define HT_INFO_STBC_PARAM_PCO_PHASE			((u16) BIT(11))
 
+#define BSS_MEMBERSHIP_SELECTOR_VHT_PHY 126
 #define BSS_MEMBERSHIP_SELECTOR_HT_PHY 127
 
 /* VHT Defines */
@@ -694,6 +717,12 @@ struct ieee80211_vht_operation {
 #define VHT_CAP_VHT_LINK_ADAPTATION_VHT_MRQ_MFB     ((u32) BIT(26) | BIT(27))
 #define VHT_CAP_RX_ANTENNA_PATTERN                  ((u32) BIT(28))
 #define VHT_CAP_TX_ANTENNA_PATTERN                  ((u32) BIT(29))
+
+/* VHT channel widths */
+#define VHT_CHANWIDTH_USE_HT	0
+#define VHT_CHANWIDTH_80MHZ	1
+#define VHT_CHANWIDTH_160MHZ	2
+#define VHT_CHANWIDTH_80P80MHZ	3
 
 #define OUI_MICROSOFT 0x0050f2 /* Microsoft (also used in Wi-Fi specs)
 				* 00:50:F2 */
@@ -966,9 +995,19 @@ enum wifi_display_subelem {
 #define WLAN_CIPHER_SUITE_NO_GROUP_ADDR	0x000FAC07
 #define WLAN_CIPHER_SUITE_GCMP		0x000FAC08
 
+#define WLAN_CIPHER_SUITE_SMS4		0x00147201
+
+#define WLAN_CIPHER_SUITE_CKIP		0x00409600
+#define WLAN_CIPHER_SUITE_CKIP_CMIC	0x00409601
+#define WLAN_CIPHER_SUITE_CMIC		0x00409602
+#define WLAN_CIPHER_SUITE_KRK		0x004096FF /* for nl80211 use only */
+
 /* AKM suite selectors */
 #define WLAN_AKM_SUITE_8021X		0x000FAC01
 #define WLAN_AKM_SUITE_PSK		0x000FAC02
+#define WLAN_AKM_SUITE_FT_8021X		0x000FAC03
+#define WLAN_AKM_SUITE_FT_PSK		0x000FAC04
+#define WLAN_AKM_SUITE_CCKM		0x00409600
 
 
 /* IEEE 802.11v - WNM Action field values */
@@ -1034,10 +1073,13 @@ struct ieee80211_2040_intol_chan_report {
 struct wnm_sleep_element {
 	u8 eid;     /* WLAN_EID_WNMSLEEP */
 	u8 len;
-	u8 action_type; /* WLAN_WNM_SLEEP_ENTER/EXIT */
+	u8 action_type; /* WNM_SLEEP_ENTER/WNM_SLEEP_MODE_EXIT */
 	u8 status;
 	le16 intval;
 } STRUCT_PACKED;
+
+#define WNM_SLEEP_MODE_ENTER 0
+#define WNM_SLEEP_MODE_EXIT 1
 
 enum wnm_sleep_mode_response_status {
 	WNM_STATUS_SLEEP_ACCEPT = 0,

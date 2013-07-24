@@ -28,7 +28,7 @@
 
 static const char *wpa_cli_version =
 "wpa_cli v" VERSION_STR "\n"
-"Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi> and contributors";
 
 
 static const char *wpa_cli_license =
@@ -403,11 +403,7 @@ static void wpa_cli_msg_cb(char *msg, size_t len)
 
 static int _wpa_ctrl_command(struct wpa_ctrl *ctrl, char *cmd, int print)
 {
-#ifdef ANDROID
 	char buf[4096];
-#else		
-	char buf[2048];
-#endif	
 #if defined(CONFIG_P2P) && defined(ANDROID_P2P)
 	char _cmd[256];
 #endif
@@ -762,31 +758,18 @@ static int wpa_cli_cmd_wps_cancel(struct wpa_ctrl *ctrl, int argc,
 }
 
 
-#ifdef CONFIG_WPS_OOB
-static int wpa_cli_cmd_wps_oob(struct wpa_ctrl *ctrl, int argc, char *argv[])
-{
-	if (argc != 3 && argc != 4) {
-		printf("Invalid WPS_OOB command: need three or four "
-		       "arguments:\n"
-		       "- DEV_TYPE: use 'ufd' or 'nfc'\n"
-		       "- PATH: path of OOB device like '/mnt'\n"
-		       "- METHOD: OOB method 'pin-e' or 'pin-r', "
-		       "'cred'\n"
-		       "- DEV_NAME: (only for NFC) device name like "
-		       "'pn531'\n");
-		return -1;
-	}
-
-	return wpa_cli_cmd(ctrl, "WPS_OOB", 3, argc, argv);
-}
-#endif /* CONFIG_WPS_OOB */
-
-
 #ifdef CONFIG_WPS_NFC
 
 static int wpa_cli_cmd_wps_nfc(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	return wpa_cli_cmd(ctrl, "WPS_NFC", 0, argc, argv);
+}
+
+
+static int wpa_cli_cmd_wps_nfc_config_token(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "WPS_NFC_CONFIG_TOKEN", 1, argc, argv);
 }
 
 
@@ -820,6 +803,79 @@ static int wpa_cli_cmd_wps_nfc_tag_read(struct wpa_ctrl *ctrl, int argc,
 	os_free(buf);
 
 	return ret;
+}
+
+
+static int wpa_cli_cmd_nfc_get_handover_req(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "NFC_GET_HANDOVER_REQ", 2, argc, argv);
+}
+
+
+static int wpa_cli_cmd_nfc_get_handover_sel(struct wpa_ctrl *ctrl, int argc,
+					    char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "NFC_GET_HANDOVER_SEL", 2, argc, argv);
+}
+
+
+static int wpa_cli_cmd_nfc_rx_handover_req(struct wpa_ctrl *ctrl, int argc,
+					   char *argv[])
+{
+	int ret;
+	char *buf;
+	size_t buflen;
+
+	if (argc != 1) {
+		printf("Invalid 'nfc_rx_handover_req' command - one argument "
+		       "is required.\n");
+		return -1;
+	}
+
+	buflen = 21 + os_strlen(argv[0]);
+	buf = os_malloc(buflen);
+	if (buf == NULL)
+		return -1;
+	os_snprintf(buf, buflen, "NFC_RX_HANDOVER_REQ %s", argv[0]);
+
+	ret = wpa_ctrl_command(ctrl, buf);
+	os_free(buf);
+
+	return ret;
+}
+
+
+static int wpa_cli_cmd_nfc_rx_handover_sel(struct wpa_ctrl *ctrl, int argc,
+					   char *argv[])
+{
+	int ret;
+	char *buf;
+	size_t buflen;
+
+	if (argc != 1) {
+		printf("Invalid 'nfc_rx_handover_sel' command - one argument "
+		       "is required.\n");
+		return -1;
+	}
+
+	buflen = 21 + os_strlen(argv[0]);
+	buf = os_malloc(buflen);
+	if (buf == NULL)
+		return -1;
+	os_snprintf(buf, buflen, "NFC_RX_HANDOVER_SEL %s", argv[0]);
+
+	ret = wpa_ctrl_command(ctrl, buf);
+	os_free(buf);
+
+	return ret;
+}
+
+
+static int wpa_cli_cmd_nfc_report_handover(struct wpa_ctrl *ctrl, int argc,
+					   char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "NFC_REPORT_HANDOVER", 4, argc, argv);
 }
 
 #endif /* CONFIG_WPS_NFC */
@@ -1330,7 +1386,7 @@ static int wpa_cli_cmd_set_network(struct wpa_ctrl *ctrl, int argc,
 		return 0;
 	}
 
-	if (argc != 3) {
+	if (argc < 3) {
 		printf("Invalid SET_NETWORK command: needs three arguments\n"
 		       "(network id, variable name, and value)\n");
 		return -1;
@@ -1413,7 +1469,7 @@ static int wpa_cli_cmd_save_config(struct wpa_ctrl *ctrl, int argc,
 
 static int wpa_cli_cmd_scan(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
-	return wpa_ctrl_command(ctrl, "SCAN");
+	return wpa_cli_cmd(ctrl, "SCAN", 0, argc, argv);
 }
 
 
@@ -2227,6 +2283,16 @@ static int wpa_cli_cmd_autoscan(struct wpa_ctrl *ctrl, int argc, char *argv[])
 #endif /* CONFIG_AUTOSCAN */
 
 
+#ifdef CONFIG_WNM
+
+static int wpa_cli_cmd_wnm_sleep(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "WNM_SLEEP", 0, argc, argv);
+}
+
+#endif /* CONFIG_WNM */
+
+
 static int wpa_cli_cmd_raw(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	if (argc == 0)
@@ -2255,6 +2321,12 @@ static int wpa_cli_cmd_driver(struct wpa_ctrl *ctrl, int argc, char *argv[])
 	return wpa_ctrl_command(ctrl, cmd);
 }
 #endif
+
+
+static int wpa_cli_cmd_flush(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "FLUSH");
+}
 
 
 enum wpa_cli_cmd_flags {
@@ -2417,7 +2489,7 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "<<idx> | <bssid>> = get detailed scan result info" },
 	{ "get_capability", wpa_cli_cmd_get_capability, NULL,
 	  cli_cmd_flag_none,
-	  "<eap/pairwise/group/key_mgmt/proto/auth_alg/channels> "
+	  "<eap/pairwise/group/key_mgmt/proto/auth_alg/channels/modes> "
 	  "= get capabilies" },
 	{ "reconfigure", wpa_cli_cmd_reconfigure, NULL,
 	  cli_cmd_flag_none,
@@ -2469,21 +2541,35 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "<PIN> = verify PIN checksum" },
 	{ "wps_cancel", wpa_cli_cmd_wps_cancel, NULL, cli_cmd_flag_none,
 	  "Cancels the pending WPS operation" },
-#ifdef CONFIG_WPS_OOB
-	{ "wps_oob", wpa_cli_cmd_wps_oob, NULL,
-	  cli_cmd_flag_sensitive,
-	  "<DEV_TYPE> <PATH> <METHOD> [DEV_NAME] = start WPS OOB" },
-#endif /* CONFIG_WPS_OOB */
 #ifdef CONFIG_WPS_NFC
 	{ "wps_nfc", wpa_cli_cmd_wps_nfc, wpa_cli_complete_bss,
 	  cli_cmd_flag_none,
 	  "[BSSID] = start Wi-Fi Protected Setup: NFC" },
+	{ "wps_nfc_config_token", wpa_cli_cmd_wps_nfc_config_token, NULL,
+	  cli_cmd_flag_none,
+	  "<WPS|NDEF> = build configuration token" },
 	{ "wps_nfc_token", wpa_cli_cmd_wps_nfc_token, NULL,
 	  cli_cmd_flag_none,
 	  "<WPS|NDEF> = create password token" },
 	{ "wps_nfc_tag_read", wpa_cli_cmd_wps_nfc_tag_read, NULL,
 	  cli_cmd_flag_sensitive,
 	  "<hexdump of payload> = report read NFC tag with WPS data" },
+	{ "nfc_get_handover_req", wpa_cli_cmd_nfc_get_handover_req, NULL,
+	  cli_cmd_flag_none,
+	  "<NDEF> <WPS> = create NFC handover request" },
+	{ "nfc_get_handover_sel", wpa_cli_cmd_nfc_get_handover_sel, NULL,
+	  cli_cmd_flag_none,
+	  "<NDEF> <WPS> = create NFC handover select" },
+	{ "nfc_rx_handover_req", wpa_cli_cmd_nfc_rx_handover_req, NULL,
+	  cli_cmd_flag_none,
+	  "<hexdump of payload> = report received NFC handover request" },
+	{ "nfc_rx_handover_sel", wpa_cli_cmd_nfc_rx_handover_sel, NULL,
+	  cli_cmd_flag_none,
+	  "<hexdump of payload> = report received NFC handover select" },
+	{ "nfc_report_handover", wpa_cli_cmd_nfc_report_handover, NULL,
+	  cli_cmd_flag_none,
+	  "<role> <type> <hexdump of req> <hexdump of sel> = report completed "
+	  "NFC handover" },
 #endif /* CONFIG_WPS_NFC */
 	{ "wps_reg", wpa_cli_cmd_wps_reg, wpa_cli_complete_bss,
 	  cli_cmd_flag_sensitive,
@@ -2684,8 +2770,14 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "autoscan", wpa_cli_cmd_autoscan, NULL, cli_cmd_flag_none,
 	  "[params] = Set or unset (if none) autoscan parameters" },
 #endif /* CONFIG_AUTOSCAN */
+#ifdef CONFIG_WNM
+	{ "wnm_sleep", wpa_cli_cmd_wnm_sleep, NULL, cli_cmd_flag_none,
+	  "<enter/exit> [interval=#] = enter/exit WNM-Sleep mode" },
+#endif /* CONFIG_WNM */
 	{ "raw", wpa_cli_cmd_raw, NULL, cli_cmd_flag_sensitive,
 	  "<params..> = Sent unprocessed command" },
+	{ "flush", wpa_cli_cmd_flush, NULL, cli_cmd_flag_none,
+	  "= flush wpa_supplicant state" },
 #ifdef ANDROID
 	{ "driver", wpa_cli_cmd_driver, NULL,
 	  cli_cmd_flag_none,
@@ -3367,11 +3459,7 @@ static char * wpa_cli_get_default_ifname(void)
 #endif /* CONFIG_CTRL_IFACE_UNIX */
 
 #ifdef CONFIG_CTRL_IFACE_NAMED_PIPE
-#ifdef ANDROID
-	char buf[4096], *pos;
-#else
 	char buf[2048], *pos;
-#endif
 	size_t len;
 	struct wpa_ctrl *ctrl;
 	int ret;

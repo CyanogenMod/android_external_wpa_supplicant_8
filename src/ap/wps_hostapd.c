@@ -11,8 +11,6 @@
 #include "utils/common.h"
 #include "utils/eloop.h"
 #include "utils/uuid.h"
-#include "crypto/dh_groups.h"
-#include "crypto/dh_group5.h"
 #include "common/wpa_ctrl.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
@@ -47,6 +45,7 @@ static void hostapd_wps_ap_pin_timeout(void *eloop_data, void *user_ctx);
 struct wps_for_each_data {
 	int (*func)(struct hostapd_data *h, void *ctx);
 	void *ctx;
+	struct hostapd_data *calling_hapd;
 };
 
 
@@ -59,7 +58,14 @@ static int wps_for_each(struct hostapd_iface *iface, void *ctx)
 		return 0;
 	for (j = 0; j < iface->num_bss; j++) {
 		struct hostapd_data *hapd = iface->bss[j];
-		int ret = data->func(hapd, data->ctx);
+		int ret;
+
+		if (hapd != data->calling_hapd &&
+		    (hapd->conf->wps_independent ||
+		     data->calling_hapd->conf->wps_independent))
+			continue;
+
+		ret = data->func(hapd, data->ctx);
 		if (ret)
 			return ret;
 	}
@@ -76,6 +82,7 @@ static int hostapd_wps_for_each(struct hostapd_data *hapd,
 	struct wps_for_each_data data;
 	data.func = func;
 	data.ctx = ctx;
+	data.calling_hapd = hapd;
 	if (iface->interfaces == NULL ||
 	    iface->interfaces->for_each_interface == NULL)
 		return wps_for_each(iface, &data);
@@ -279,6 +286,114 @@ static void hapd_new_ap_event(struct hostapd_data *hapd, const u8 *attr,
 }
 
 
+static int hapd_wps_reconfig_in_memory(struct hostapd_data *hapd,
+				       const struct wps_credential *cred)
+{
+	struct hostapd_bss_config *bss = hapd->conf;
+
+	wpa_printf(MSG_DEBUG, "WPS: Updating in-memory configuration");
+
+	bss->wps_state = 2;
+	if (cred->ssid_len <= HOSTAPD_MAX_SSID_LEN) {
+		os_memcpy(bss->ssid.ssid, cred->ssid, cred->ssid_len);
+		bss->ssid.ssid_len = cred->ssid_len;
+		bss->ssid.ssid_set = 1;
+	}
+
+	if ((cred->auth_type & (WPS_AUTH_WPA2 | WPS_AUTH_WPA2PSK)) &&
+	    (cred->auth_type & (WPS_AUTH_WPA | WPS_AUTH_WPAPSK)))
+		bss->wpa = 3;
+	else if (cred->auth_type & (WPS_AUTH_WPA2 | WPS_AUTH_WPA2PSK))
+		bss->wpa = 2;
+	else if (cred->auth_type & (WPS_AUTH_WPA | WPS_AUTH_WPAPSK))
+		bss->wpa = 1;
+	else
+		bss->wpa = 0;
+
+	if (bss->wpa) {
+		if (cred->auth_type & (WPS_AUTH_WPA2 | WPS_AUTH_WPA))
+			bss->wpa_key_mgmt = WPA_KEY_MGMT_IEEE8021X;
+		if (cred->auth_type & (WPS_AUTH_WPA2PSK | WPS_AUTH_WPAPSK))
+			bss->wpa_key_mgmt = WPA_KEY_MGMT_PSK;
+
+		bss->wpa_pairwise = 0;
+		if (cred->encr_type & WPS_ENCR_AES)
+			bss->wpa_pairwise |= WPA_CIPHER_CCMP;
+		if (cred->encr_type & WPS_ENCR_TKIP)
+			bss->wpa_pairwise |= WPA_CIPHER_TKIP;
+		bss->rsn_pairwise = bss->wpa_pairwise;
+		bss->wpa_group = wpa_select_ap_group_cipher(bss->wpa,
+							    bss->wpa_pairwise,
+							    bss->rsn_pairwise);
+
+		if (cred->key_len >= 8 && cred->key_len < 64) {
+			os_free(bss->ssid.wpa_passphrase);
+			bss->ssid.wpa_passphrase = os_zalloc(cred->key_len + 1);
+			if (bss->ssid.wpa_passphrase)
+				os_memcpy(bss->ssid.wpa_passphrase, cred->key,
+					  cred->key_len);
+			os_free(bss->ssid.wpa_psk);
+			bss->ssid.wpa_psk = NULL;
+		} else if (cred->key_len == 64) {
+			os_free(bss->ssid.wpa_psk);
+			bss->ssid.wpa_psk =
+				os_zalloc(sizeof(struct hostapd_wpa_psk));
+			if (bss->ssid.wpa_psk &&
+			    hexstr2bin((const char *) cred->key,
+				       bss->ssid.wpa_psk->psk, PMK_LEN) == 0) {
+				bss->ssid.wpa_psk->group = 1;
+				os_free(bss->ssid.wpa_passphrase);
+				bss->ssid.wpa_passphrase = NULL;
+			}
+		}
+		bss->auth_algs = 1;
+	} else {
+		if ((cred->auth_type & WPS_AUTH_OPEN) &&
+		    (cred->auth_type & WPS_AUTH_SHARED))
+			bss->auth_algs = 3;
+		else if (cred->auth_type & WPS_AUTH_SHARED)
+			bss->auth_algs = 2;
+		else
+			bss->auth_algs = 1;
+		if (cred->encr_type & WPS_ENCR_WEP && cred->key_idx > 0 &&
+		    cred->key_idx <= 4) {
+			struct hostapd_wep_keys *wep = &bss->ssid.wep;
+			int idx = cred->key_idx;
+			if (idx)
+				idx--;
+			wep->idx = idx;
+			if (cred->key_len == 10 || cred->key_len == 26) {
+				os_free(wep->key[idx]);
+				wep->key[idx] = os_malloc(cred->key_len / 2);
+				if (wep->key[idx] == NULL ||
+				    hexstr2bin((const char *) cred->key,
+					       wep->key[idx],
+					       cred->key_len / 2))
+					return -1;
+				wep->len[idx] = cred->key_len / 2;
+			} else {
+				os_free(wep->key[idx]);
+				wep->key[idx] = os_malloc(cred->key_len);
+				if (wep->key[idx] == NULL)
+					return -1;
+				os_memcpy(wep->key[idx], cred->key,
+					  cred->key_len);
+				wep->len[idx] = cred->key_len;
+			}
+			wep->keys_set = 1;
+		}
+	}
+
+	/* Schedule configuration reload after short period of time to allow
+	 * EAP-WSC to be finished.
+	 */
+	eloop_register_timeout(0, 100000, wps_reload_config, hapd->iface,
+			       NULL);
+
+	return 0;
+}
+
+
 static int hapd_wps_cred_cb(struct hostapd_data *hapd, void *ctx)
 {
 	const struct wps_credential *cred = ctx;
@@ -346,7 +461,7 @@ static int hapd_wps_cred_cb(struct hostapd_data *hapd, void *ctx)
 	hapd->wps->wps_state = WPS_STATE_CONFIGURED;
 
 	if (hapd->iface->config_fname == NULL)
-		return 0;
+		return hapd_wps_reconfig_in_memory(hapd, cred);
 	len = os_strlen(hapd->iface->config_fname) + 5;
 	tmp_fname = os_malloc(len);
 	if (tmp_fname == NULL)
@@ -708,7 +823,8 @@ static int get_uuid_cb(struct hostapd_iface *iface, void *ctx)
 		return 0;
 	for (j = 0; j < iface->num_bss; j++) {
 		struct hostapd_data *hapd = iface->bss[j];
-		if (hapd->wps && !is_nil_uuid(hapd->wps->uuid)) {
+		if (hapd->wps && !hapd->conf->wps_independent &&
+		    !is_nil_uuid(hapd->wps->uuid)) {
 			*uuid = hapd->wps->uuid;
 			return 1;
 		}
@@ -801,7 +917,7 @@ int hostapd_init_wps(struct hostapd_data *hapd,
 	if (is_nil_uuid(hapd->conf->uuid)) {
 		const u8 *uuid;
 		uuid = get_own_uuid(hapd->iface);
-		if (uuid) {
+		if (uuid && !conf->wps_independent) {
 			os_memcpy(wps->uuid, uuid, UUID_LEN);
 			wpa_hexdump(MSG_DEBUG, "WPS: Clone UUID from another "
 				    "interface", wps->uuid, UUID_LEN);
@@ -959,6 +1075,9 @@ int hostapd_init_wps(struct hostapd_data *hapd,
 	if (conf->ssid.security_policy == SECURITY_STATIC_WEP)
 		cfg.static_wep_only = 1;
 	cfg.dualband = interface_count(hapd->iface) > 1;
+	if ((wps->dev.rf_bands & (WPS_RF_50GHZ | WPS_RF_24GHZ)) ==
+	    (WPS_RF_50GHZ | WPS_RF_24GHZ))
+		cfg.dualband = 1;
 	if (cfg.dualband)
 		wpa_printf(MSG_DEBUG, "WPS: Dualband AP");
 
@@ -1036,8 +1155,6 @@ void hostapd_deinit_wps(struct hostapd_data *hapd)
 	wps_device_data_free(&hapd->wps->dev);
 	wpabuf_free(hapd->wps->dh_pubkey);
 	wpabuf_free(hapd->wps->dh_privkey);
-	wpabuf_free(hapd->wps->oob_conf.pubkey_hash);
-	wpabuf_free(hapd->wps->oob_conf.dev_password);
 	wps_free_pending_msgs(hapd->wps->upnp_msgs);
 	hostapd_wps_nfc_clear(hapd->wps);
 	os_free(hapd->wps);
@@ -1153,60 +1270,6 @@ int hostapd_wps_cancel(struct hostapd_data *hapd)
 {
 	return hostapd_wps_for_each(hapd, wps_cancel, NULL);
 }
-
-
-#ifdef CONFIG_WPS_OOB
-int hostapd_wps_start_oob(struct hostapd_data *hapd, char *device_type,
-			  char *path, char *method, char *name)
-{
-	struct wps_context *wps = hapd->wps;
-	struct oob_device_data *oob_dev;
-
-	oob_dev = wps_get_oob_device(device_type);
-	if (oob_dev == NULL)
-		return -1;
-	oob_dev->device_path = path;
-	oob_dev->device_name = name;
-	wps->oob_conf.oob_method = wps_get_oob_method(method);
-
-	if (wps->oob_conf.oob_method == OOB_METHOD_DEV_PWD_R) {
-		/*
-		 * Use pre-configured DH keys in order to be able to write the
-		 * key hash into the OOB file.
-		 */
-		wpabuf_free(wps->dh_pubkey);
-		wpabuf_free(wps->dh_privkey);
-		wps->dh_privkey = NULL;
-		wps->dh_pubkey = dh_init(dh_groups_get(WPS_DH_GROUP),
-					 &wps->dh_privkey);
-		wps->dh_pubkey = wpabuf_zeropad(wps->dh_pubkey, 192);
-		if (wps->dh_pubkey == NULL) {
-			wpa_printf(MSG_ERROR, "WPS: Failed to initialize "
-				   "Diffie-Hellman handshake");
-			return -1;
-		}
-	}
-
-	if (wps_process_oob(wps, oob_dev, 1) < 0)
-		goto error;
-
-	if ((wps->oob_conf.oob_method == OOB_METHOD_DEV_PWD_E ||
-	     wps->oob_conf.oob_method == OOB_METHOD_DEV_PWD_R) &&
-	    hostapd_wps_add_pin(hapd, NULL, "any",
-				wpabuf_head(wps->oob_conf.dev_password), 0) <
-	    0)
-		goto error;
-
-	return 0;
-
-error:
-	wpabuf_free(wps->dh_pubkey);
-	wps->dh_pubkey = NULL;
-	wpabuf_free(wps->dh_privkey);
-	wps->dh_privkey = NULL;
-	return -1;
-}
-#endif /* CONFIG_WPS_OOB */
 
 
 static int hostapd_wps_probe_req_rx(void *ctx, const u8 *addr, const u8 *da,
@@ -1638,8 +1701,25 @@ struct wpabuf * hostapd_wps_nfc_config_token(struct hostapd_data *hapd,
 }
 
 
+struct wpabuf * hostapd_wps_nfc_hs_cr(struct hostapd_data *hapd, int ndef)
+{
+	/*
+	 * Handover Select carrier record for WPS uses the same format as
+	 * configuration token.
+	 */
+	return hostapd_wps_nfc_config_token(hapd, ndef);
+}
+
+
 struct wpabuf * hostapd_wps_nfc_token_gen(struct hostapd_data *hapd, int ndef)
 {
+	if (hapd->conf->wps_nfc_pw_from_config) {
+		return wps_nfc_token_build(ndef,
+					   hapd->conf->wps_nfc_dev_pw_id,
+					   hapd->conf->wps_nfc_dh_pubkey,
+					   hapd->conf->wps_nfc_dev_pw);
+	}
+
 	return wps_nfc_token_gen(ndef, &hapd->conf->wps_nfc_dev_pw_id,
 				 &hapd->conf->wps_nfc_dh_pubkey,
 				 &hapd->conf->wps_nfc_dh_privkey,
@@ -1650,6 +1730,7 @@ struct wpabuf * hostapd_wps_nfc_token_gen(struct hostapd_data *hapd, int ndef)
 int hostapd_wps_nfc_token_enable(struct hostapd_data *hapd)
 {
 	struct wps_context *wps = hapd->wps;
+	struct wpabuf *pw;
 
 	if (wps == NULL)
 		return -1;
@@ -1664,7 +1745,16 @@ int hostapd_wps_nfc_token_enable(struct hostapd_data *hapd)
 	wps->ap_nfc_dev_pw_id = hapd->conf->wps_nfc_dev_pw_id;
 	wps->ap_nfc_dh_pubkey = wpabuf_dup(hapd->conf->wps_nfc_dh_pubkey);
 	wps->ap_nfc_dh_privkey = wpabuf_dup(hapd->conf->wps_nfc_dh_privkey);
-	wps->ap_nfc_dev_pw = wpabuf_dup(hapd->conf->wps_nfc_dev_pw);
+	pw = hapd->conf->wps_nfc_dev_pw;
+	wps->ap_nfc_dev_pw = wpabuf_alloc(
+		wpabuf_len(pw) * 2 + 1);
+	if (wps->ap_nfc_dev_pw) {
+		wpa_snprintf_hex_uppercase(
+			(char *) wpabuf_put(wps->ap_nfc_dev_pw,
+					    wpabuf_len(pw) * 2),
+			wpabuf_len(pw) * 2 + 1,
+			wpabuf_head(pw), wpabuf_len(pw));
+	}
 
 	if (!wps->ap_nfc_dh_pubkey || !wps->ap_nfc_dh_privkey ||
 	    !wps->ap_nfc_dev_pw) {

@@ -228,6 +228,14 @@ static int eap_server_tls_process_fragment(struct eap_ssl_data *data,
 			return -1;
 		}
 
+		if (len > message_length) {
+			wpa_printf(MSG_INFO, "SSL: Too much data (%d bytes) in "
+				   "first fragment of frame (TLS Message "
+				   "Length %d bytes)",
+				   (int) len, (int) message_length);
+			return -1;
+		}
+
 		data->tls_in = wpabuf_alloc(message_length);
 		if (data->tls_in == NULL) {
 			wpa_printf(MSG_DEBUG, "SSL: No memory for message");
@@ -289,6 +297,13 @@ static int eap_server_tls_reassemble(struct eap_ssl_data *data, u8 flags,
 			   tls_msg_len);
 		*pos += 4;
 		*left -= 4;
+
+		if (*left > tls_msg_len) {
+			wpa_printf(MSG_INFO, "SSL: TLS Message Length (%d "
+				   "bytes) smaller than this fragment (%d "
+				   "bytes)", (int) tls_msg_len, (int) *left);
+			return -1;
+		}
 	}
 
 	wpa_printf(MSG_DEBUG, "SSL: Received packet: Flags 0x%x "

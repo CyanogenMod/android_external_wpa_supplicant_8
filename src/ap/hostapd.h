@@ -10,6 +10,7 @@
 #define HOSTAPD_H
 
 #include "common/defs.h"
+#include "ap_config.h"
 
 struct wpa_driver_ops;
 struct wpa_ctrl_dst;
@@ -39,6 +40,7 @@ struct hapd_interfaces {
 	int global_ctrl_sock;
 	char *global_iface_path;
 	char *global_iface_name;
+	gid_t ctrl_iface_group;
 	struct hostapd_iface **iface;
 };
 
@@ -150,6 +152,9 @@ struct hostapd_data {
 	void (*public_action_cb)(void *ctx, const u8 *buf, size_t len,
 				 int freq);
 	void *public_action_cb_ctx;
+	void (*public_action_cb2)(void *ctx, const u8 *buf, size_t len,
+				  int freq);
+	void *public_action_cb2_ctx;
 
 	int (*vendor_action_cb)(void *ctx, const u8 *buf, size_t len,
 				int freq);
@@ -187,6 +192,16 @@ struct hostapd_data {
 #ifdef CONFIG_INTERWORKING
 	size_t gas_frag_limit;
 #endif /* CONFIG_INTERWORKING */
+
+#ifdef CONFIG_SQLITE
+	struct hostapd_eap_user tmp_eap_user;
+#endif /* CONFIG_SQLITE */
+
+#ifdef CONFIG_SAE
+	/** Key used for generating SAE anti-clogging tokens */
+	u8 sae_token_key[8];
+	os_time_t last_sae_token_key_update;
+#endif /* CONFIG_SAE */
 };
 
 
@@ -205,7 +220,6 @@ struct hostapd_iface {
 	int num_ap; /* number of entries in ap_list */
 	struct ap_info *ap_list; /* AP info list head */
 	struct ap_info *ap_hash[STA_HASH_SIZE];
-	struct ap_info *ap_iter_list;
 
 	unsigned int drv_flags;
 
@@ -214,6 +228,10 @@ struct hostapd_iface {
 	 * struct wpa_driver_capa in driver.h
 	 */
 	unsigned int probe_resp_offloads;
+
+	/* extended capabilities supported by the driver */
+	const u8 *extended_capa, *extended_capa_mask;
+	unsigned int extended_capa_len;
 
 	struct hostapd_hw_modes *hw_features;
 	int num_hw_features;
@@ -291,10 +309,16 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 			const u8 *ie, size_t ielen, int reassoc);
 void hostapd_notif_disassoc(struct hostapd_data *hapd, const u8 *addr);
 void hostapd_event_sta_low_ack(struct hostapd_data *hapd, const u8 *addr);
+void hostapd_event_connect_failed_reason(struct hostapd_data *hapd,
+					 const u8 *addr, int reason_code);
 int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
 			 const u8 *bssid, const u8 *ie, size_t ie_len,
 			 int ssi_signal);
 void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 			     int offset);
+
+const struct hostapd_eap_user *
+hostapd_get_eap_user(struct hostapd_data *hapd, const u8 *identity,
+		     size_t identity_len, int phase2);
 
 #endif /* HOSTAPD_H */

@@ -19,7 +19,7 @@
  * Number of retries to attempt for provision discovery requests
  * in case the peer is not listening.
  */
-#define MAX_PROV_DISC_REQ_RETRIES 10
+#define MAX_PROV_DISC_REQ_RETRIES 120
 
 
 static void p2p_build_wps_ie_config_methods(struct wpabuf *buf,
@@ -151,8 +151,9 @@ void p2p_process_prov_disc_req(struct p2p_data *p2p, const u8 *sa,
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			"P2P: Provision Discovery Request from "
 			"unknown peer " MACSTR, MAC2STR(sa));
-		if (p2p_add_device(p2p, sa, rx_freq, 0, data + 1, len - 1, 0))
-		{
+
+		if (p2p_add_device(p2p, sa, rx_freq, NULL, 0, data + 1, len - 1,
+				   0)) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 			        "P2P: Provision Discovery Request add device "
 				"failed " MACSTR, MAC2STR(sa));
@@ -258,7 +259,7 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 {
 	struct p2p_message msg;
 	struct p2p_device *dev;
-	u16 report_config_methods = 0;
+	u16 report_config_methods = 0, req_config_methods;
 	int success = 0;
 
 	if (p2p_parse(data, len, &msg))
@@ -293,6 +294,12 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 	}
 
 	/*
+	 * Use a local copy of the requested config methods since
+	 * p2p_reset_pending_pd() can clear this in the peer entry.
+	 */
+	req_config_methods = dev->req_config_methods;
+
+	/*
 	 * If the response is from the peer to whom a user initiated request
 	 * was sent earlier, we reset that state info here.
 	 */
@@ -300,9 +307,11 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 	    os_memcmp(p2p->pending_pd_devaddr, sa, ETH_ALEN) == 0)
 		p2p_reset_pending_pd(p2p);
 
-	if (msg.wps_config_methods != dev->req_config_methods) {
+	if (msg.wps_config_methods != req_config_methods) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Peer rejected "
-			"our Provision Discovery Request");
+			"our Provision Discovery Request (received "
+			"config_methods 0x%x expected 0x%x",
+			msg.wps_config_methods, req_config_methods);
 		if (p2p->cfg->prov_disc_fail)
 			p2p->cfg->prov_disc_fail(p2p->cfg->cb_ctx, sa,
 						 P2P_PROV_DISC_REJECTED);
@@ -310,10 +319,10 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 		goto out;
 	}
 
-	report_config_methods = dev->req_config_methods;
+	report_config_methods = req_config_methods;
 	dev->flags &= ~(P2P_DEV_PD_PEER_DISPLAY |
 			P2P_DEV_PD_PEER_KEYPAD);
-	if (dev->req_config_methods & WPS_CONFIG_DISPLAY) {
+	if (req_config_methods & WPS_CONFIG_DISPLAY) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Peer " MACSTR
 			" accepted to show a PIN on display", MAC2STR(sa));
 		dev->flags |= P2P_DEV_PD_PEER_DISPLAY;
@@ -345,6 +354,11 @@ out:
 	if (success && p2p->cfg->prov_disc_resp)
 		p2p->cfg->prov_disc_resp(p2p->cfg->cb_ctx, sa,
 					 report_config_methods);
+
+	if (p2p->state == P2P_PD_DURING_FIND) {
+		p2p_clear_timeout(p2p);
+		p2p_continue_find(p2p);
+	}
 }
 
 
@@ -379,9 +393,6 @@ int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
 		/* TODO: use device discoverability request through GO */
 	}
 
-	dev->dialog_token++;
-	if (dev->dialog_token == 0)
-		dev->dialog_token = 1;
 	req = p2p_build_prov_disc_req(p2p, dev->dialog_token,
 				      dev->req_config_methods,
 				      join ? dev : NULL);
@@ -408,7 +419,8 @@ int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
 
 
 int p2p_prov_disc_req(struct p2p_data *p2p, const u8 *peer_addr,
-		      u16 config_methods, int join, int force_freq)
+		      u16 config_methods, int join, int force_freq,
+		      int user_initiated_pd)
 {
 	struct p2p_device *dev;
 
@@ -446,14 +458,18 @@ int p2p_prov_disc_req(struct p2p_data *p2p, const u8 *peer_addr,
 		return 0;
 	}
 
-	/*
-	 * We use the join param as a cue to differentiate between user
-	 * initiated PD request and one issued during finds (internal).
-	 */
-	p2p->user_initiated_pd = !join;
+	p2p->user_initiated_pd = user_initiated_pd;
 
 	if (p2p->user_initiated_pd)
 		p2p->pd_retries = MAX_PROV_DISC_REQ_RETRIES;
+
+	/*
+	 * Assign dialog token here to use the same value in each retry within
+	 * the same PD exchange.
+	 */
+	dev->dialog_token++;
+	if (dev->dialog_token == 0)
+		dev->dialog_token = 1;
 
 	return p2p_send_prov_disc_req(p2p, dev, join, force_freq);
 }

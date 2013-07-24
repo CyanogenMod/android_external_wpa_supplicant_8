@@ -1,6 +1,6 @@
 /*
  * WPA definitions shared between hostapd and wpa_supplicant
- * Copyright (c) 2002-2008, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -20,6 +20,12 @@
 #define WPA_GMK_LEN 32
 #define WPA_GTK_MAX_LEN 32
 
+#define WPA_ALLOWED_PAIRWISE_CIPHERS \
+(WPA_CIPHER_CCMP | WPA_CIPHER_GCMP | WPA_CIPHER_TKIP | WPA_CIPHER_NONE)
+#define WPA_ALLOWED_GROUP_CIPHERS \
+(WPA_CIPHER_CCMP | WPA_CIPHER_GCMP | WPA_CIPHER_TKIP | WPA_CIPHER_WEP104 | \
+WPA_CIPHER_WEP40)
+
 #define WPA_SELECTOR_LEN 4
 #define WPA_VERSION 1
 #define RSN_SELECTOR_LEN 4
@@ -32,6 +38,7 @@
 #define WPA_AUTH_KEY_MGMT_NONE RSN_SELECTOR(0x00, 0x50, 0xf2, 0)
 #define WPA_AUTH_KEY_MGMT_UNSPEC_802_1X RSN_SELECTOR(0x00, 0x50, 0xf2, 1)
 #define WPA_AUTH_KEY_MGMT_PSK_OVER_802_1X RSN_SELECTOR(0x00, 0x50, 0xf2, 2)
+#define WPA_AUTH_KEY_MGMT_CCKM RSN_SELECTOR(0x00, 0x40, 0x96, 0)
 #define WPA_CIPHER_SUITE_NONE RSN_SELECTOR(0x00, 0x50, 0xf2, 0)
 #define WPA_CIPHER_SUITE_WEP40 RSN_SELECTOR(0x00, 0x50, 0xf2, 1)
 #define WPA_CIPHER_SUITE_TKIP RSN_SELECTOR(0x00, 0x50, 0xf2, 2)
@@ -51,6 +58,9 @@
 #define RSN_AUTH_KEY_MGMT_802_1X_SHA256 RSN_SELECTOR(0x00, 0x0f, 0xac, 5)
 #define RSN_AUTH_KEY_MGMT_PSK_SHA256 RSN_SELECTOR(0x00, 0x0f, 0xac, 6)
 #define RSN_AUTH_KEY_MGMT_TPK_HANDSHAKE RSN_SELECTOR(0x00, 0x0f, 0xac, 7)
+#define RSN_AUTH_KEY_MGMT_SAE RSN_SELECTOR(0x00, 0x0f, 0xac, 8)
+#define RSN_AUTH_KEY_MGMT_FT_SAE RSN_SELECTOR(0x00, 0x0f, 0xac, 9)
+#define RSN_AUTH_KEY_MGMT_CCKM RSN_SELECTOR(0x00, 0x40, 0x96, 0x00)
 
 #define RSN_CIPHER_SUITE_NONE RSN_SELECTOR(0x00, 0x0f, 0xac, 0)
 #define RSN_CIPHER_SUITE_WEP40 RSN_SELECTOR(0x00, 0x0f, 0xac, 1)
@@ -382,9 +392,15 @@ int wpa_ft_parse_ies(const u8 *ies, size_t ies_len, struct wpa_ft_ies *parse);
 int wpa_cipher_key_len(int cipher);
 int wpa_cipher_rsc_len(int cipher);
 int wpa_cipher_to_alg(int cipher);
+enum wpa_cipher wpa_cipher_to_suite_driver(int cipher);
 int wpa_cipher_valid_pairwise(int cipher);
 u32 wpa_cipher_to_suite(int proto, int cipher);
 int rsn_cipher_put_suites(u8 *pos, int ciphers);
 int wpa_cipher_put_suites(u8 *pos, int ciphers);
+int wpa_pick_pairwise_cipher(int ciphers, int none_allowed);
+int wpa_pick_group_cipher(int ciphers);
+int wpa_parse_cipher(const char *value);
+int wpa_write_ciphers(char *start, char *end, int ciphers, const char *delim);
+int wpa_select_ap_group_cipher(int wpa, int wpa_pairwise, int rsn_pairwise);
 
 #endif /* WPA_COMMON_H */

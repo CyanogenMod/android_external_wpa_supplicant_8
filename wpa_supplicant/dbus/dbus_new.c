@@ -1808,6 +1808,9 @@ void wpas_dbus_bss_signal_prop_changed(struct wpa_supplicant *wpa_s,
 	case WPAS_DBUS_BSS_PROP_RSN:
 		prop = "RSN";
 		break;
+	case WPAS_DBUS_BSS_PROP_WPS:
+		prop = "WPS";
+		break;
 	case WPAS_DBUS_BSS_PROP_IES:
 		prop = "IEs";
 		break;
@@ -1948,6 +1951,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_global_properties[] = {
 	},
 	{ "EapMethods", WPAS_DBUS_NEW_INTERFACE, "as",
 	  wpas_dbus_getter_eap_methods,
+	  NULL
+	},
+	{ "Capabilities", WPAS_DBUS_NEW_INTERFACE, "as",
+	  wpas_dbus_getter_global_capabilities,
 	  NULL
 	},
 	{ NULL, NULL, NULL, NULL, NULL }
@@ -2232,6 +2239,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_bss_properties[] = {
 	  wpas_dbus_getter_bss_rsn,
 	  NULL
 	},
+	{ "WPS", WPAS_DBUS_NEW_IFACE_BSS, "a{sv}",
+	  wpas_dbus_getter_bss_wps,
+	  NULL
+	},
 	{ "IEs", WPAS_DBUS_NEW_IFACE_BSS, "ay",
 	  wpas_dbus_getter_bss_ies,
 	  NULL
@@ -2419,6 +2430,7 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 		  END_ARGS
 	  }
 	},
+#ifndef CONFIG_NO_CONFIG_BLOBS
 	{ "AddBlob", WPAS_DBUS_NEW_IFACE_INTERFACE,
 	  (WPADBusMethodHandler) &wpas_dbus_handler_add_blob,
 	  {
@@ -2442,6 +2454,7 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 		  END_ARGS
 	  }
 	},
+#endif /* CONFIG_NO_CONFIG_BLOBS */
 #ifdef CONFIG_WPS
 	{ "Start", WPAS_DBUS_NEW_IFACE_WPS,
 	  (WPADBusMethodHandler) &wpas_dbus_handler_wps_start,

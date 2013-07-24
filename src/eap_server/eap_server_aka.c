@@ -365,6 +365,7 @@ static struct wpabuf * eap_aka_build_identity(struct eap_sm *sm,
 		eap_sim_msg_add(msg, EAP_SIM_AT_ANY_ID_REQ, 0, NULL, 0);
 	} else if (data->identity_round > 3) {
 		/* Cannot use more than three rounds of Identity messages */
+		eap_sim_msg_free(msg);
 		return NULL;
 	} else if (sm->identity && sm->identity_len > 0 &&
 		   (sm->identity[0] == EAP_AKA_REAUTH_ID_PREFIX ||
@@ -726,6 +727,17 @@ static void eap_aka_determine_identity(struct eap_sm *sm,
 	}
 
 	if (eap_aka_check_identity_reauth(sm, data, username) > 0) {
+		os_free(username);
+		return;
+	}
+
+	if (((data->eap_method == EAP_TYPE_AKA_PRIME &&
+	      username[0] == EAP_AKA_PRIME_REAUTH_ID_PREFIX) ||
+	     (data->eap_method == EAP_TYPE_AKA &&
+	      username[0] == EAP_AKA_REAUTH_ID_PREFIX)) &&
+	    data->identity_round == 1) {
+		/* Remain in IDENTITY state for another round to request full
+		 * auth identity since we did not recognize reauth id */
 		os_free(username);
 		return;
 	}

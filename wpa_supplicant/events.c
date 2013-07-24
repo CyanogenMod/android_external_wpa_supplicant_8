@@ -44,6 +44,9 @@
 #include "interworking.h"
 
 
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s);
+
+
 static int wpas_temp_disabled(struct wpa_supplicant *wpa_s,
 			      struct wpa_ssid *ssid)
 {
@@ -84,6 +87,12 @@ static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 		return -1;
 	}
 
+	if (disallowed_bssid(wpa_s, wpa_s->bssid) ||
+	    disallowed_ssid(wpa_s, ssid->ssid, ssid->ssid_len)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Selected BSS is disallowed");
+		return -1;
+	}
+
 	res = wpas_temp_disabled(wpa_s, ssid);
 	if (res > 0) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Selected network is temporarily "
@@ -96,8 +105,9 @@ static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 	if (wpa_key_mgmt_wpa_any(ssid->key_mgmt)) {
 		u8 wpa_ie[80];
 		size_t wpa_ie_len = sizeof(wpa_ie);
-		wpa_supplicant_set_suites(wpa_s, NULL, ssid,
-					  wpa_ie, &wpa_ie_len);
+		if (wpa_supplicant_set_suites(wpa_s, NULL, ssid,
+					      wpa_ie, &wpa_ie_len) < 0)
+			wpa_dbg(wpa_s, MSG_DEBUG, "Could not set WPA suites");
 	} else {
 		wpa_supplicant_set_non_wpa_policy(wpa_s, ssid);
 	}
@@ -423,7 +433,9 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211W
 		if (!(ie.capabilities & WPA_CAPABILITY_MFPC) &&
-		    ssid->ieee80211w == MGMT_FRAME_PROTECTION_REQUIRED) {
+		    (ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
+		     wpa_s->conf->pmf : ssid->ieee80211w) ==
+		    MGMT_FRAME_PROTECTION_REQUIRED) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip RSN IE - no mgmt "
 				"frame protection");
 			break;
@@ -627,6 +639,28 @@ static int rate_match(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 }
 
 
+static int bss_is_dmg(struct wpa_bss *bss)
+{
+	return bss->freq > 45000;
+}
+
+
+/*
+ * Test whether BSS is in an ESS.
+ * This is done differently in DMG (60 GHz) and non-DMG bands
+ */
+static int bss_is_ess(struct wpa_bss *bss)
+{
+	if (bss_is_dmg(bss)) {
+		return (bss->caps & IEEE80211_CAP_DMG_MASK) ==
+			IEEE80211_CAP_DMG_AP;
+	}
+
+	return ((bss->caps & (IEEE80211_CAP_ESS | IEEE80211_CAP_IBSS)) ==
+		IEEE80211_CAP_ESS);
+}
+
+
 static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 					    int i, struct wpa_bss *bss,
 					    struct wpa_ssid *group)
@@ -672,6 +706,16 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 
 	if (bss->ssid_len == 0) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - SSID not known");
+		return NULL;
+	}
+
+	if (disallowed_bssid(wpa_s, bss->bssid)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - BSSID disallowed");
+		return NULL;
+	}
+
+	if (disallowed_ssid(wpa_s, bss->ssid, bss->ssid_len)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "   skip - SSID disallowed");
 		return NULL;
 	}
 
@@ -750,9 +794,8 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 			continue;
 		}
 
-		if (bss->caps & IEEE80211_CAP_IBSS) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - IBSS (adhoc) "
-				"network");
+		if (!bss_is_ess(bss)) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - not ESS network");
 			continue;
 		}
 
@@ -811,9 +854,8 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s,
 }
 
 
-static struct wpa_bss *
-wpa_supplicant_pick_network(struct wpa_supplicant *wpa_s,
-			    struct wpa_ssid **selected_ssid)
+struct wpa_bss * wpa_supplicant_pick_network(struct wpa_supplicant *wpa_s,
+					     struct wpa_ssid **selected_ssid)
 {
 	struct wpa_bss *selected = NULL;
 	int prio;
@@ -862,6 +904,8 @@ static void wpa_supplicant_req_new_scan(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_P2P */
 		return;
 	}
+
+	wpa_s->scan_for_connection = 1;
 	wpa_supplicant_req_scan(wpa_s, timeout_sec, timeout_usec);
 }
 
@@ -1012,6 +1056,12 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 		return 1;
 	}
 
+	if (current_bss->level < 0 && current_bss->level > selected->level) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Skip roam - Current BSS has better "
+			"signal level");
+		return 0;
+	}
+
 	min_diff = 2;
 	if (current_bss->level < 0) {
 		if (current_bss->level < -85)
@@ -1040,13 +1090,9 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 
 /* Return != 0 if no scan results could be fetched or if scan results should not
  * be shared with other virtual interfaces. */
-#ifdef ANDROID_P2P
 static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
-					      union wpa_event_data *data, int suppress_event)
-#else
-static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
-					      union wpa_event_data *data)
-#endif
+					      union wpa_event_data *data,
+					      int own_request)
 {
 	struct wpa_scan_results *scan_res;
 	int ap = 0;
@@ -1062,7 +1108,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_notify_scanning(wpa_s, 0);
 
 #ifdef CONFIG_P2P
-	if (wpa_s->global->p2p_cb_on_scan_complete &&
+	if (own_request && wpa_s->global->p2p_cb_on_scan_complete &&
 	    !wpa_s->global->p2p_disabled &&
 	    wpa_s->global->p2p != NULL && !wpa_s->sta_scan_pending &&
 	    !wpa_s->scan_res_handler) {
@@ -1082,7 +1128,10 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 						   data ? &data->scan_info :
 						   NULL, 1);
 	if (scan_res == NULL) {
-		if (wpa_s->conf->ap_scan == 2 || ap)
+		if (wpa_s->conf->ap_scan == 2 || ap ||
+		    wpa_s->scan_res_handler == scan_only_handler)
+			return -1;
+		if (!own_request)
 			return -1;
 		wpa_dbg(wpa_s, MSG_DEBUG, "Failed to get scan results - try "
 			"scanning again");
@@ -1106,7 +1155,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_NO_RANDOM_POOL */
 
-	if (wpa_s->scan_res_handler) {
+	if (own_request && wpa_s->scan_res_handler) {
 		void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 					 struct wpa_scan_results *scan_res);
 
@@ -1127,18 +1176,10 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		wpa_scan_results_free(scan_res);
 		return 0;
 	}
-#ifdef ANDROID_P2P
-	if(!suppress_event)
-	{
-		wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
-		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
-		wpas_notify_scan_results(wpa_s);
-	}
-#else
+
 	wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
 	wpas_notify_scan_results(wpa_s);
-#endif
 
 	wpas_notify_scan_done(wpa_s, 1);
 
@@ -1177,7 +1218,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 }
 
 
-int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
+static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
@@ -1255,11 +1296,8 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 {
 	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
-#ifdef ANDROID_P2P
-	if (_wpa_supplicant_event_scan_results(wpa_s, data, 0) != 0) {
-#else
-	if (_wpa_supplicant_event_scan_results(wpa_s, data) != 0) {
-#endif
+
+	if (_wpa_supplicant_event_scan_results(wpa_s, data, 1) != 0) {
 		/*
 		 * If no scan results could be fetched, then no need to
 		 * notify those interfaces that did not actually request
@@ -1292,33 +1330,33 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (rn2 && os_strcmp(rn, rn2) == 0) {
 			wpa_printf(MSG_DEBUG, "%s: Updating scan results from "
 				   "sibling", ifs->ifname);
-#ifdef ANDROID_P2P
-			if ( (ifs->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) || (ifs->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)) {
-				/* Do not update the scan results from STA interface to p2p interfaces */
-				wpa_printf(MSG_DEBUG, "Not Updating scan results on interface %s from "
-					   "sibling %s", ifs->ifname, wpa_s->ifname);
-				continue;
-			}
-			else {
-				/* P2P_FIND will result in too many SCAN_RESULT_EVENTS within
-				 * no time. Avoid announcing it to application as it may not
-				 * be that useful (since results will be that of only 1,6,11).
-				 * over to any other interface as it
-				 */
-				if(p2p_search_in_progress(wpa_s->global->p2p))
-					_wpa_supplicant_event_scan_results(ifs, data, 1);
-				else
-					_wpa_supplicant_event_scan_results(ifs, data, 0);
-			}
-#else
-			_wpa_supplicant_event_scan_results(ifs, data);
-#endif
+			_wpa_supplicant_event_scan_results(ifs, data, 0);
 		}
 	}
 }
 
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 
+
+int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s)
+{
+#ifdef CONFIG_NO_SCAN_PROCESSING
+	return -1;
+#else /* CONFIG_NO_SCAN_PROCESSING */
+	struct os_time now;
+
+	if (wpa_s->last_scan_res_used <= 0)
+		return -1;
+
+	os_get_time(&now);
+	if (now.sec - wpa_s->last_scan.sec > 5) {
+		wpa_printf(MSG_DEBUG, "Fast associate: Old scan results");
+		return -1;
+	}
+
+	return wpas_select_network_from_last_scan(wpa_s);
+#endif /* CONFIG_NO_SCAN_PROCESSING */
+}
 
 #ifdef CONFIG_WNM
 
@@ -1329,12 +1367,16 @@ static void wnm_bss_keep_alive(void *eloop_ctx, void *sock_ctx)
 	if (wpa_s->wpa_state < WPA_ASSOCIATED)
 		return;
 
-	wpa_printf(MSG_DEBUG, "WNM: Send keep-alive to AP " MACSTR,
-		   MAC2STR(wpa_s->bssid));
-	/* TODO: could skip this if normal data traffic has been sent */
-	/* TODO: Consider using some more appropriate data frame for this */
-	if (wpa_s->l2)
-		l2_packet_send(wpa_s->l2, wpa_s->bssid, 0x0800, (u8 *) "", 0);
+	if (!wpa_s->no_keep_alive) {
+		wpa_printf(MSG_DEBUG, "WNM: Send keep-alive to AP " MACSTR,
+			   MAC2STR(wpa_s->bssid));
+		/* TODO: could skip this if normal data traffic has been sent */
+		/* TODO: Consider using some more appropriate data frame for
+		 * this */
+		if (wpa_s->l2)
+			l2_packet_send(wpa_s->l2, wpa_s->bssid, 0x0800,
+				       (u8 *) "", 0);
+	}
 
 #ifdef CONFIG_SME
 	if (wpa_s->sme.bss_max_idle_period) {
@@ -1401,6 +1443,9 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 {
 	int l, len, found = 0, wpa_found, rsn_found;
 	const u8 *p;
+#ifdef CONFIG_IEEE80211R
+	u8 bssid[ETH_ALEN];
+#endif /* CONFIG_IEEE80211R */
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Association info event");
 	if (data->assoc_info.req_ies)
@@ -1455,7 +1500,6 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_IEEE80211R
 #ifdef CONFIG_SME
 	if (wpa_s->sme.auth_alg == WPA_AUTH_ALG_FT) {
-		u8 bssid[ETH_ALEN];
 		if (wpa_drv_get_bssid(wpa_s, bssid) < 0 ||
 		    wpa_ft_validate_reassoc_resp(wpa_s->wpa,
 						 data->assoc_info.resp_ies,
@@ -1512,6 +1556,23 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		p += len;
 	}
 #endif /* CONFIG_SME */
+
+	/* Process FT when SME is in the driver */
+	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME) &&
+	    wpa_ft_is_completed(wpa_s->wpa)) {
+		if (wpa_drv_get_bssid(wpa_s, bssid) < 0 ||
+		    wpa_ft_validate_reassoc_resp(wpa_s->wpa,
+						 data->assoc_info.resp_ies,
+						 data->assoc_info.resp_ies_len,
+						 bssid) < 0) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "FT: Validation of "
+				"Reassociation Response failed");
+			wpa_supplicant_deauthenticate(
+				wpa_s, WLAN_REASON_INVALID_IE);
+			return -1;
+		}
+		wpa_dbg(wpa_s, MSG_DEBUG, "FT: Reassociation Response done");
+	}
 
 	wpa_sm_set_ft_params(wpa_s->wpa, data->assoc_info.resp_ies,
 			     data->assoc_info.resp_ies_len);
@@ -1632,7 +1693,7 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 
 	if (wpa_drv_get_bssid(wpa_s, bssid) < 0) {
 		wpa_dbg(wpa_s, MSG_ERROR, "Failed to get BSSID");
-		wpa_supplicant_disassociate(
+		wpa_supplicant_deauthenticate(
 			wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		return;
 	}
@@ -1650,7 +1711,7 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 			wpa_clear_keys(wpa_s, bssid);
 		}
 		if (wpa_supplicant_select_config(wpa_s) < 0) {
-			wpa_supplicant_disassociate(
+			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 			return;
 		}
@@ -1669,8 +1730,12 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 				wpa_s->current_bss = bss;
 		}
 
+#ifdef ANDROID
+		if (wpa_s->conf->ap_scan == 1) {
+#else
 		if (wpa_s->conf->ap_scan == 1 &&
 		    wpa_s->drv_flags & WPA_DRIVER_FLAGS_BSS_SELECTION) {
+#endif
 			if (wpa_supplicant_assoc_update_ie(wpa_s) < 0)
 				wpa_msg(wpa_s, MSG_WARNING,
 					"WPA/RSN IEs not updated");
@@ -1751,6 +1816,8 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 		eapol_sm_notify_portValid(wpa_s->eapol, TRUE);
 		eapol_sm_notify_eap_success(wpa_s->eapol, TRUE);
 	}
+
+	wpa_s->last_eapol_matches_bssid = 0;
 
 	if (wpa_s->pending_eapol_rx) {
 		struct os_time now, age;
@@ -1838,6 +1905,28 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 }
 
 
+static int could_be_psk_mismatch(struct wpa_supplicant *wpa_s, u16 reason_code,
+				 int locally_generated)
+{
+	if (wpa_s->wpa_state != WPA_4WAY_HANDSHAKE ||
+	    !wpa_key_mgmt_wpa_psk(wpa_s->key_mgmt))
+		return 0; /* Not in 4-way handshake with PSK */
+
+	/*
+	 * It looks like connection was lost while trying to go through PSK
+	 * 4-way handshake. Filter out known disconnection cases that are caused
+	 * by something else than PSK mismatch to avoid confusing reports.
+	 */
+
+	if (locally_generated) {
+		if (reason_code == WLAN_REASON_IE_IN_4WAY_DIFFERS)
+			return 0;
+	}
+
+	return 1;
+}
+
+
 static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 						 u16 reason_code,
 						 int locally_generated)
@@ -1863,14 +1952,14 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
-	if (wpa_s->wpa_state == WPA_4WAY_HANDSHAKE &&
-	    wpa_key_mgmt_wpa_psk(wpa_s->key_mgmt)) {
+	if (could_be_psk_mismatch(wpa_s, reason_code, locally_generated)) {
 		wpa_msg(wpa_s, MSG_INFO, "WPA: 4-Way Handshake failed - "
 			"pre-shared key may be incorrect");
 		wpas_auth_failed(wpa_s);
 	}
-	if (!wpa_s->auto_reconnect_disabled ||
-	    wpa_s->key_mgmt == WPA_KEY_MGMT_WPS) {
+	if (!wpa_s->disconnected &&
+	    (!wpa_s->auto_reconnect_disabled ||
+	     wpa_s->key_mgmt == WPA_KEY_MGMT_WPS)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Auto connect enabled: try to "
 			"reconnect (wps=%d wpa_state=%d)",
 			wpa_s->key_mgmt == WPA_KEY_MGMT_WPS,
@@ -2123,10 +2212,14 @@ static void wpa_supplicant_event_tdls(struct wpa_supplicant *wpa_s,
 		return;
 	switch (data->tdls.oper) {
 	case TDLS_REQUEST_SETUP:
-		wpa_tdls_start(wpa_s->wpa, data->tdls.peer);
+		wpa_tdls_remove(wpa_s->wpa, data->tdls.peer);
+		if (wpa_tdls_is_external_setup(wpa_s->wpa))
+			wpa_tdls_start(wpa_s->wpa, data->tdls.peer);
+		else
+			wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, data->tdls.peer);
 		break;
 	case TDLS_REQUEST_TEARDOWN:
-		wpa_tdls_send_teardown(wpa_s->wpa, data->tdls.peer,
+		wpa_tdls_teardown_link(wpa_s->wpa, data->tdls.peer,
 				       data->tdls.reason_code);
 		break;
 	}
@@ -2134,7 +2227,7 @@ static void wpa_supplicant_event_tdls(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_TDLS */
 
 
-#ifdef CONFIG_IEEE80211V
+#ifdef CONFIG_WNM
 static void wpa_supplicant_event_wnm(struct wpa_supplicant *wpa_s,
 				     union wpa_event_data *data)
 {
@@ -2146,11 +2239,11 @@ static void wpa_supplicant_event_wnm(struct wpa_supplicant *wpa_s,
 			   "(action=%d, intval=%d)",
 			   data->wnm.sleep_action, data->wnm.sleep_intval);
 		ieee802_11_send_wnmsleep_req(wpa_s, data->wnm.sleep_action,
-					     data->wnm.sleep_intval);
+					     data->wnm.sleep_intval, NULL);
 		break;
 	}
 }
-#endif /* CONFIG_IEEE80211V */
+#endif /* CONFIG_WNM */
 
 
 #ifdef CONFIG_IEEE80211R
@@ -2270,50 +2363,6 @@ static void wpa_supplicant_event_unprot_disassoc(struct wpa_supplicant *wpa_s,
 		   MAC2STR(e->sa), MAC2STR(e->da), e->reason_code);
 	sme_event_unprot_disconnect(wpa_s, e->sa, e->da, e->reason_code);
 #endif /* CONFIG_IEEE80211W */
-}
-
-
-static void wnm_action_rx(struct wpa_supplicant *wpa_s, struct rx_action *rx)
-{
-	u8 action, mode;
-	const u8 *pos, *end;
-
-	if (rx->data == NULL || rx->len == 0)
-		return;
-
-	pos = rx->data;
-	end = pos + rx->len;
-	action = *pos++;
-
-	wpa_printf(MSG_DEBUG, "WNM: RX action %u from " MACSTR,
-		   action, MAC2STR(rx->sa));
-	switch (action) {
-	case WNM_BSS_TRANS_MGMT_REQ:
-		if (pos + 5 > end)
-			break;
-		wpa_printf(MSG_DEBUG, "WNM: BSS Transition Management "
-			   "Request: dialog_token=%u request_mode=0x%x "
-			   "disassoc_timer=%u validity_interval=%u",
-			   pos[0], pos[1], WPA_GET_LE16(pos + 2), pos[4]);
-		mode = pos[1];
-		pos += 5;
-		if (mode & 0x08)
-			pos += 12; /* BSS Termination Duration */
-		if (mode & 0x10) {
-			char url[256];
-			if (pos + 1 > end || pos + 1 + pos[0] > end) {
-				wpa_printf(MSG_DEBUG, "WNM: Invalid BSS "
-					   "Transition Management Request "
-					   "(URL)");
-				break;
-			}
-			os_memcpy(url, pos + 1, pos[0]);
-			url[pos[0]] = '\0';
-			wpa_msg(wpa_s, MSG_INFO, "WNM: ESS Disassociation "
-				"Imminent - session_info_url=%s", url);
-		}
-		break;
-	}
 }
 
 
@@ -2470,18 +2519,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifndef CONFIG_NO_SCAN_PROCESSING
 	case EVENT_SCAN_RESULTS:
 		wpa_supplicant_event_scan_results(wpa_s, data);
-#ifdef CONFIG_P2P
-	if (wpa_s->global->p2p_cb_on_scan_complete && !wpa_s->global->p2p_disabled &&
-	    wpa_s->global->p2p != NULL &&
-	    wpa_s->wpa_state != WPA_AUTHENTICATING &&
-	    wpa_s->wpa_state != WPA_ASSOCIATING) {
-		wpa_s->global->p2p_cb_on_scan_complete = 0;
-		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
-				"continued after scan result processing");
-		}
-	}
-#endif /* CONFIG_P2P */
+		if (wpa_s->wpa_state != WPA_AUTHENTICATING &&
+		    wpa_s->wpa_state != WPA_ASSOCIATING)
+			wpas_p2p_continue_after_scan(wpa_s);
 		break;
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 	case EVENT_ASSOCINFO:
@@ -2503,11 +2543,11 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		wpa_supplicant_event_tdls(wpa_s, data);
 		break;
 #endif /* CONFIG_TDLS */
-#ifdef CONFIG_IEEE80211V
+#ifdef CONFIG_WNM
 	case EVENT_WNM:
 		wpa_supplicant_event_wnm(wpa_s, data);
 		break;
-#endif /* CONFIG_IEEE80211V */
+#endif /* CONFIG_WNM */
 #ifdef CONFIG_IEEE80211R
 	case EVENT_FT_RESPONSE:
 		wpa_supplicant_event_ft_response(wpa_s, data);
@@ -2530,6 +2570,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				data->assoc_reject.status_code);
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
 			sme_event_assoc_reject(wpa_s, data);
+		else {
 #ifdef ANDROID_P2P
 #if defined(LEGACY_STA_EVENTS)
                 /* If assoc reject is reported by the driver, then avoid
@@ -2549,8 +2590,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
                         wpa_supplicant_req_scan(wpa_s, 1, 0);
                 } else
                         wpa_s->assoc_retries = 0;
-#else if defined(CONFIG_P2P)
-		else {
+#else
 			if(!wpa_s->current_ssid) {
 				wpa_printf(MSG_ERROR, "current_ssid == NULL");
 				break;
@@ -2589,9 +2629,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				wpa_supplicant_disable_network(wpa_s, wpa_s->current_ssid);
 				wpas_p2p_group_remove(wpa_s, wpa_s->ifname);
 			}
-		}
 #endif
+#else
+			const u8 *bssid = data->assoc_reject.bssid;
+			if (bssid == NULL || is_zero_ether_addr(bssid))
+				bssid = wpa_s->pending_bssid;
+			wpas_connection_failed(wpa_s, bssid);
+			wpa_supplicant_mark_disassoc(wpa_s);
 #endif /* ANDROID_P2P */
+		}
 		break;
 	case EVENT_AUTH_TIMED_OUT:
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
@@ -2760,12 +2806,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		}
 #endif /* CONFIG_SME */
 #endif /* CONFIG_IEEE80211W */
-#ifdef CONFIG_IEEE80211V
+#ifdef CONFIG_WNM
 		if (data->rx_action.category == WLAN_ACTION_WNM) {
 			ieee802_11_rx_wnm_action(wpa_s, &data->rx_action);
 			break;
 		}
-#endif /* CONFIG_IEEE80211V */
+#endif /* CONFIG_WNM */
 #ifdef CONFIG_GAS
 		if (data->rx_action.category == WLAN_ACTION_PUBLIC &&
 		    gas_query_rx(wpa_s->gas, data->rx_action.da,
@@ -2774,10 +2820,6 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				 data->rx_action.freq) == 0)
 			break;
 #endif /* CONFIG_GAS */
-		if (data->rx_action.category == WLAN_ACTION_WNM) {
-			wnm_action_rx(wpa_s, &data->rx_action);
-			break;
-		}
 #ifdef CONFIG_TDLS
 		if (data->rx_action.category == WLAN_ACTION_PUBLIC &&
 		    data->rx_action.len >= 4 &&
@@ -3026,6 +3068,16 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_WPS
 		wpas_wps_start_pbc(wpa_s, NULL, 0);
 #endif /* CONFIG_WPS */
+		break;
+	case EVENT_CONNECT_FAILED_REASON:
+#ifdef CONFIG_AP
+		if (!wpa_s->ap_iface || !data)
+			break;
+		hostapd_event_connect_failed_reason(
+			wpa_s->ap_iface->bss[0],
+			data->connect_failed_reason.addr,
+			data->connect_failed_reason.code);
+#endif /* CONFIG_AP */
 		break;
 	default:
 		wpa_msg(wpa_s, MSG_INFO, "Unknown event %d", event);
