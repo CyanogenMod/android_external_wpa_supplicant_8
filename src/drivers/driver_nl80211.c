@@ -310,6 +310,9 @@ static int nl80211_send_frame_cmd(struct i802_bss *bss,
 				  unsigned int freq, unsigned int wait,
 				  const u8 *buf, size_t buf_len, u64 *cookie,
 				  int no_cck, int no_ack, int offchanok);
+static int nl80211_register_frame(struct i802_bss *bss,
+				  struct nl_handle *hl_handle,
+				  u16 type, const u8 *match, size_t match_len);
 static int wpa_driver_nl80211_probe_req_report(struct i802_bss *bss,
 					       int report);
 #ifdef ANDROID
@@ -1067,7 +1070,6 @@ static int wpa_driver_nl80211_own_ifindex(struct wpa_driver_nl80211_data *drv,
 		return 1;
 
 	if (drv->if_removed && wpa_driver_nl80211_own_ifname(drv, buf, len)) {
-		drv->first_bss.ifindex = if_nametoindex(drv->first_bss.ifname);
 		wpa_printf(MSG_DEBUG, "nl80211: Update ifindex for a removed "
 			   "interface");
 		wpa_driver_nl80211_finish_drv_init(drv);
@@ -1829,12 +1831,19 @@ static void mlme_event_michael_mic_failure(struct i802_bss *bss,
 static void mlme_event_join_ibss(struct wpa_driver_nl80211_data *drv,
 				 struct nlattr *tb[])
 {
+	u16 type = (WLAN_FC_TYPE_MGMT << 2) | (WLAN_FC_STYPE_AUTH << 4);
+
 	if (tb[NL80211_ATTR_MAC] == NULL) {
 		wpa_printf(MSG_DEBUG, "nl80211: No address in IBSS joined "
 			   "event");
 		return;
 	}
 	os_memcpy(drv->bssid, nla_data(tb[NL80211_ATTR_MAC]), ETH_ALEN);
+
+	/* register for any AUTH message */
+	nl80211_register_frame(&drv->first_bss, drv->first_bss.nl_mgmt,
+			       type, NULL, 0);
+
 	drv->associated = 1;
 	wpa_printf(MSG_DEBUG, "nl80211: IBSS " MACSTR " joined",
 		   MAC2STR(drv->bssid));
@@ -2881,6 +2890,8 @@ struct wiphy_info_data {
 	struct wpa_driver_nl80211_data *drv;
 	struct wpa_driver_capa *capa;
 
+	unsigned int num_multichan_concurrent;
+
 	unsigned int error:1;
 	unsigned int device_ap_sme:1;
 	unsigned int poll_command_supported:1;
@@ -2891,7 +2902,6 @@ struct wiphy_info_data {
 	unsigned int p2p_go_supported:1;
 	unsigned int p2p_client_supported:1;
 	unsigned int p2p_concurrent:1;
-	unsigned int p2p_multichan_concurrent:1;
 };
 
 
@@ -3001,8 +3011,8 @@ static int wiphy_info_iface_comb_process(struct wiphy_info_data *info,
 
 	if (combination_has_p2p && combination_has_mgd) {
 		info->p2p_concurrent = 1;
-		if (nla_get_u32(tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS]) > 1)
-			info->p2p_multichan_concurrent = 1;
+		info->num_multichan_concurrent =
+			nla_get_u32(tb_comb[NL80211_IFACE_COMB_NUM_CHANNELS]);
 		return 1;
 	}
 
@@ -3252,10 +3262,11 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_CONCURRENT;
 		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_MGMT_AND_NON_P2P;
 	}
-	if (info->p2p_multichan_concurrent) {
+	if (info->num_multichan_concurrent > 1) {
 		wpa_printf(MSG_DEBUG, "nl80211: Enable multi-channel "
 			   "concurrent (driver advertised support)");
-		drv->capa.flags |= WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT;
+		drv->capa.num_multichan_concurrent =
+			info->num_multichan_concurrent;
 	}
 
 	/* default to 5000 since early versions of mac80211 don't set it */
@@ -5189,12 +5200,20 @@ nla_put_failure:
 static int wpa_driver_nl80211_disconnect(struct wpa_driver_nl80211_data *drv,
 					 int reason_code)
 {
+	int ret;
+
 	wpa_printf(MSG_DEBUG, "%s(reason_code=%d)", __func__, reason_code);
 	nl80211_mark_disconnected(drv);
-	drv->ignore_next_local_disconnect = 0;
 	/* Disconnect command doesn't need BSSID - it uses cached value */
-	return wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
-				       reason_code, 0);
+	ret = wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
+				      reason_code, 0);
+	/*
+	 * For locally generated disconnect, supplicant already generates a
+	 * DEAUTH event, so ignore the event from NL80211.
+	 */
+	drv->ignore_next_local_disconnect = ret == 0;
+
+	return ret;
 }
 
 
@@ -5674,7 +5693,20 @@ static int phy_info_band(struct phy_info_arg *phy_info, struct nlattr *nl_band)
 		mode = &phy_info->modes[*(phy_info->num_modes)];
 		os_memset(mode, 0, sizeof(*mode));
 		mode->mode = NUM_HOSTAPD_MODES;
-		mode->flags = HOSTAPD_MODE_FLAG_HT_INFO_KNOWN;
+		mode->flags = HOSTAPD_MODE_FLAG_HT_INFO_KNOWN |
+			HOSTAPD_MODE_FLAG_VHT_INFO_KNOWN;
+
+		/*
+		 * Unsupported VHT MCS stream is defined as value 3, so the VHT
+		 * MCS RX/TX map must be initialized with 0xffff to mark all 8
+		 * possible streams as unsupported. This will be overridden if
+		 * driver advertises VHT support.
+		 */
+		mode->vht_mcs_set[0] = 0xff;
+		mode->vht_mcs_set[1] = 0xff;
+		mode->vht_mcs_set[4] = 0xff;
+		mode->vht_mcs_set[5] = 0xff;
+
 		*(phy_info->num_modes) += 1;
 		phy_info->last_mode = nl_band->nla_type;
 		phy_info->last_chan_idx = 0;
@@ -7835,8 +7867,6 @@ static int wpa_driver_nl80211_connect(
 		if (wpa_driver_nl80211_disconnect(
 			    drv, WLAN_REASON_PREV_AUTH_NOT_VALID))
 			return -1;
-		/* Ignore the next local disconnect message. */
-		drv->ignore_next_local_disconnect = 1;
 		ret = wpa_driver_nl80211_try_connect(drv, params);
 	}
 	return ret;
@@ -8690,13 +8720,16 @@ static int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 
 
 static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
-                            const char *bridge_ifname)
+                            const char *bridge_ifname, char *ifname_wds)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	char name[IFNAMSIZ + 1];
 
 	os_snprintf(name, sizeof(name), "%s.sta%d", bss->ifname, aid);
+	if (ifname_wds)
+		os_strlcpy(ifname_wds, name, IFNAMSIZ + 1);
+
 	wpa_printf(MSG_DEBUG, "nl80211: Set WDS STA addr=" MACSTR
 		   " aid=%d val=%d name=%s", MAC2STR(addr), aid, val, name);
 	if (val) {
@@ -9216,12 +9249,13 @@ static int nl80211_send_frame_cmd(struct i802_bss *bss,
 	wpa_printf(MSG_MSGDUMP, "nl80211: CMD_FRAME freq=%u wait=%u no_cck=%d "
 		   "no_ack=%d offchanok=%d",
 		   freq, wait, no_cck, no_ack, offchanok);
+	wpa_hexdump(MSG_MSGDUMP, "CMD_FRAME", buf, buf_len);
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_FRAME);
 
 	if (nl80211_set_iface_id(msg, bss) < 0)
 		goto nla_put_failure;
-
-	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
+	if (freq)
+		NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
 	if (wait)
 		NLA_PUT_U32(msg, NL80211_ATTR_DURATION, wait);
 	if (offchanok && (drv->capa.flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX))
@@ -9809,7 +9843,7 @@ static int nl80211_set_param(void *priv, const char *param)
 		struct wpa_driver_nl80211_data *drv = bss->drv;
 		wpa_printf(MSG_DEBUG, "nl80211: Use Multi channel "
 			   "concurrency");
-		drv->capa.flags |= WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT;
+		drv->capa.num_multichan_concurrent = 2;
 	}
 #endif
 #endif /* CONFIG_P2P */

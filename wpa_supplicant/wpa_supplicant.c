@@ -421,6 +421,7 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 
 	wpa_bss_deinit(wpa_s);
 
+	wpa_supplicant_cancel_delayed_sched_scan(wpa_s);
 	wpa_supplicant_cancel_scan(wpa_s);
 	wpa_supplicant_cancel_auth_timeout(wpa_s);
 	eloop_cancel_timeout(wpa_supplicant_stop_countermeasures, wpa_s, NULL);
@@ -1630,7 +1631,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	/* If multichannel concurrency is not supported, check for any frequency
 	 * conflict and take appropriate action.
 	 */
-	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT) &&
+	if ((wpa_s->num_multichan_concurrent < 2) &&
 		((freq = wpa_drv_shared_freq(wpa_s)) > 0) && (freq != params.freq)) {
 		wpa_printf(MSG_DEBUG, "Shared interface with conflicting frequency found (%d != %d)"
 																, freq, params.freq);
@@ -2985,6 +2986,8 @@ next_driver:
 		wpa_s->extended_capa = capa.extended_capa;
 		wpa_s->extended_capa_mask = capa.extended_capa_mask;
 		wpa_s->extended_capa_len = capa.extended_capa_len;
+		wpa_s->num_multichan_concurrent =
+			capa.num_multichan_concurrent;
 	}
 	if (wpa_s->max_remain_on_chan == 0)
 		wpa_s->max_remain_on_chan = 1000;
@@ -2998,6 +3001,9 @@ next_driver:
 		wpa_s->p2p_mgmt = iface->p2p_mgmt;
 	else
 		iface->p2p_mgmt = 1;
+
+	if (wpa_s->num_multichan_concurrent == 0)
+		wpa_s->num_multichan_concurrent = 1;
 
 	if (wpa_supplicant_driver_init(wpa_s) < 0)
 		return -1;
@@ -3956,4 +3962,73 @@ int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s)
 	}
 
 	return 0;
+}
+
+
+/*
+ * Find the operating frequencies of any of the virtual interfaces that
+ * are using the same radio as the current interface.
+ */
+int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
+			   int *freq_array, unsigned int len)
+{
+	const char *rn, *rn2;
+	struct wpa_supplicant *ifs;
+	u8 bssid[ETH_ALEN];
+	int freq;
+	unsigned int idx = 0, i;
+
+	os_memset(freq_array, 0, sizeof(int) * len);
+
+	/* First add the frequency of the local interface */
+	if (wpa_s->current_ssid != NULL && wpa_s->assoc_freq != 0) {
+		if (wpa_s->current_ssid->mode == WPAS_MODE_AP ||
+		    wpa_s->current_ssid->mode == WPAS_MODE_P2P_GO)
+			freq_array[idx++] = wpa_s->current_ssid->frequency;
+		else if (wpa_drv_get_bssid(wpa_s, bssid) == 0)
+			freq_array[idx++] = wpa_s->assoc_freq;
+	}
+
+	/* If get_radio_name is not supported, use only the local freq */
+	if (!wpa_s->driver->get_radio_name) {
+		freq = wpa_drv_shared_freq(wpa_s);
+		if (freq > 0 && idx < len &&
+		    (idx == 0 || freq_array[0] != freq))
+			freq_array[idx++] = freq;
+		return idx;
+	}
+
+	rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
+	if (rn == NULL || rn[0] == '\0')
+		return idx;
+
+	for (ifs = wpa_s->global->ifaces, idx = 0; ifs && idx < len;
+	     ifs = ifs->next) {
+		if (wpa_s == ifs || !ifs->driver->get_radio_name)
+			continue;
+
+		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
+		if (!rn2 || os_strcmp(rn, rn2) != 0)
+			continue;
+
+		if (ifs->current_ssid == NULL || ifs->assoc_freq == 0)
+			continue;
+
+		if (ifs->current_ssid->mode == WPAS_MODE_AP ||
+		    ifs->current_ssid->mode == WPAS_MODE_P2P_GO)
+			freq = ifs->current_ssid->frequency;
+		else if (wpa_drv_get_bssid(ifs, bssid) == 0)
+			freq = ifs->assoc_freq;
+		else
+			continue;
+
+		/* Hold only distinct freqs */
+		for (i = 0; i < idx; i++)
+			if (freq_array[i] == freq)
+				break;
+
+		if (i == idx)
+			freq_array[idx++] = freq;
+	}
+	return idx;
 }

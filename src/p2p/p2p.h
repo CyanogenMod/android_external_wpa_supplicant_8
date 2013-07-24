@@ -375,14 +375,6 @@ struct p2p_config {
 	 */
 	unsigned int max_listen;
 
-#ifdef ANDROID_P2P
-	enum p2p_concurrency_type {
-		P2P_NON_CONCURRENT,
-		P2P_SINGLE_CHANNEL_CONCURRENT,
-		P2P_MULTI_CHANNEL_CONCURRENT,
-	} p2p_concurrency;
-#endif
-
 	/**
 	 * cb_ctx - Context to use with callback functions
 	 */

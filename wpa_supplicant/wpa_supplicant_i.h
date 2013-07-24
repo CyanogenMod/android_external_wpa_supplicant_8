@@ -722,6 +722,8 @@ struct wpa_supplicant {
 	u8 last_gtk[32];
 	size_t last_gtk_len;
 #endif /* CONFIG_TESTING_GET_GTK */
+
+	unsigned int num_multichan_concurrent;
 };
 
 
@@ -859,5 +861,8 @@ static inline int network_is_persistent_group(struct wpa_ssid *ssid)
 int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
 
 int wpas_init_ext_pw(struct wpa_supplicant *wpa_s);
+
+int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
+			   int *freq_array, unsigned int len);
 
 #endif /* WPA_SUPPLICANT_I_H */

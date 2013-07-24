@@ -61,6 +61,7 @@ struct hostapd_channel_data {
 };
 
 #define HOSTAPD_MODE_FLAG_HT_INFO_KNOWN BIT(0)
+#define HOSTAPD_MODE_FLAG_VHT_INFO_KNOWN BIT(1)
 
 /**
  * struct hostapd_hw_modes - Supported hardware mode information
@@ -832,8 +833,7 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_P2P_DEDICATED_INTERFACE	0x00000400
 /* This interface is P2P capable (P2P GO or P2P Client) */
 #define WPA_DRIVER_FLAGS_P2P_CAPABLE	0x00000800
-/* Driver supports concurrent operations on multiple channels */
-#define WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT	0x00001000
+/* unused: 0x00001000 */
 /*
  * Driver uses the initial interface for P2P management interface and non-P2P
  * purposes (e.g., connect to infra AP), but this interface cannot be used for
@@ -909,6 +909,11 @@ struct wpa_driver_capa {
 	unsigned int probe_resp_offloads;
 
 	unsigned int max_acl_mac_addrs;
+
+	/**
+	 * Number of supported concurrent channels
+	 */
+	unsigned int num_multichan_concurrent;
 
 	/**
 	 * extended_capa - extended capabilities in driver/device
@@ -2049,10 +2054,12 @@ struct wpa_driver_ops {
 	 * @val: 1 = bind to 4-address WDS; 0 = unbind
 	 * @bridge_ifname: Bridge interface to use for the WDS station or %NULL
 	 *	to indicate that bridge is not to be used
+	 * @ifname_wds: Buffer to return the interface name for the new WDS
+	 *	station or %NULL to indicate name is not returned.
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*set_wds_sta)(void *priv, const u8 *addr, int aid, int val,
-	                   const char *bridge_ifname);
+	                   const char *bridge_ifname, char *ifname_wds);
 
 	/**
 	 * send_action - Transmit an Action frame
