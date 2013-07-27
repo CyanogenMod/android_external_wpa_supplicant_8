@@ -2584,7 +2584,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 
                         /* Clear the states */
                         wpa_sm_notify_disassoc(wpa_s->wpa);
-                        wpa_supplicant_disassociate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+                        wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 
                         wpa_s->reassociate = 1;
                         wpa_supplicant_req_scan(wpa_s, 1, 0);
