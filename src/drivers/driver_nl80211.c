@@ -4494,14 +4494,17 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	int ifindex = if_nametoindex(ifname);
 	struct nl_msg *msg;
 	int ret;
+	int tdls = 0;
 
 	wpa_printf(MSG_DEBUG, "%s: ifindex=%d alg=%d addr=%p key_idx=%d "
 		   "set_tx=%d seq_len=%lu key_len=%lu",
 		   __func__, ifindex, alg, addr, key_idx, set_tx,
 		   (unsigned long) seq_len, (unsigned long) key_len);
 #ifdef CONFIG_TDLS
-	if (key_idx == -1)
+	if (key_idx == -1) {
 		key_idx = 0;
+		tdls = 1;
+	}
 #endif /* CONFIG_TDLS */
 
 	msg = nlmsg_alloc();
@@ -4594,7 +4597,7 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	 * If we failed or don't need to set the default TX key (below),
 	 * we're done here.
 	 */
-	if (ret || !set_tx || alg == WPA_ALG_NONE)
+	if (ret || !set_tx || alg == WPA_ALG_NONE || tdls)
 		return ret;
 	if (is_ap_interface(drv->nlmode) && addr &&
 	    !is_broadcast_ether_addr(addr))
