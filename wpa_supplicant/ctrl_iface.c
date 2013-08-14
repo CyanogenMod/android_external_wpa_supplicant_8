@@ -5434,11 +5434,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (p2p_ctrl_serv_disc_resp(wpa_s, buf + 19) < 0)
 			reply_len = -1;
 	} else if (os_strcmp(buf, "P2P_SERVICE_UPDATE") == 0) {
-#ifdef ANDROID_P2P
-		wpas_p2p_sd_service_update(wpa_s, SRV_UPDATE);
-#else
 		wpas_p2p_sd_service_update(wpa_s);
-#endif
 	} else if (os_strncmp(buf, "P2P_SERV_DISC_EXTERNAL ", 23) == 0) {
 		if (p2p_ctrl_serv_disc_external(wpa_s, buf + 23) < 0)
 			reply_len = -1;

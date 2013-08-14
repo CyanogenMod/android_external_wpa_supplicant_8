@@ -891,33 +891,9 @@ void * p2p_sd_request_wfd(struct p2p_data *p2p, const u8 *dst,
 #endif /* CONFIG_WIFI_DISPLAY */
 
 
-#ifdef ANDROID_P2P
-void p2p_sd_service_update(struct p2p_data *p2p, int action)
-#else
 void p2p_sd_service_update(struct p2p_data *p2p)
-#endif
 {
 	p2p->srv_update_indic++;
-#ifdef ANDROID_P2P
-	if(action == SRV_FLUSH)
-		p2p->srv_count = 0;
-	else if (action == SRV_DEL)
-		p2p->srv_count--;
-	else if (action == SRV_ADD)
-		p2p->srv_count++;
-
-	if(p2p->cfg->sd_request) {
-		if (p2p->srv_count == 1) {
-			/* First Service Registered. Enable SD capability */
-			p2p->dev_capab |= P2P_DEV_CAPAB_SERVICE_DISCOVERY;
-		} else if (p2p->srv_count == 0 && !p2p->sd_queries) {
-			/* No services remaining + No queries registered .
-			 * Remove the SD Capability 
-			 */
-			p2p->dev_capab &= ~P2P_DEV_CAPAB_SERVICE_DISCOVERY;
-		}
-	}
-#endif
 }
 
 
