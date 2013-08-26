@@ -94,12 +94,12 @@ static int wpa_supplicant_ctrl_iface_detach(struct dl_list *ctrl_dst,
 		    os_memcmp(from->sun_path, dst->addr.sun_path,
 			      fromlen - offsetof(struct sockaddr_un, sun_path))
 		    == 0) {
-			dl_list_del(&dst->list);
-			os_free(dst);
 			wpa_hexdump(MSG_DEBUG, "CTRL_IFACE monitor detached",
 				    (u8 *) from->sun_path,
 				    fromlen -
 				    offsetof(struct sockaddr_un, sun_path));
+			dl_list_del(&dst->list);
+			os_free(dst);
 			return 0;
 		}
 	}
@@ -150,7 +150,8 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 	res = recvfrom(sock, buf, sizeof(buf) - 1, 0,
 		       (struct sockaddr *) &from, &fromlen);
 	if (res < 0) {
-		perror("recvfrom(ctrl_iface)");
+		wpa_printf(MSG_ERROR, "recvfrom(ctrl_iface): %s",
+			   strerror(errno));
 		return;
 	}
 	buf[res] = '\0';
@@ -327,7 +328,8 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 			wpa_printf(MSG_DEBUG, "Using existing control "
 				   "interface directory.");
 		} else {
-			perror("mkdir[ctrl_interface]");
+			wpa_printf(MSG_ERROR, "mkdir[ctrl_interface=%s]: %s",
+				   dir, strerror(errno));
 			goto fail;
 		}
 	}
@@ -371,7 +373,8 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 	}
 
 	if (gid_set && chown(dir, -1, gid) < 0) {
-		perror("chown[ctrl_interface]");
+		wpa_printf(MSG_ERROR, "chown[ctrl_interface=%s,gid=%d]: %s",
+			   dir, (int) gid, strerror(errno));
 		goto fail;
 	}
 
@@ -391,7 +394,7 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 
 	priv->sock = socket(PF_UNIX, SOCK_DGRAM, 0);
 	if (priv->sock < 0) {
-		perror("socket(PF_UNIX)");
+		wpa_printf(MSG_ERROR, "socket(PF_UNIX): %s", strerror(errno));
 		goto fail;
 	}
 
@@ -413,15 +416,15 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 				   " allow connections - assuming it was left"
 				   "over from forced program termination");
 			if (unlink(fname) < 0) {
-				perror("unlink[ctrl_iface]");
-				wpa_printf(MSG_ERROR, "Could not unlink "
-					   "existing ctrl_iface socket '%s'",
-					   fname);
+				wpa_printf(MSG_ERROR,
+					   "Could not unlink existing ctrl_iface socket '%s': %s",
+					   fname, strerror(errno));
 				goto fail;
 			}
 			if (bind(priv->sock, (struct sockaddr *) &addr,
 				 sizeof(addr)) < 0) {
-				perror("supp-ctrl-iface-init: bind(PF_UNIX)");
+				wpa_printf(MSG_ERROR, "supp-ctrl-iface-init: bind(PF_UNIX): %s",
+					   strerror(errno));
 				goto fail;
 			}
 			wpa_printf(MSG_DEBUG, "Successfully replaced leftover "
@@ -438,12 +441,14 @@ wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 	}
 
 	if (gid_set && chown(fname, -1, gid) < 0) {
-		perror("chown[ctrl_interface/ifname]");
+		wpa_printf(MSG_ERROR, "chown[ctrl_interface=%s,gid=%d]: %s",
+			   fname, (int) gid, strerror(errno));
 		goto fail;
 	}
 
 	if (chmod(fname, S_IRWXU | S_IRWXG) < 0) {
-		perror("chmod[ctrl_interface/ifname]");
+		wpa_printf(MSG_ERROR, "chmod[ctrl_interface=%s]: %s",
+			   fname, strerror(errno));
 		goto fail;
 	}
 	os_free(fname);
@@ -460,7 +465,8 @@ havesock:
 	if (flags >= 0) {
 		flags |= O_NONBLOCK;
 		if (fcntl(priv->sock, F_SETFL, flags) < 0) {
-			perror("fcntl(ctrl, O_NONBLOCK)");
+			wpa_printf(MSG_INFO, "fcntl(ctrl, O_NONBLOCK): %s",
+				   strerror(errno));
 			/* Not fatal, continue on.*/
 		}
 	}
@@ -495,13 +501,13 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 		eloop_unregister_read_sock(priv->sock);
 		if (!dl_list_empty(&priv->ctrl_dst)) {
 			/*
-			 * Wait a second before closing the control socket if
+			 * Wait before closing the control socket if
 			 * there are any attached monitors in order to allow
 			 * them to receive any pending messages.
 			 */
 			wpa_printf(MSG_DEBUG, "CTRL_IFACE wait for attached "
 				   "monitors to receive messages");
-			os_sleep(1, 0);
+			os_sleep(0, 100000);
 		}
 		close(priv->sock);
 		priv->sock = -1;
@@ -530,7 +536,9 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 					   "directory not empty - leaving it "
 					   "behind");
 			} else {
-				perror("rmdir[ctrl_interface]");
+				wpa_printf(MSG_ERROR,
+					   "rmdir[ctrl_interface=%s]: %s",
+					   dir, strerror(errno));
 			}
 		}
 		os_free(buf);
@@ -638,7 +646,8 @@ void wpa_supplicant_ctrl_iface_wait(struct ctrl_iface_priv *priv)
 		res = recvfrom(priv->sock, buf, sizeof(buf) - 1, 0,
 			       (struct sockaddr *) &from, &fromlen);
 		if (res < 0) {
-			perror("recvfrom(ctrl_iface)");
+			wpa_printf(MSG_ERROR, "recvfrom(ctrl_iface): %s",
+				   strerror(errno));
 			continue;
 		}
 		buf[res] = '\0';
@@ -681,7 +690,8 @@ static void wpa_supplicant_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 	res = recvfrom(sock, buf, sizeof(buf) - 1, 0,
 		       (struct sockaddr *) &from, &fromlen);
 	if (res < 0) {
-		perror("recvfrom(ctrl_iface)");
+		wpa_printf(MSG_ERROR, "recvfrom(ctrl_iface): %s",
+			   strerror(errno));
 		return;
 	}
 	buf[res] = '\0';
@@ -722,6 +732,7 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 	struct ctrl_iface_global_priv *priv;
 	struct sockaddr_un addr;
 	const char *ctrl = global->params.ctrl_interface;
+	int flags;
 
 	priv = os_zalloc(sizeof(*priv));
 	if (priv == NULL)
@@ -766,7 +777,7 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 
 	priv->sock = socket(PF_UNIX, SOCK_DGRAM, 0);
 	if (priv->sock < 0) {
-		perror("socket(PF_UNIX)");
+		wpa_printf(MSG_ERROR, "socket(PF_UNIX): %s", strerror(errno));
 		goto fail;
 	}
 
@@ -783,7 +794,8 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 		if (bind(priv->sock, (struct sockaddr *) &addr, sizeof(addr)) <
 		    0) {
 			wpa_printf(MSG_ERROR, "supp-global-ctrl-iface-init: "
-				   "bind(PF_UNIX) failed: %s", strerror(errno));
+				   "bind(PF_UNIX;%s) failed: %s",
+				   ctrl, strerror(errno));
 			goto fail;
 		}
 		wpa_printf(MSG_DEBUG, "Using Abstract control socket '%s'",
@@ -793,23 +805,23 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 
 	os_strlcpy(addr.sun_path, ctrl, sizeof(addr.sun_path));
 	if (bind(priv->sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		perror("supp-global-ctrl-iface-init (will try fixup): "
-		       "bind(PF_UNIX)");
+		wpa_printf(MSG_INFO, "supp-global-ctrl-iface-init(%s) (will try fixup): bind(PF_UNIX): %s",
+			   ctrl, strerror(errno));
 		if (connect(priv->sock, (struct sockaddr *) &addr,
 			    sizeof(addr)) < 0) {
 			wpa_printf(MSG_DEBUG, "ctrl_iface exists, but does not"
 				   " allow connections - assuming it was left"
 				   "over from forced program termination");
 			if (unlink(ctrl) < 0) {
-				perror("unlink[ctrl_iface]");
-				wpa_printf(MSG_ERROR, "Could not unlink "
-					   "existing ctrl_iface socket '%s'",
-					   ctrl);
+				wpa_printf(MSG_ERROR,
+					   "Could not unlink existing ctrl_iface socket '%s': %s",
+					   ctrl, strerror(errno));
 				goto fail;
 			}
 			if (bind(priv->sock, (struct sockaddr *) &addr,
 				 sizeof(addr)) < 0) {
-				perror("supp-glb-iface-init: bind(PF_UNIX)");
+				wpa_printf(MSG_ERROR, "supp-glb-iface-init: bind(PF_UNIX;%s): %s",
+					   ctrl, strerror(errno));
 				goto fail;
 			}
 			wpa_printf(MSG_DEBUG, "Successfully replaced leftover "
@@ -851,12 +863,16 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 				   (int) gid);
 		}
 		if (chown(ctrl, -1, gid) < 0) {
-			perror("chown[global_ctrl_interface/ifname]");
+			wpa_printf(MSG_ERROR,
+				   "chown[global_ctrl_interface=%s,gid=%d]: %s",
+				   ctrl, (int) gid, strerror(errno));
 			goto fail;
 		}
 
 		if (chmod(ctrl, S_IRWXU | S_IRWXG) < 0) {
-			perror("chmod[global_ctrl_interface/ifname]");
+			wpa_printf(MSG_ERROR,
+				   "chmod[global_ctrl_interface=%s]: %s",
+				   ctrl, strerror(errno));
 			goto fail;
 		}
 	} else {
@@ -864,6 +880,21 @@ wpa_supplicant_global_ctrl_iface_init(struct wpa_global *global)
 	}
 
 havesock:
+
+	/*
+	 * Make socket non-blocking so that we don't hang forever if
+	 * target dies unexpectedly.
+	 */
+	flags = fcntl(priv->sock, F_GETFL);
+	if (flags >= 0) {
+		flags |= O_NONBLOCK;
+		if (fcntl(priv->sock, F_SETFL, flags) < 0) {
+			wpa_printf(MSG_INFO, "fcntl(ctrl, O_NONBLOCK): %s",
+				   strerror(errno));
+			/* Not fatal, continue on.*/
+		}
+	}
+
 	eloop_register_read_sock(priv->sock,
 				 wpa_supplicant_global_ctrl_iface_receive,
 				 global, priv);

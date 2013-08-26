@@ -707,6 +707,12 @@ static int wps_pwd_auth_fail(struct hostapd_data *hapd, void *ctx)
 static void hostapd_pwd_auth_fail(struct hostapd_data *hapd,
 				  struct wps_event_pwd_auth_fail *data)
 {
+	/* Update WPS Status - Authentication Failure */
+	wpa_printf(MSG_DEBUG, "WPS: Authentication failure update");
+	hapd->wps_stats.status = WPS_STATUS_FAILURE;
+	hapd->wps_stats.failure_reason = WPS_EI_AUTH_FAILURE;
+	os_memcpy(hapd->wps_stats.peer_addr, data->peer_macaddr, ETH_ALEN);
+
 	hostapd_wps_for_each(hapd, wps_pwd_auth_fail, data);
 }
 
@@ -734,21 +740,59 @@ static void hostapd_wps_ap_pin_success(struct hostapd_data *hapd)
 }
 
 
-static const char * wps_event_fail_reason[NUM_WPS_EI_VALUES] = {
-	"No Error", /* WPS_EI_NO_ERROR */
-	"TKIP Only Prohibited", /* WPS_EI_SECURITY_TKIP_ONLY_PROHIBITED */
-	"WEP Prohibited" /* WPS_EI_SECURITY_WEP_PROHIBITED */
-};
+static void hostapd_wps_event_pbc_overlap(struct hostapd_data *hapd)
+{
+	/* Update WPS Status - PBC Overlap */
+	hapd->wps_stats.pbc_status = WPS_PBC_STATUS_OVERLAP;
+}
+
+
+static void hostapd_wps_event_pbc_timeout(struct hostapd_data *hapd)
+{
+	/* Update WPS PBC Status:PBC Timeout */
+	hapd->wps_stats.pbc_status = WPS_PBC_STATUS_TIMEOUT;
+}
+
+
+static void hostapd_wps_event_pbc_active(struct hostapd_data *hapd)
+{
+	/* Update WPS PBC status - Active */
+	hapd->wps_stats.pbc_status = WPS_PBC_STATUS_ACTIVE;
+}
+
+
+static void hostapd_wps_event_pbc_disable(struct hostapd_data *hapd)
+{
+	/* Update WPS PBC status - Active */
+	hapd->wps_stats.pbc_status = WPS_PBC_STATUS_DISABLE;
+}
+
+
+static void hostapd_wps_event_success(struct hostapd_data *hapd,
+				      struct wps_event_success *success)
+{
+	/* Update WPS status - Success */
+	hapd->wps_stats.pbc_status = WPS_PBC_STATUS_DISABLE;
+	hapd->wps_stats.status = WPS_STATUS_SUCCESS;
+	os_memcpy(hapd->wps_stats.peer_addr, success->peer_macaddr, ETH_ALEN);
+}
+
 
 static void hostapd_wps_event_fail(struct hostapd_data *hapd,
 				   struct wps_event_fail *fail)
 {
+	/* Update WPS status - Failure */
+	hapd->wps_stats.status = WPS_STATUS_FAILURE;
+	os_memcpy(hapd->wps_stats.peer_addr, fail->peer_macaddr, ETH_ALEN);
+
+	hapd->wps_stats.failure_reason = fail->error_indication;
+
 	if (fail->error_indication > 0 &&
 	    fail->error_indication < NUM_WPS_EI_VALUES) {
 		wpa_msg(hapd->msg_ctx, MSG_INFO,
 			WPS_EVENT_FAIL "msg=%d config_error=%d reason=%d (%s)",
 			fail->msg, fail->config_error, fail->error_indication,
-			wps_event_fail_reason[fail->error_indication]);
+			wps_ei_str(fail->error_indication));
 	} else {
 		wpa_msg(hapd->msg_ctx, MSG_INFO,
 			WPS_EVENT_FAIL "msg=%d config_error=%d",
@@ -770,16 +814,27 @@ static void hostapd_wps_event_cb(void *ctx, enum wps_event event,
 		hostapd_wps_event_fail(hapd, &data->fail);
 		break;
 	case WPS_EV_SUCCESS:
+		hostapd_wps_event_success(hapd, &data->success);
 		wpa_msg(hapd->msg_ctx, MSG_INFO, WPS_EVENT_SUCCESS);
 		break;
 	case WPS_EV_PWD_AUTH_FAIL:
 		hostapd_pwd_auth_fail(hapd, &data->pwd_auth_fail);
 		break;
 	case WPS_EV_PBC_OVERLAP:
+		hostapd_wps_event_pbc_overlap(hapd);
 		wpa_msg(hapd->msg_ctx, MSG_INFO, WPS_EVENT_OVERLAP);
 		break;
 	case WPS_EV_PBC_TIMEOUT:
+		hostapd_wps_event_pbc_timeout(hapd);
 		wpa_msg(hapd->msg_ctx, MSG_INFO, WPS_EVENT_TIMEOUT);
+		break;
+	case WPS_EV_PBC_ACTIVE:
+		hostapd_wps_event_pbc_active(hapd);
+		wpa_msg(hapd->msg_ctx, MSG_INFO, WPS_EVENT_ACTIVE);
+		break;
+	case WPS_EV_PBC_DISABLE:
+		hostapd_wps_event_pbc_disable(hapd);
+		wpa_msg(hapd->msg_ctx, MSG_INFO, WPS_EVENT_DISABLE);
 		break;
 	case WPS_EV_ER_AP_ADD:
 		break;
@@ -799,6 +854,15 @@ static void hostapd_wps_event_cb(void *ctx, enum wps_event event,
 	}
 	if (hapd->wps_event_cb)
 		hapd->wps_event_cb(hapd->wps_event_cb_ctx, event, data);
+}
+
+
+static int hostapd_wps_rf_band_cb(void *ctx)
+{
+	struct hostapd_data *hapd = ctx;
+
+	return hapd->iconf->hw_mode == HOSTAPD_MODE_IEEE80211A ?
+		WPS_RF_50GHZ : WPS_RF_24GHZ; /* FIX: dualband AP */
 }
 
 
@@ -909,6 +973,7 @@ int hostapd_init_wps(struct hostapd_data *hapd,
 
 	wps->cred_cb = hostapd_wps_cred_cb;
 	wps->event_cb = hostapd_wps_event_cb;
+	wps->rf_band_cb = hostapd_wps_rf_band_cb;
 	wps->cb_ctx = hapd;
 
 	os_memset(&cfg, 0, sizeof(cfg));

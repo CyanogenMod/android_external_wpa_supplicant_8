@@ -1006,6 +1006,7 @@ int wps_registrar_button_pushed(struct wps_registrar *reg,
 					 (u8 *) "\xff\xff\xff\xff\xff\xff");
 	wps_registrar_selected_registrar_changed(reg, 0);
 
+	wps_pbc_active_event(reg->wps);
 	eloop_cancel_timeout(wps_registrar_set_selected_timeout, reg, NULL);
 	eloop_cancel_timeout(wps_registrar_pbc_timeout, reg, NULL);
 	eloop_register_timeout(WPS_PBC_WALK_TIME, 0, wps_registrar_pbc_timeout,
@@ -1019,6 +1020,7 @@ static void wps_registrar_pbc_completed(struct wps_registrar *reg)
 	wpa_printf(MSG_DEBUG, "WPS: PBC completed - stopping PBC mode");
 	eloop_cancel_timeout(wps_registrar_pbc_timeout, reg, NULL);
 	wps_registrar_stop_pbc(reg);
+	wps_pbc_disable_event(reg->wps);
 }
 
 
@@ -1268,7 +1270,7 @@ static int wps_set_ie(struct wps_registrar *reg)
 	    wps_build_sel_reg_dev_password_id(reg, beacon) ||
 	    wps_build_sel_reg_config_methods(reg, beacon) ||
 	    wps_build_sel_pbc_reg_uuid_e(reg, beacon) ||
-	    (reg->dualband && wps_build_rf_bands(&reg->wps->dev, beacon)) ||
+	    (reg->dualband && wps_build_rf_bands(&reg->wps->dev, beacon, 0)) ||
 	    wps_build_wfa_ext(beacon, 0, auth_macs, count) ||
 	    wps_build_vendor_ext(&reg->wps->dev, beacon)) {
 		wpabuf_free(beacon);
@@ -1298,7 +1300,7 @@ static int wps_set_ie(struct wps_registrar *reg)
 	    wps_build_uuid_e(probe, reg->wps->uuid) ||
 	    wps_build_device_attrs(&reg->wps->dev, probe) ||
 	    wps_build_probe_config_methods(reg, probe) ||
-	    (reg->dualband && wps_build_rf_bands(&reg->wps->dev, probe)) ||
+	    (reg->dualband && wps_build_rf_bands(&reg->wps->dev, probe, 0)) ||
 	    wps_build_wfa_ext(probe, 0, auth_macs, count) ||
 	    wps_build_vendor_ext(&reg->wps->dev, probe)) {
 		wpabuf_free(beacon);
@@ -1793,7 +1795,8 @@ static struct wpabuf * wps_build_m2(struct wps_data *wps)
 	    wps_build_conn_type_flags(wps, msg) ||
 	    wps_build_config_methods_r(wps->wps->registrar, msg) ||
 	    wps_build_device_attrs(&wps->wps->dev, msg) ||
-	    wps_build_rf_bands(&wps->wps->dev, msg) ||
+	    wps_build_rf_bands(&wps->wps->dev, msg,
+			       wps->wps->rf_band_cb(wps->wps->cb_ctx)) ||
 	    wps_build_assoc_state(wps, msg) ||
 	    wps_build_config_error(msg, WPS_CFG_NO_ERROR) ||
 	    wps_build_dev_password_id(msg, wps->dev_pw_id) ||
@@ -1834,7 +1837,8 @@ static struct wpabuf * wps_build_m2d(struct wps_data *wps)
 	    wps_build_conn_type_flags(wps, msg) ||
 	    wps_build_config_methods_r(wps->wps->registrar, msg) ||
 	    wps_build_device_attrs(&wps->wps->dev, msg) ||
-	    wps_build_rf_bands(&wps->wps->dev, msg) ||
+	    wps_build_rf_bands(&wps->wps->dev, msg,
+			       wps->wps->rf_band_cb(wps->wps->cb_ctx)) ||
 	    wps_build_assoc_state(wps, msg) ||
 	    wps_build_config_error(msg, err) ||
 	    wps_build_os_version(&wps->wps->dev, msg) ||
@@ -2172,7 +2176,7 @@ static int wps_process_e_snonce1(struct wps_data *wps, const u8 *e_snonce1)
 		wpa_printf(MSG_DEBUG, "WPS: E-Hash1 derived from E-S1 does "
 			   "not match with the pre-committed value");
 		wps->config_error = WPS_CFG_DEV_PASSWORD_AUTH_FAILURE;
-		wps_pwd_auth_fail_event(wps->wps, 0, 1);
+		wps_pwd_auth_fail_event(wps->wps, 0, 1, wps->mac_addr_e);
 		return -1;
 	}
 
@@ -2213,7 +2217,7 @@ static int wps_process_e_snonce2(struct wps_data *wps, const u8 *e_snonce2)
 			   "not match with the pre-committed value");
 		wps_registrar_invalidate_pin(wps->wps->registrar, wps->uuid_e);
 		wps->config_error = WPS_CFG_DEV_PASSWORD_AUTH_FAILURE;
-		wps_pwd_auth_fail_event(wps->wps, 0, 2);
+		wps_pwd_auth_fail_event(wps->wps, 0, 2, wps->mac_addr_e);
 		return -1;
 	}
 
@@ -2565,7 +2569,7 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 			wps_pbc_overlap_event(wps->wps);
 			wps_fail_event(wps->wps, WPS_M1,
 				       WPS_CFG_MULTIPLE_PBC_DETECTED,
-				       WPS_EI_NO_ERROR);
+				       WPS_EI_NO_ERROR, wps->mac_addr_e);
 			wps->wps->registrar->force_pbc_overlap = 1;
 			return WPS_CONTINUE;
 		}
@@ -2895,7 +2899,7 @@ static enum wps_process_res wps_process_wsc_msg(struct wps_data *wps,
 		ret = wps_process_m3(wps, msg, &attr);
 		if (ret == WPS_FAILURE || wps->state == SEND_WSC_NACK)
 			wps_fail_event(wps->wps, WPS_M3, wps->config_error,
-				       wps->error_indication);
+				       wps->error_indication, wps->mac_addr_e);
 		break;
 	case WPS_M5:
 		if (wps_validate_m5(msg) < 0)
@@ -2903,7 +2907,7 @@ static enum wps_process_res wps_process_wsc_msg(struct wps_data *wps,
 		ret = wps_process_m5(wps, msg, &attr);
 		if (ret == WPS_FAILURE || wps->state == SEND_WSC_NACK)
 			wps_fail_event(wps->wps, WPS_M5, wps->config_error,
-				       wps->error_indication);
+				       wps->error_indication, wps->mac_addr_e);
 		break;
 	case WPS_M7:
 		if (wps_validate_m7(msg) < 0)
@@ -2911,7 +2915,7 @@ static enum wps_process_res wps_process_wsc_msg(struct wps_data *wps,
 		ret = wps_process_m7(wps, msg, &attr);
 		if (ret == WPS_FAILURE || wps->state == SEND_WSC_NACK)
 			wps_fail_event(wps->wps, WPS_M7, wps->config_error,
-				       wps->error_indication);
+				       wps->error_indication, wps->mac_addr_e);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG, "WPS: Unsupported Message Type %d",
@@ -3057,19 +3061,19 @@ static enum wps_process_res wps_process_wsc_nack(struct wps_data *wps,
 	switch (old_state) {
 	case RECV_M3:
 		wps_fail_event(wps->wps, WPS_M2, config_error,
-			       wps->error_indication);
+			       wps->error_indication, wps->mac_addr_e);
 		break;
 	case RECV_M5:
 		wps_fail_event(wps->wps, WPS_M4, config_error,
-			       wps->error_indication);
+			       wps->error_indication, wps->mac_addr_e);
 		break;
 	case RECV_M7:
 		wps_fail_event(wps->wps, WPS_M6, config_error,
-			       wps->error_indication);
+			       wps->error_indication, wps->mac_addr_e);
 		break;
 	case RECV_DONE:
 		wps_fail_event(wps->wps, WPS_M8, config_error,
-			       wps->error_indication);
+			       wps->error_indication, wps->mac_addr_e);
 		break;
 	default:
 		break;
@@ -3190,7 +3194,7 @@ static enum wps_process_res wps_process_wsc_done(struct wps_data *wps,
 	/* TODO: maintain AuthorizedMACs somewhere separately for each ER and
 	 * merge them into APs own list.. */
 
-	wps_success_event(wps->wps);
+	wps_success_event(wps->wps, wps->mac_addr_e);
 
 	return WPS_DONE;
 }
@@ -3259,7 +3263,7 @@ enum wps_process_res wps_registrar_process_msg(struct wps_data *wps,
 			wps->state = SEND_WSC_NACK;
 			wps_fail_event(wps->wps, WPS_WSC_DONE,
 				       wps->config_error,
-				       wps->error_indication);
+				       wps->error_indication, wps->mac_addr_e);
 		}
 		return ret;
 	default:

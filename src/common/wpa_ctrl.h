@@ -67,6 +67,9 @@ extern "C" {
 #define WPA_EVENT_FREQ_CONFLICT "CTRL-EVENT-FREQ-CONFLICT "
 #endif
 
+/** RSN IBSS 4-way handshakes completed with specified peer */
+#define IBSS_RSN_COMPLETED "IBSS-RSN-COMPLETED "
+
 /** WPS overlap detected in PBC mode */
 #define WPS_EVENT_OVERLAP "WPS-OVERLAP-DETECTED "
 /** Available WPS AP with active PBC found in scan results */
@@ -88,6 +91,10 @@ extern "C" {
 #define WPS_EVENT_SUCCESS "WPS-SUCCESS "
 /** WPS enrollment attempt timed out and was terminated */
 #define WPS_EVENT_TIMEOUT "WPS-TIMEOUT "
+/* PBC mode was activated */
+#define WPS_EVENT_ACTIVE "WPS-PBC-ACTIVE "
+/* PBC mode was disabled */
+#define WPS_EVENT_DISABLE "WPS-PBC-DISABLE "
 
 #define WPS_EVENT_ENROLLEE_SEEN "WPS-ENROLLEE-SEEN "
 

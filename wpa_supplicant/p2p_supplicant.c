@@ -1058,6 +1058,7 @@ static void wpas_p2p_clone_config(struct wpa_supplicant *dst,
 	d->pbc_in_m1 = s->pbc_in_m1;
 	d->ignore_old_scan_res = s->ignore_old_scan_res;
 	d->beacon_int = s->beacon_int;
+	d->disassoc_low_ack = s->disassoc_low_ack;
 }
 
 
@@ -1237,7 +1238,13 @@ void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res)
 	if (wpa_s->p2p_go_ht40)
 		res->ht40 = 1;
 
-	wpa_msg_global(wpa_s, MSG_INFO, P2P_EVENT_GO_NEG_SUCCESS);
+	wpa_msg_global(wpa_s, MSG_INFO, P2P_EVENT_GO_NEG_SUCCESS "role=%s "
+		       "freq=%d ht40=%d peer_dev=" MACSTR " peer_iface=" MACSTR
+		       " wps_method=%s",
+		       res->role_go ? "GO" : "client", res->freq, res->ht40,
+		       MAC2STR(res->peer_device_addr),
+		       MAC2STR(res->peer_interface_addr),
+		       p2p_wps_method_text(res->wps_method));
 	wpas_notify_p2p_go_neg_completed(wpa_s, res);
 
 	if (res->role_go && wpa_s->p2p_persistent_id >= 0) {
@@ -3894,6 +3901,9 @@ static int wpas_p2p_setup_freqs(struct wpa_supplicant *wpa_s, int freq,
 
 	num = get_shared_radio_freqs(wpa_s, freqs,
 				     wpa_s->num_multichan_concurrent);
+	wpa_printf(MSG_DEBUG,
+		   "P2P: Setup freqs: freq=%d num_MCC=%d shared_freqs=%u",
+		   freq, wpa_s->num_multichan_concurrent, num);
 
 	if (freq > 0) {
 		if (!p2p_supported_freq(wpa_s->global->p2p, freq)) {
@@ -4186,7 +4196,11 @@ int wpas_p2p_group_remove(struct wpa_supplicant *wpa_s, const char *ifname)
 		while (wpa_s) {
 			prev = wpa_s;
 			wpa_s = wpa_s->next;
-			wpas_p2p_disconnect(prev);
+			if (prev->p2p_group_interface !=
+			    NOT_P2P_GROUP_INTERFACE ||
+			    (prev->current_ssid &&
+			     prev->current_ssid->p2p_group))
+				wpas_p2p_disconnect(prev);
 		}
 		return 0;
 	}
