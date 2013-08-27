@@ -3229,15 +3229,23 @@ static void nl80211_get_phy_name(struct wpa_driver_nl80211_data *drv)
 {
 	/* Find phy (radio) to which this interface belongs */
 	char buf[90], *pos;
-	int f, rv;
+	int f = -1, rv;
+	int x = 0;
 
 	drv->phyname[0] = '\0';
 	snprintf(buf, sizeof(buf) - 1, "/sys/class/net/%s/phy80211/name",
 		 drv->first_bss.ifname);
-	f = open(buf, O_RDONLY);
+
+	//Gives 5 attempts to connect to file
+	while ((f < 0) || (x < 5)){
+		f = open(buf, O_RDONLY);
+		sleep(5);
+		x++;
+	}
+
 	if (f < 0) {
 		wpa_printf(MSG_DEBUG, "Could not open file %s: %s",
-			   buf, strerror(errno));
+				buf, strerror(errno));
 		return;
 	}
 

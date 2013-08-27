@@ -1540,6 +1540,11 @@ include $(BUILD_EXECUTABLE)
 
 ########################
 include $(CLEAR_VARS)
+
+ifeq ($(TARGET_BOOTLOADER_BOARD_NAME),tenderloin)
+L_CFLAGS += -DUSE_LOOP
+endif
+
 LOCAL_MODULE := wpa_supplicant
 ifdef CONFIG_DRIVER_CUSTOM
 LOCAL_STATIC_LIBRARIES := libCustomWifi
