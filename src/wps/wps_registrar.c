@@ -1,6 +1,6 @@
 /*
  * Wi-Fi Protected Setup - Registrar
- * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -142,8 +142,8 @@ struct wps_registrar {
 	int pbc;
 	int selected_registrar;
 
-	int (*new_psk_cb)(void *ctx, const u8 *mac_addr, const u8 *psk,
-			  size_t psk_len);
+	int (*new_psk_cb)(void *ctx, const u8 *mac_addr, const u8 *p2p_dev_addr,
+			  const u8 *psk, size_t psk_len);
 	int (*set_ie_cb)(void *ctx, struct wpabuf *beacon_ie,
 			 struct wpabuf *probe_resp_ie);
 	void (*pin_needed_cb)(void *ctx, const u8 *uuid_e,
@@ -171,6 +171,7 @@ struct wps_registrar {
 	int sel_reg_config_methods_override;
 	int static_wep_only;
 	int dualband;
+	int force_per_enrollee_psk;
 
 	struct wps_registrar_device *devices;
 
@@ -672,6 +673,7 @@ wps_registrar_init(struct wps_context *wps,
 	reg->sel_reg_config_methods_override = -1;
 	reg->static_wep_only = cfg->static_wep_only;
 	reg->dualband = cfg->dualband;
+	reg->force_per_enrollee_psk = cfg->force_per_enrollee_psk;
 
 	if (wps_set_ie(reg)) {
 		wps_registrar_deinit(reg);
@@ -1167,12 +1169,13 @@ void wps_registrar_probe_req_rx(struct wps_registrar *reg, const u8 *addr,
 
 
 static int wps_cb_new_psk(struct wps_registrar *reg, const u8 *mac_addr,
-			  const u8 *psk, size_t psk_len)
+			  const u8 *p2p_dev_addr, const u8 *psk, size_t psk_len)
 {
 	if (reg->new_psk_cb == NULL)
 		return 0;
 
-	return reg->new_psk_cb(reg->cb_ctx, mac_addr, psk, psk_len);
+	return reg->new_psk_cb(reg->cb_ctx, mac_addr, p2p_dev_addr, psk,
+			       psk_len);
 }
 
 
@@ -1645,13 +1648,15 @@ int wps_build_cred(struct wps_data *wps, struct wpabuf *msg)
 				      wps->new_psk, wps->new_psk_len);
 		os_memcpy(wps->cred.key, wps->new_psk, wps->new_psk_len);
 		wps->cred.key_len = wps->new_psk_len;
-	} else if (wps->use_psk_key && wps->wps->psk_set) {
+	} else if (!wps->wps->registrar->force_per_enrollee_psk &&
+		   wps->use_psk_key && wps->wps->psk_set) {
 		char hex[65];
 		wpa_printf(MSG_DEBUG, "WPS: Use PSK format for Network Key");
 		wpa_snprintf_hex(hex, sizeof(hex), wps->wps->psk, 32);
 		os_memcpy(wps->cred.key, hex, 32 * 2);
 		wps->cred.key_len = 32 * 2;
-	} else if (wps->wps->network_key) {
+	} else if (!wps->wps->registrar->force_per_enrollee_psk &&
+		   wps->wps->network_key) {
 		os_memcpy(wps->cred.key, wps->wps->network_key,
 			  wps->wps->network_key_len);
 		wps->cred.key_len = wps->wps->network_key_len;
@@ -3169,7 +3174,8 @@ static enum wps_process_res wps_process_wsc_done(struct wps_data *wps,
 
 	if (wps->new_psk) {
 		if (wps_cb_new_psk(wps->wps->registrar, wps->mac_addr_e,
-				   wps->new_psk, wps->new_psk_len)) {
+				   wps->p2p_dev_addr, wps->new_psk,
+				   wps->new_psk_len)) {
 			wpa_printf(MSG_DEBUG, "WPS: Failed to configure the "
 				   "new PSK");
 		}

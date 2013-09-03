@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant / Control interface (shared code for all backends)
- * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -1503,7 +1503,10 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 	}
 #ifdef CONFIG_SAE
 	if (wpa_s->wpa_state >= WPA_ASSOCIATED &&
-	    wpa_s->sme.sae.state == SAE_ACCEPTED && !wpa_s->ap_iface) {
+#ifdef CONFIG_AP
+	    !wpa_s->ap_iface &&
+#endif /* CONFIG_AP */
+	    wpa_s->sme.sae.state == SAE_ACCEPTED) {
 		ret = os_snprintf(pos, end - pos, "sae_group=%d\n",
 				  wpa_s->sme.sae.group);
 		if (ret < 0 || ret >= end - pos)
@@ -4578,6 +4581,11 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 					max_disc_int, max_disc_tu);
 	}
 
+	if (os_strcmp(cmd, "per_sta_psk") == 0) {
+		wpa_s->global->p2p_per_sta_psk = !!atoi(param);
+		return 0;
+	}
+
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE: Unknown P2P_SET field value '%s'",
 		   cmd);
 
@@ -4641,6 +4649,25 @@ static int p2p_ctrl_ext_listen(struct wpa_supplicant *wpa_s, char *cmd)
 	}
 
 	return wpas_p2p_ext_listen(wpa_s, period, interval);
+}
+
+
+static int p2p_ctrl_remove_client(struct wpa_supplicant *wpa_s, const char *cmd)
+{
+	const char *pos;
+	u8 peer[ETH_ALEN];
+	int iface_addr = 0;
+
+	pos = cmd;
+	if (os_strncmp(pos, "iface=", 6) == 0) {
+		iface_addr = 1;
+		pos += 6;
+	}
+	if (hwaddr_aton(pos, peer))
+		return -1;
+
+	wpas_p2p_remove_client(wpa_s, peer, iface_addr);
+	return 0;
 }
 
 #endif /* CONFIG_P2P */
@@ -5478,6 +5505,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strcmp(buf, "P2P_EXT_LISTEN") == 0) {
 		if (p2p_ctrl_ext_listen(wpa_s, "") < 0)
 			reply_len = -1;
+	} else if (os_strncmp(buf, "P2P_REMOVE_CLIENT ", 18) == 0) {
+		if (p2p_ctrl_remove_client(wpa_s, buf + 18) < 0)
+			reply_len = -1;
 #endif /* CONFIG_P2P */
 #ifdef CONFIG_WIFI_DISPLAY
 	} else if (os_strncmp(buf, "WFD_SUBELEM_SET ", 16) == 0) {
@@ -5979,6 +6009,7 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 		"P2P_UNAUTHORIZE ",
 		"P2P_PRESENCE_REQ ",
 		"P2P_EXT_LISTEN ",
+		"P2P_REMOVE_CLIENT ",
 		NULL
 	};
 	int found = 0;

@@ -884,6 +884,12 @@ else
 OBJS_c += src/utils/edit_simple.c
 endif
 
+ifdef CONFIG_ACS
+L_CFLAGS += -DCONFIG_ACS
+OBJS += src/ap/acs.c
+LIBS += -lm
+endif
+
 ########################
 
 include $(CLEAR_VARS)

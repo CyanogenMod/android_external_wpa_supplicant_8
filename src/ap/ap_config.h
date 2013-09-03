@@ -105,6 +105,7 @@ struct hostapd_wpa_psk {
 	int group;
 	u8 psk[PMK_LEN];
 	u8 addr[ETH_ALEN];
+	u8 p2p_dev_addr[ETH_ALEN];
 };
 
 struct hostapd_eap_user {
@@ -358,6 +359,7 @@ struct hostapd_bss_config {
 	u8 *extra_cred;
 	size_t extra_cred_len;
 	int wps_cred_processing;
+	int force_per_enrollee_psk;
 	u8 *ap_settings;
 	size_t ap_settings_len;
 	char *upnp_iface;
@@ -532,6 +534,10 @@ struct hostapd_config {
 	double ignore_reassoc_probability;
 	double corrupt_gtk_rekey_mic_probability;
 #endif /* CONFIG_TESTING_OPTIONS */
+
+#ifdef CONFIG_ACS
+	unsigned int acs_num_scans;
+#endif /* CONFIG_ACS */
 };
 
 
@@ -546,7 +552,8 @@ int hostapd_rate_found(int *list, int rate);
 int hostapd_wep_key_cmp(struct hostapd_wep_keys *a,
 			struct hostapd_wep_keys *b);
 const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
-			   const u8 *addr, const u8 *prev_psk);
+			   const u8 *addr, const u8 *p2p_dev_addr,
+			   const u8 *prev_psk);
 int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
 int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id);
 const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,

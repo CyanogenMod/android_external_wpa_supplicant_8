@@ -204,6 +204,11 @@ struct hostapd_data {
 	void (*setup_complete_cb)(void *ctx);
 	void *setup_complete_cb_ctx;
 
+	void (*new_psk_cb)(void *ctx, const u8 *mac_addr,
+			   const u8 *p2p_dev_addr, const u8 *psk,
+			   size_t psk_len);
+	void *new_psk_cb_ctx;
+
 #ifdef CONFIG_P2P
 	struct p2p_data *p2p;
 	struct p2p_group *p2p_group;
@@ -309,6 +314,10 @@ struct hostapd_iface {
 
 	/* lowest observed noise floor in dBm */
 	s8 lowest_nf;
+
+#ifdef CONFIG_ACS
+	unsigned int acs_num_completed_scans;
+#endif /* CONFIG_ACS */
 
 	void (*scan_cb)(struct hostapd_iface *iface);
 };

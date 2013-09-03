@@ -184,7 +184,8 @@ struct wpa_auth_callbacks {
 	void (*set_eapol)(void *ctx, const u8 *addr, wpa_eapol_variable var,
 			  int value);
 	int (*get_eapol)(void *ctx, const u8 *addr, wpa_eapol_variable var);
-	const u8 * (*get_psk)(void *ctx, const u8 *addr, const u8 *prev_psk);
+	const u8 * (*get_psk)(void *ctx, const u8 *addr, const u8 *p2p_dev_addr,
+			      const u8 *prev_psk);
 	int (*get_msk)(void *ctx, const u8 *addr, u8 *msk, size_t *len);
 	int (*set_key)(void *ctx, int vlan_id, enum wpa_alg alg,
 		       const u8 *addr, int idx, u8 *key, size_t key_len);
@@ -227,7 +228,8 @@ int wpa_validate_wpa_ie(struct wpa_authenticator *wpa_auth,
 			const u8 *mdie, size_t mdie_len);
 int wpa_auth_uses_mfp(struct wpa_state_machine *sm);
 struct wpa_state_machine *
-wpa_auth_sta_init(struct wpa_authenticator *wpa_auth, const u8 *addr);
+wpa_auth_sta_init(struct wpa_authenticator *wpa_auth, const u8 *addr,
+		  const u8 *p2p_dev_addr);
 int wpa_auth_sta_associated(struct wpa_authenticator *wpa_auth,
 			    struct wpa_state_machine *sm);
 void wpa_auth_sta_no_wpa(struct wpa_state_machine *sm);

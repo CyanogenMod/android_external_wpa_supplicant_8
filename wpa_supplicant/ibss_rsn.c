@@ -257,7 +257,8 @@ static void auth_logger(void *ctx, const u8 *addr, logger_level level,
 }
 
 
-static const u8 * auth_get_psk(void *ctx, const u8 *addr, const u8 *prev_psk)
+static const u8 * auth_get_psk(void *ctx, const u8 *addr,
+			       const u8 *p2p_dev_addr, const u8 *prev_psk)
 {
 	struct ibss_rsn *ibss_rsn = ctx;
 	wpa_printf(MSG_DEBUG, "AUTH: %s (addr=" MACSTR " prev_psk=%p)",
@@ -444,7 +445,7 @@ static int ibss_rsn_auth_init_group(struct ibss_rsn *ibss_rsn,
 static int ibss_rsn_auth_init(struct ibss_rsn *ibss_rsn,
 			      struct ibss_rsn_peer *peer)
 {
-	peer->auth = wpa_auth_sta_init(ibss_rsn->auth_group, peer->addr);
+	peer->auth = wpa_auth_sta_init(ibss_rsn->auth_group, peer->addr, NULL);
 	if (peer->auth == NULL) {
 		wpa_printf(MSG_DEBUG, "AUTH: wpa_auth_sta_init() failed");
 		return -1;

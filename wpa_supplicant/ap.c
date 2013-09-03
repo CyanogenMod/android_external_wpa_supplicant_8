@@ -148,6 +148,7 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	}
 
 	bss->isolate = !wpa_s->conf->p2p_intra_bss;
+	bss->force_per_enrollee_psk = wpa_s->global->p2p_per_sta_psk;
 #endif /* CONFIG_P2P */
 
 	if (ssid->ssid_len == 0) {
@@ -366,6 +367,19 @@ static void ap_sta_authorized_cb(void *ctx, const u8 *mac_addr,
 }
 
 
+#ifdef CONFIG_P2P
+static void ap_new_psk_cb(void *ctx, const u8 *mac_addr, const u8 *p2p_dev_addr,
+			  const u8 *psk, size_t psk_len)
+{
+
+	struct wpa_supplicant *wpa_s = ctx;
+	if (wpa_s->ap_iface == NULL || wpa_s->current_ssid == NULL)
+		return;
+	wpas_p2p_new_psk_cb(wpa_s, mac_addr, p2p_dev_addr, psk, psk_len);
+}
+#endif /* CONFIG_P2P */
+
+
 static int ap_vendor_action_rx(void *ctx, const u8 *buf, size_t len, int freq)
 {
 #ifdef CONFIG_P2P
@@ -491,11 +505,6 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 
 	if (wpa_drv_associate(wpa_s, &params) < 0) {
 		wpa_msg(wpa_s, MSG_INFO, "Failed to start AP functionality");
-#ifdef CONFIG_P2P
-		if (ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION &&
-		    wpa_s->global->p2p_group_formation == wpa_s)
-			wpas_p2p_group_formation_failed(wpa_s->parent);
-#endif /* CONFIG_P2P */
 		return -1;
 	}
 
@@ -570,6 +579,8 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		hapd_iface->bss[i]->sta_authorized_cb = ap_sta_authorized_cb;
 		hapd_iface->bss[i]->sta_authorized_cb_ctx = wpa_s;
 #ifdef CONFIG_P2P
+		hapd_iface->bss[i]->new_psk_cb = ap_new_psk_cb;
+		hapd_iface->bss[i]->new_psk_cb_ctx = wpa_s;
 		hapd_iface->bss[i]->p2p = wpa_s->global->p2p;
 		hapd_iface->bss[i]->p2p_group = wpas_p2p_group_init(wpa_s,
 								    ssid);

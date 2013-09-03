@@ -276,7 +276,7 @@ int wpa_supplicant_scard_init(struct wpa_supplicant *wpa_s,
 {
 #ifdef IEEE8021X_EAPOL
 #ifdef PCSC_FUNCS
-	int aka = 0, sim = 0, type;
+	int aka = 0, sim = 0;
 
 	if (ssid->eap.pcsc == NULL || wpa_s->scard != NULL)
 		return 0;
@@ -315,14 +315,9 @@ int wpa_supplicant_scard_init(struct wpa_supplicant *wpa_s,
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Selected network is configured to use SIM "
 		"(sim=%d aka=%d) - initialize PCSC", sim, aka);
-	if (sim && aka)
-		type = SCARD_TRY_BOTH;
-	else if (aka)
-		type = SCARD_USIM_ONLY;
-	else
-		type = SCARD_GSM_SIM_ONLY;
 
-	wpa_s->scard = scard_init(type, NULL);
+	wpa_s->scard = scard_init((!sim && aka) ? SCARD_USIM_ONLY :
+				  SCARD_TRY_BOTH, NULL);
 	if (wpa_s->scard == NULL) {
 		wpa_msg(wpa_s, MSG_WARNING, "Failed to initialize SIM "
 			"(pcsc-lite)");
@@ -2029,6 +2024,8 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 	if (could_be_psk_mismatch(wpa_s, reason_code, locally_generated)) {
 		wpa_msg(wpa_s, MSG_INFO, "WPA: 4-Way Handshake failed - "
 			"pre-shared key may be incorrect");
+		if (wpas_p2p_4way_hs_failed(wpa_s) > 0)
+			return; /* P2P group removed */
 		wpas_auth_failed(wpa_s);
 	}
 	if (!wpa_s->disconnected &&
@@ -2484,7 +2481,7 @@ static void wpas_event_disconnect(struct wpa_supplicant *wpa_s, const u8 *addr,
 		wpas_auth_failed(wpa_s);
 
 #ifdef CONFIG_P2P
-	if (deauth && ie && ie_len > 0) {
+	if (deauth && reason_code > 0) {
 		if (wpas_p2p_deauth_notif(wpa_s, addr, reason_code, ie, ie_len,
 					  locally_generated) > 0) {
 			/*

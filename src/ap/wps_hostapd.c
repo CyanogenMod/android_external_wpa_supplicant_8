@@ -91,15 +91,24 @@ static int hostapd_wps_for_each(struct hostapd_data *hapd,
 }
 
 
-static int hostapd_wps_new_psk_cb(void *ctx, const u8 *mac_addr, const u8 *psk,
+static int hostapd_wps_new_psk_cb(void *ctx, const u8 *mac_addr,
+				  const u8 *p2p_dev_addr, const u8 *psk,
 				  size_t psk_len)
 {
 	struct hostapd_data *hapd = ctx;
 	struct hostapd_wpa_psk *p;
 	struct hostapd_ssid *ssid = &hapd->conf->ssid;
 
-	wpa_printf(MSG_DEBUG, "Received new WPA/WPA2-PSK from WPS for STA "
-		   MACSTR, MAC2STR(mac_addr));
+	if (is_zero_ether_addr(p2p_dev_addr)) {
+		wpa_printf(MSG_DEBUG,
+			   "Received new WPA/WPA2-PSK from WPS for STA " MACSTR,
+			   MAC2STR(mac_addr));
+	} else {
+		wpa_printf(MSG_DEBUG,
+			   "Received new WPA/WPA2-PSK from WPS for STA " MACSTR
+			   " P2P Device Addr " MACSTR,
+			   MAC2STR(mac_addr), MAC2STR(p2p_dev_addr));
+	}
 	wpa_hexdump_key(MSG_DEBUG, "Per-device PSK", psk, psk_len);
 
 	if (psk_len != PMK_LEN) {
@@ -113,7 +122,13 @@ static int hostapd_wps_new_psk_cb(void *ctx, const u8 *mac_addr, const u8 *psk,
 	if (p == NULL)
 		return -1;
 	os_memcpy(p->addr, mac_addr, ETH_ALEN);
+	os_memcpy(p->p2p_dev_addr, p2p_dev_addr, ETH_ALEN);
 	os_memcpy(p->psk, psk, PMK_LEN);
+
+	if (hapd->new_psk_cb) {
+		hapd->new_psk_cb(hapd->new_psk_cb_ctx, mac_addr, p2p_dev_addr,
+				 psk, psk_len);
+	}
 
 	p->next = ssid->wpa_psk;
 	ssid->wpa_psk = p;
@@ -1145,6 +1160,7 @@ int hostapd_init_wps(struct hostapd_data *hapd,
 		cfg.dualband = 1;
 	if (cfg.dualband)
 		wpa_printf(MSG_DEBUG, "WPS: Dualband AP");
+	cfg.force_per_enrollee_psk = conf->force_per_enrollee_psk;
 
 	wps->registrar = wps_registrar_init(wps, &cfg);
 	if (wps->registrar == NULL) {

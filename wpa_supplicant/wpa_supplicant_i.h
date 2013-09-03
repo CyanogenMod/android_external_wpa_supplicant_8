@@ -265,12 +265,15 @@ struct wpa_global {
 		WPA_CONC_PREF_P2P
 	} conc_pref;
 	unsigned int p2p_cb_on_scan_complete:1;
+	unsigned int p2p_per_sta_psk:1;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	int wifi_display;
 #define MAX_WFD_SUBELEMS 10
 	struct wpabuf *wfd_subelem[MAX_WFD_SUBELEMS];
 #endif /* CONFIG_WIFI_DISPLAY */
+
+	struct psk_list_entry *add_psk; /* From group formation */
 };
 
 
@@ -649,6 +652,7 @@ struct wpa_supplicant {
 	int p2p_go_intent;
 	int p2p_connect_freq;
 	struct os_time p2p_auto_started;
+	struct wpa_ssid *p2p_last_4way_hs_fail;
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;

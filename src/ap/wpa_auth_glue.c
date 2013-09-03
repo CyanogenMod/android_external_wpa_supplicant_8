@@ -186,6 +186,7 @@ static int hostapd_wpa_auth_get_eapol(void *ctx, const u8 *addr,
 
 
 static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+					   const u8 *p2p_dev_addr,
 					   const u8 *prev_psk)
 {
 	struct hostapd_data *hapd = ctx;
@@ -200,7 +201,7 @@ static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
 	}
 #endif /* CONFIG_SAE */
 
-	psk = hostapd_get_psk(hapd->conf, addr, prev_psk);
+	psk = hostapd_get_psk(hapd->conf, addr, p2p_dev_addr, prev_psk);
 	/*
 	 * This is about to iterate over all psks, prev_psk gives the last
 	 * returned psk which should not be returned again.
@@ -471,7 +472,7 @@ hostapd_wpa_auth_add_sta(void *ctx, const u8 *sta_addr)
 		return sta->wpa_sm;
 	}
 
-	sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth, sta->addr);
+	sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth, sta->addr, NULL);
 	if (sta->wpa_sm == NULL) {
 		ap_free_sta(hapd, sta);
 		return NULL;

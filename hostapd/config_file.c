@@ -1104,6 +1104,24 @@ static int hostapd_config_check_bss(struct hostapd_bss_config *bss,
 		return -1;
 	}
 
+	if (bss->wpa) {
+		int wep, i;
+
+		wep = bss->default_wep_key_len > 0 ||
+		       bss->individual_wep_key_len > 0;
+		for (i = 0; i < NUM_WEP_KEYS; i++) {
+			if (bss->ssid.wep.keys_set) {
+				wep = 1;
+				break;
+			}
+		}
+
+		if (wep) {
+			wpa_printf(MSG_ERROR, "WEP configuration in a WPA network is not supported");
+			return -1;
+		}
+	}
+
 	if (bss->wpa && bss->wpa_psk_radius != PSK_RADIUS_IGNORED &&
 	    bss->macaddr_acl != USE_EXTERNAL_RADIUS_AUTH) {
 		wpa_printf(MSG_ERROR, "WPA-PSK using RADIUS enabled, but no "
@@ -2311,7 +2329,15 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				errors++;
 			}
 		} else if (os_strcmp(buf, "channel") == 0) {
-			conf->channel = atoi(pos);
+			if (os_strcmp(pos, "acs_survey") == 0) {
+#ifndef CONFIG_ACS
+				wpa_printf(MSG_ERROR, "Line %d: tries to enable ACS but CONFIG_ACS disabled",
+					   line);
+				errors++;
+#endif /* CONFIG_ACS */
+				conf->channel = 0;
+			} else
+				conf->channel = atoi(pos);
 		} else if (os_strcmp(buf, "beacon_int") == 0) {
 			int val = atoi(pos);
 			/* MIB defines range as 1..65535, but very small values
@@ -2326,6 +2352,16 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				errors++;
 			} else
 				conf->beacon_int = val;
+#ifdef CONFIG_ACS
+		} else if (os_strcmp(buf, "acs_num_scans") == 0) {
+			int val = atoi(pos);
+			if (val <= 0 || val > 100) {
+				wpa_printf(MSG_ERROR, "Line %d: invalid acs_num_scans %d (expected 1..100)",
+					   line, val);
+				errors++;
+			} else
+				conf->acs_num_scans = val;
+#endif /* CONFIG_ACS */
 		} else if (os_strcmp(buf, "dtim_period") == 0) {
 			bss->dtim_period = atoi(pos);
 			if (bss->dtim_period < 1 || bss->dtim_period > 255) {

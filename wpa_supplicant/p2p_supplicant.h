@@ -156,11 +156,27 @@ int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s);
 int wpas_p2p_get_ht40_mode(struct wpa_supplicant *wpa_s,
 			   struct hostapd_hw_modes *mode, u8 channel);
 unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s);
+void wpas_p2p_new_psk_cb(struct wpa_supplicant *wpa_s, const u8 *mac_addr,
+			 const u8 *p2p_dev_addr,
+			 const u8 *psk, size_t psk_len);
+void wpas_p2p_remove_client(struct wpa_supplicant *wpa_s, const u8 *peer,
+			    int iface_addr);
 
 #ifdef CONFIG_P2P
 void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s);
+int wpas_p2p_4way_hs_failed(struct wpa_supplicant *wpa_s);
+void wpas_p2p_ap_setup_failed(struct wpa_supplicant *wpa_s);
 #else /* CONFIG_P2P */
 static inline void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s)
+{
+}
+
+static inline int wpas_p2p_4way_hs_failed(struct wpa_supplicant *wpa_s)
+{
+	return 0;
+}
+
+static inline void wpas_p2p_ap_setup_failed(struct wpa_supplicant *wpa_s)
 {
 }
 #endif /* CONFIG_P2P */
