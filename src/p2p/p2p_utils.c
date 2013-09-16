@@ -249,8 +249,7 @@ int p2p_supported_freq(struct p2p_data *p2p, unsigned int freq)
 	u8 op_reg_class, op_channel;
 
 #ifdef ANDROID_P2P
-	if ((freq >= 5170 && freq < 5745) &&
-	    (os_strncasecmp(p2p->cfg->country, "US", 2) == 0))
+	if (freq >= 5170 && freq < 5745)
 		return 0;
 #endif
 	if (p2p_freq_to_channel(freq, &op_reg_class, &op_channel) < 0)
