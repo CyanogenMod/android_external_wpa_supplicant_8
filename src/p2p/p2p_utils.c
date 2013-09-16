@@ -247,6 +247,12 @@ int p2p_channels_includes_freq(const struct p2p_channels *channels,
 int p2p_supported_freq(struct p2p_data *p2p, unsigned int freq)
 {
 	u8 op_reg_class, op_channel;
+
+#ifdef ANDROID_P2P
+	if (freq >= 5170 && freq < 5745)
+
+		return 0;
+#endif
 	if (p2p_freq_to_channel(freq, &op_reg_class, &op_channel) < 0)
 		return 0;
 	return p2p_channels_includes(&p2p->cfg->channels, op_reg_class,
