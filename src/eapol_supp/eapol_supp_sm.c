@@ -1284,12 +1284,6 @@ int eapol_sm_rx_eapol(struct eapol_sm *sm, const u8 *src, const u8 *buf,
 		}
 		wpabuf_free(sm->eapReqData);
 		sm->eapReqData = wpabuf_alloc_copy(hdr + 1, plen);
-		const struct eap_hdr *ehdr =
-			(const struct eap_hdr *) (hdr + 1);
-		if (sm->conf.workaround && plen >=  sizeof (*ehdr) &&
-		    10 == ehdr->code)
-			break;
-
 		if (sm->eapReqData) {
 			wpa_printf(MSG_DEBUG, "EAPOL: Received EAP-Packet "
 				   "frame");
