@@ -275,21 +275,13 @@ static int wpa_tdls_tpk_send(struct wpa_sm *sm, const u8 *dest, u8 action_code,
 
 
 static int wpa_tdls_do_teardown(struct wpa_sm *sm, struct wpa_tdls_peer *peer,
-				u16 reason_code, int free_peer)
+				u16 reason_code)
 {
 	int ret;
 
-	if (sm->tdls_external_setup) {
-		ret = wpa_tdls_send_teardown(sm, peer->addr, reason_code);
-
-		/* disable the link after teardown was sent */
-		wpa_sm_tdls_oper(sm, TDLS_DISABLE_LINK, peer->addr);
-	} else {
-		ret = wpa_sm_tdls_oper(sm, TDLS_TEARDOWN, peer->addr);
-	}
-
-	if (sm->tdls_external_setup || free_peer)
-		wpa_tdls_peer_free(sm, peer);
+	ret = wpa_tdls_send_teardown(sm, peer->addr, reason_code);
+	/* disable the link after teardown was sent */
+	wpa_tdls_disable_link(sm, peer->addr);
 
 	return ret;
 }
@@ -337,7 +329,7 @@ static void wpa_tdls_tpk_retry_timeout(void *eloop_ctx, void *timeout_ctx)
 
 		wpa_printf(MSG_DEBUG, "TDLS: Sending Teardown Request");
 		wpa_tdls_do_teardown(sm, peer,
-				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED, 1);
+				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
 	}
 }
 
@@ -615,7 +607,7 @@ static void wpa_tdls_tpk_timeout(void *eloop_ctx, void *timeout_ctx)
 		wpa_printf(MSG_DEBUG, "TDLS: TPK lifetime expired for " MACSTR
 			   " - tear down", MAC2STR(peer->addr));
 		wpa_tdls_do_teardown(sm, peer,
-				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED, 1);
+				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
 	}
 }
 
@@ -778,7 +770,7 @@ int wpa_tdls_teardown_link(struct wpa_sm *sm, const u8 *addr, u16 reason_code)
 		return -1;
 	}
 
-	return wpa_tdls_do_teardown(sm, peer, reason_code, 0);
+	return wpa_tdls_do_teardown(sm, peer, reason_code);
 }
 
 
