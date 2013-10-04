@@ -1189,13 +1189,11 @@ int hostapd_reload_iface(struct hostapd_iface *hapd_iface)
 int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 {
 	size_t j;
-	struct hostapd_bss_config *bss;
 	const struct wpa_driver_ops *driver;
 	void *drv_priv;
 
 	if (hapd_iface == NULL)
 		return -1;
-	bss = hapd_iface->bss[0]->conf;
 	driver = hapd_iface->bss[0]->driver;
 	drv_priv = hapd_iface->bss[0]->drv_priv;
 
@@ -1217,11 +1215,9 @@ int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 	 * hostapd_setup_interface and hostapd_setup_interface_complete
 	 */
 	hostapd_cleanup_iface_partial(hapd_iface);
-	bss->wpa = 0;
-	bss->wpa_key_mgmt = -1;
-	bss->wpa_pairwise = -1;
 
-	wpa_printf(MSG_DEBUG, "Interface %s disabled", bss->iface);
+	wpa_printf(MSG_DEBUG, "Interface %s disabled",
+		   hapd_iface->bss[0]->conf->iface);
 	return 0;
 }
 
@@ -1326,11 +1322,15 @@ int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
 	struct hostapd_iface *hapd_iface = NULL;
 	char *ptr;
 	size_t i;
+	const char *conf_file = NULL;
 
 	ptr = os_strchr(buf, ' ');
 	if (ptr == NULL)
 		return -1;
 	*ptr++ = '\0';
+
+	if (os_strncmp(ptr, "config=", 7) == 0)
+		conf_file = ptr + 7;
 
 	for (i = 0; i < interfaces->count; i++) {
 		if (!os_strcmp(interfaces->iface[i]->conf->bss[0].iface,
@@ -1348,8 +1348,14 @@ int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
 		goto fail;
 	}
 
-	conf = hostapd_config_alloc(interfaces, buf, ptr);
-	if (conf == NULL) {
+	if (conf_file && interfaces->config_read_cb) {
+		conf = interfaces->config_read_cb(conf_file);
+		if (conf && conf->bss)
+			os_strlcpy(conf->bss->iface, buf,
+				   sizeof(conf->bss->iface));
+	} else
+		conf = hostapd_config_alloc(interfaces, buf, ptr);
+	if (conf == NULL || conf->bss == NULL) {
 		wpa_printf(MSG_ERROR, "%s: Failed to allocate memory "
 			   "for configuration", __func__);
 		goto fail;
