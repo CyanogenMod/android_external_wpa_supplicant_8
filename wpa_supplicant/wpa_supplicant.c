@@ -49,6 +49,7 @@
 #include "scan.h"
 #include "offchannel.h"
 #include "hs20_supplicant.h"
+#include "wnm_sta.h"
 
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
@@ -126,8 +127,8 @@ int wpa_set_wep_keys(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid)
 }
 
 
-static int wpa_supplicant_set_wpa_none_key(struct wpa_supplicant *wpa_s,
-					   struct wpa_ssid *ssid)
+int wpa_supplicant_set_wpa_none_key(struct wpa_supplicant *wpa_s,
+				    struct wpa_ssid *ssid)
 {
 	u8 key[32];
 	size_t keylen;
@@ -470,6 +471,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_s->disallow_aps_ssid = NULL;
 
 	wnm_bss_keep_alive_deinit(wpa_s);
+#ifdef CONFIG_WNM
+	wnm_deallocate_memory(wpa_s);
+#endif /* CONFIG_WNM */
 
 	ext_password_deinit(wpa_s->ext_pw);
 	wpa_s->ext_pw = NULL;
@@ -1279,8 +1283,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	struct wpa_driver_capa capa;
 	int assoc_failed = 0;
 	struct wpa_ssid *old_ssid;
-	u8 ext_capab[10];
-	int ext_capab_len;
 #ifdef CONFIG_HT_OVERRIDES
 	struct ieee80211_ht_capabilities htcaps;
 	struct ieee80211_ht_capabilities htcaps_mask;
@@ -1493,15 +1495,27 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_HS20 */
 
-	ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab);
-	if (ext_capab_len > 0) {
-		u8 *pos = wpa_ie;
-		if (wpa_ie_len > 0 && pos[0] == WLAN_EID_RSN)
-			pos += 2 + pos[1];
-		os_memmove(pos + ext_capab_len, pos,
-			   wpa_ie_len - (pos - wpa_ie));
-		wpa_ie_len += ext_capab_len;
-		os_memcpy(pos, ext_capab, ext_capab_len);
+	/*
+	 * Workaround: Add Extended Capabilities element only if the AP
+	 * included this element in Beacon/Probe Response frames. Some older
+	 * APs seem to have interoperability issues if this element is
+	 * included, so while the standard may require us to include the
+	 * element in all cases, it is justifiable to skip it to avoid
+	 * interoperability issues.
+	 */
+	if (!bss || wpa_bss_get_ie(bss, WLAN_EID_EXT_CAPAB)) {
+		u8 ext_capab[10];
+		int ext_capab_len;
+		ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab);
+		if (ext_capab_len > 0) {
+			u8 *pos = wpa_ie;
+			if (wpa_ie_len > 0 && pos[0] == WLAN_EID_RSN)
+				pos += 2 + pos[1];
+			os_memmove(pos + ext_capab_len, pos,
+				   wpa_ie_len - (pos - wpa_ie));
+			wpa_ie_len += ext_capab_len;
+			os_memcpy(pos, ext_capab, ext_capab_len);
+		}
 	}
 
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
@@ -3876,4 +3890,43 @@ void wpas_request_connection(struct wpa_supplicant *wpa_s)
 
 	if (wpa_supplicant_fast_associate(wpa_s) != 1)
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
+}
+
+
+/**
+ * wpas_wpa_is_in_progress - Check whether a connection is in progress
+ * @wpa_s: Pointer to wpa_supplicant data
+ *
+ * This function is to check if the wpa state is in beginning of the connection
+ * during 4-way handshake or group key handshake with WPA on any shared
+ * interface.
+ */
+int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s)
+{
+	const char *rn, *rn2;
+	struct wpa_supplicant *ifs;
+
+	if (!wpa_s->driver->get_radio_name)
+                return 0;
+
+	rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
+	if (rn == NULL || rn[0] == '\0')
+		return 0;
+
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		if (ifs == wpa_s || !ifs->driver->get_radio_name)
+			continue;
+
+		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
+		if (!rn2 || os_strcmp(rn, rn2) != 0)
+			continue;
+		if (ifs->wpa_state >= WPA_AUTHENTICATING &&
+		    ifs->wpa_state != WPA_COMPLETED) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Connection is in progress "
+				"on interface %s - defer scan", ifs->ifname);
+			return 1;
+		}
+	}
+
+	return 0;
 }

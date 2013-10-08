@@ -238,6 +238,7 @@ struct wpa_global {
 	struct wpa_supplicant *p2p_group_formation;
 	struct wpa_supplicant *p2p_invite_group;
 	u8 p2p_dev_addr[ETH_ALEN];
+	struct os_time p2p_go_wait_client;
 	struct dl_list p2p_srv_bonjour; /* struct p2p_srv_bonjour */
 	struct dl_list p2p_srv_upnp; /* struct p2p_srv_upnp */
 	int p2p_disabled;
@@ -349,6 +350,8 @@ struct wpa_supplicant {
 	size_t disallow_aps_bssid_count;
 	struct wpa_ssid_value *disallow_aps_ssid;
 	size_t disallow_aps_ssid_count;
+
+	enum { WPA_SETBAND_AUTO, WPA_SETBAND_5G, WPA_SETBAND_2G } setband;
 
 	/* previous scan was wildcard when interleaving between
 	 * wildcard scans and specific SSID scan when max_ssids=1 */
@@ -692,6 +695,17 @@ struct wpa_supplicant {
 	u8 last_gas_dialog_token;
 
 	unsigned int no_keep_alive:1;
+
+#ifdef CONFIG_WNM
+	u8 wnm_dialog_token;
+	u8 wnm_reply;
+	u8 wnm_num_neighbor_report;
+	u8 wnm_mode;
+	u16 wnm_dissoc_timer;
+	u8 wnm_validity_interval;
+	u8 wnm_bss_termination_duration[12];
+	struct neighbor_report *wnm_neighbor_report_elements;
+#endif /* CONFIG_WNM */
 };
 
 
@@ -704,6 +718,8 @@ void wpa_supplicant_apply_vht_overrides(
 	struct wpa_driver_associate_params *params);
 
 int wpa_set_wep_keys(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+int wpa_supplicant_set_wpa_none_key(struct wpa_supplicant *wpa_s,
+				    struct wpa_ssid *ssid);
 
 int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s);
 
@@ -782,6 +798,7 @@ int disallowed_ssid(struct wpa_supplicant *wpa_s, const u8 *ssid,
 		    size_t ssid_len);
 void wpas_request_connection(struct wpa_supplicant *wpa_s);
 int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf);
+int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s);
 
 /**
  * wpa_supplicant_ctrl_iface_ctrl_rsp_handle - Handle a control response

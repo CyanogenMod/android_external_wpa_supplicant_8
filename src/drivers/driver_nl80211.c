@@ -1094,7 +1094,8 @@ static unsigned int nl80211_get_assoc_freq(struct wpa_driver_nl80211_data *drv)
 		wpa_printf(MSG_DEBUG, "nl80211: Operating frequency for the "
 			   "associated BSS from scan results: %u MHz",
 			   arg.assoc_freq);
-		return arg.assoc_freq ? arg.assoc_freq : drv->assoc_freq;
+		return (drv->assoc_freq = (arg.assoc_freq ?
+			arg.assoc_freq : drv->assoc_freq ));
 	}
 	wpa_printf(MSG_DEBUG, "nl80211: Scan result fetch failed: ret=%d "
 		   "(%s)", ret, strerror(-ret));
@@ -2237,6 +2238,13 @@ static void nl80211_tdls_oper_event(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static void nl80211_stop_ap(struct wpa_driver_nl80211_data *drv,
+			    struct nlattr **tb)
+{
+	wpa_supplicant_event(drv->ctx, EVENT_INTERFACE_UNAVAILABLE, NULL);
+}
+
+
 static void nl80211_connect_failed_event(struct wpa_driver_nl80211_data *drv,
 					 struct nlattr **tb)
 {
@@ -2417,6 +2425,9 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 		break;
 	case NL80211_CMD_FT_EVENT:
 		mlme_event_ft_event(drv, tb);
+		break;
+	case NL80211_CMD_STOP_AP:
+		nl80211_stop_ap(drv, tb);
 		break;
 	default:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Ignored unknown event "
@@ -2859,6 +2870,10 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 	if (tb[NL80211_ATTR_MAX_MATCH_SETS])
 		capa->max_match_sets =
 			nla_get_u8(tb[NL80211_ATTR_MAX_MATCH_SETS]);
+
+	if (tb[NL80211_ATTR_MAC_ACL_MAX])
+		capa->max_acl_mac_addrs =
+			nla_get_u8(tb[NL80211_ATTR_MAC_ACL_MAX]);
 
 	wiphy_info_supported_iftypes(info, tb[NL80211_ATTR_SUPPORTED_IFTYPES]);
 	wiphy_info_iface_comb(info, tb[NL80211_ATTR_INTERFACE_COMBINATIONS]);
@@ -4537,14 +4552,17 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	int ifindex = if_nametoindex(ifname);
 	struct nl_msg *msg;
 	int ret;
+	int tdls = 0;
 
 	wpa_printf(MSG_DEBUG, "%s: ifindex=%d alg=%d addr=%p key_idx=%d "
 		   "set_tx=%d seq_len=%lu key_len=%lu",
 		   __func__, ifindex, alg, addr, key_idx, set_tx,
 		   (unsigned long) seq_len, (unsigned long) key_len);
 #ifdef CONFIG_TDLS
-	if (key_idx == -1)
+	if (key_idx == -1) {
 		key_idx = 0;
+		tdls = 1;
+	}
 #endif /* CONFIG_TDLS */
 
 	msg = nlmsg_alloc();
@@ -4637,7 +4655,7 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	 * If we failed or don't need to set the default TX key (below),
 	 * we're done here.
 	 */
-	if (ret || !set_tx || alg == WPA_ALG_NONE)
+	if (ret || !set_tx || alg == WPA_ALG_NONE || tdls)
 		return ret;
 	if (is_ap_interface(drv->nlmode) && addr &&
 	    !is_broadcast_ether_addr(addr))
@@ -4850,12 +4868,20 @@ nla_put_failure:
 static int wpa_driver_nl80211_disconnect(struct wpa_driver_nl80211_data *drv,
 					 int reason_code)
 {
+	int ret;
+
 	wpa_printf(MSG_DEBUG, "%s(reason_code=%d)", __func__, reason_code);
 	drv->associated = 0;
-	drv->ignore_next_local_disconnect = 0;
 	/* Disconnect command doesn't need BSSID - it uses cached value */
-	return wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
-				       reason_code, 0);
+	ret = wpa_driver_nl80211_mlme(drv, NULL, NL80211_CMD_DISCONNECT,
+					reason_code, 0);
+	/*
+	 * For locally generated disconnect, supplicant already generates a
+	 * DEAUTH event, so ignore the event from NL80211.
+	 */
+	drv->ignore_next_local_disconnect = ret == 0;
+
+	return ret;
 }
 
 
@@ -5862,6 +5888,60 @@ static int nl80211_set_bss(struct i802_bss *bss, int cts, int preamble,
 }
 
 
+static int wpa_driver_nl80211_set_acl(void *priv,
+				      struct hostapd_acl_params *params)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct nl_msg *msg;
+	struct nlattr *acl;
+	unsigned int i;
+	int ret = 0;
+
+	if (!(drv->capa.max_acl_mac_addrs))
+		return -ENOTSUP;
+
+	if (params->num_mac_acl > drv->capa.max_acl_mac_addrs)
+		return -ENOTSUP;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOMEM;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Set %s ACL (num_mac_acl=%u)",
+		   params->acl_policy ? "Accept" : "Deny", params->num_mac_acl);
+
+	nl80211_cmd(drv, msg, 0, NL80211_CMD_SET_MAC_ACL);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
+
+	NLA_PUT_U32(msg, NL80211_ATTR_ACL_POLICY, params->acl_policy ?
+		    NL80211_ACL_POLICY_DENY_UNLESS_LISTED :
+		    NL80211_ACL_POLICY_ACCEPT_UNLESS_LISTED);
+
+	acl = nla_nest_start(msg, NL80211_ATTR_MAC_ADDRS);
+	if (acl == NULL)
+		goto nla_put_failure;
+
+	for (i = 0; i < params->num_mac_acl; i++)
+		NLA_PUT(msg, i + 1, ETH_ALEN, params->mac_acl[i].addr);
+
+	nla_nest_end(msg, acl);
+
+	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
+	msg = NULL;
+	if (ret) {
+		wpa_printf(MSG_DEBUG, "nl80211: Failed to set MAC ACL: %d (%s)",
+			   ret, strerror(-ret));
+	}
+
+nla_put_failure:
+	nlmsg_free(msg);
+
+	return ret;
+}
+
+
 static int wpa_driver_nl80211_set_ap(void *priv,
 				     struct wpa_driver_ap_params *params)
 {
@@ -6190,12 +6270,25 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	wpa_hexdump(MSG_DEBUG, "  * supported rates", params->supp_rates,
 		    params->supp_rates_len);
 	if (!params->set) {
-		wpa_printf(MSG_DEBUG, "  * aid=%u", params->aid);
-		NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, params->aid);
+		if (params->aid) {
+			wpa_printf(MSG_DEBUG, "  * aid=%u", params->aid);
+			NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, params->aid);
+		} else {
+			/*
+			 * cfg80211 validates that AID is non-zero, so we have
+			 * to make this a non-zero value for the TDLS case where
+			 * a dummy STA entry is used for now.
+			 */
+			wpa_printf(MSG_DEBUG, "  * aid=1 (TDLS workaround)");
+			NLA_PUT_U16(msg, NL80211_ATTR_STA_AID, 1);
+		}
 		wpa_printf(MSG_DEBUG, "  * listen_interval=%u",
 			   params->listen_interval);
 		NLA_PUT_U16(msg, NL80211_ATTR_STA_LISTEN_INTERVAL,
 			    params->listen_interval);
+	} else if (params->aid && (params->flags & WPA_STA_TDLS_PEER)) {
+		wpa_printf(MSG_DEBUG, "  * peer_aid=%u", params->aid);
+		NLA_PUT_U16(msg, NL80211_ATTR_PEER_AID, params->aid);
 	}
 	if (params->ht_capabilities) {
 		wpa_hexdump(MSG_DEBUG, "  * ht_capabilities",
@@ -7241,7 +7334,9 @@ static int wpa_driver_nl80211_try_connect(
 	if (params->freq) {
 		wpa_printf(MSG_DEBUG, "  * freq=%d", params->freq);
 		NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, params->freq);
-	}
+		drv->assoc_freq = params->freq;
+	} else
+		drv->assoc_freq = 0;
 	if (params->bg_scan_period >= 0) {
 		wpa_printf(MSG_DEBUG, "  * bg scan period=%d",
 			   params->bg_scan_period);
@@ -7452,8 +7547,6 @@ static int wpa_driver_nl80211_connect(
 		if (wpa_driver_nl80211_disconnect(
 			    drv, WLAN_REASON_PREV_AUTH_NOT_VALID))
 			return -1;
-		/* Ignore the next local disconnect message. */
-		drv->ignore_next_local_disconnect = 1;
 		ret = wpa_driver_nl80211_try_connect(drv, params);
 	}
 	return ret;
@@ -9974,6 +10067,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_supp_port = wpa_driver_nl80211_set_supp_port,
 	.set_country = wpa_driver_nl80211_set_country,
 	.set_ap = wpa_driver_nl80211_set_ap,
+	.set_acl = wpa_driver_nl80211_set_acl,
 	.if_add = wpa_driver_nl80211_if_add,
 	.if_remove = driver_nl80211_if_remove,
 	.send_mlme = driver_nl80211_send_mlme,
