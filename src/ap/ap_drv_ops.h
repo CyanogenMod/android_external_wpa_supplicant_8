@@ -101,6 +101,10 @@ int hostapd_sta_assoc(struct hostapd_data *hapd, const u8 *addr,
 		      int reassoc, u16 status, const u8 *ie, size_t len);
 int hostapd_add_tspec(struct hostapd_data *hapd, const u8 *addr,
 		      u8 *tspec_ie, size_t tspec_ielen);
+int hostapd_start_dfs_cac(struct hostapd_data *hapd, int mode, int freq,
+			  int channel, int ht_enabled, int vht_enabled,
+			  int sec_channel_offset, int vht_oper_chwidth,
+			  int center_segment0, int center_segment1);
 
 
 #include "drivers/driver.h"
@@ -108,6 +112,9 @@ int hostapd_add_tspec(struct hostapd_data *hapd, const u8 *addr,
 int hostapd_drv_wnm_oper(struct hostapd_data *hapd,
 			 enum wnm_oper oper, const u8 *peer,
 			 u8 *buf, u16 *buf_len);
+
+int hostapd_drv_set_qos_map(struct hostapd_data *hapd, const u8 *qos_map_set,
+			    u8 qos_map_set_len);
 
 static inline int hostapd_drv_set_countermeasures(struct hostapd_data *hapd,
 						  int enabled)

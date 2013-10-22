@@ -1565,16 +1565,21 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		char *type;
 
 		for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+			size_t i;
+
 			if (wpa_s->current_ssid->parent_cred != cred)
 				continue;
 			if (!cred->domain)
 				continue;
 
-			ret = os_snprintf(pos, end - pos, "home_sp=%s\n",
-					  cred->domain);
-			if (ret < 0 || ret >= end - pos)
-				return pos - buf;
-			pos += ret;
+			for (i = 0; i < cred->num_domain; i++) {
+				ret = os_snprintf(pos, end - pos,
+						  "home_sp=%s\n",
+						  cred->domain[i]);
+				if (ret < 0 || ret >= end - pos)
+					return pos - buf;
+				pos += ret;
+			}
 
 			if (wpa_s->current_bss == NULL ||
 			    wpa_s->current_bss->anqp == NULL)
@@ -2467,7 +2472,7 @@ static int wpa_supplicant_ctrl_iface_list_creds(struct wpa_supplicant *wpa_s,
 		ret = os_snprintf(pos, end - pos, "%d\t%s\t%s\t%s\t%s\n",
 				  cred->id, cred->realm ? cred->realm : "",
 				  cred->username ? cred->username : "",
-				  cred->domain ? cred->domain : "",
+				  cred->domain ? cred->domain[0] : "",
 				  cred->imsi ? cred->imsi : "");
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
@@ -2552,9 +2557,16 @@ static int wpa_supplicant_ctrl_iface_remove_cred(struct wpa_supplicant *wpa_s,
 		while (cred) {
 			prev = cred;
 			cred = cred->next;
-			if (prev->domain &&
-			    os_strcmp(prev->domain, cmd + 8) == 0)
-				wpas_ctrl_remove_cred(wpa_s, prev);
+			if (prev->domain) {
+				size_t i;
+				for (i = 0; i < prev->num_domain; i++) {
+					if (os_strcmp(prev->domain[i], cmd + 8)
+					    != 0)
+						continue;
+					wpas_ctrl_remove_cred(wpa_s, prev);
+					break;
+				}
+			}
 		}
 		return 0;
 	}
@@ -5194,6 +5206,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 #ifdef CONFIG_WPS
 	wpas_wps_cancel(wpa_s);
 #endif /* CONFIG_WPS */
+	wpa_s->after_wps = 0;
 
 #ifdef CONFIG_TDLS_TESTING
 	extern unsigned int tdls_testing;
@@ -5229,12 +5242,18 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 }
 
 
+static void wpas_ctrl_eapol_response(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	eapol_sm_notify_ctrl_response(wpa_s->eapol);
+}
+
+
 char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 					 char *buf, size_t *resp_len)
 {
 	char *reply;
 	const int reply_size = 4096;
-	int ctrl_rsp = 0;
 	int reply_len;
 
 	if (os_strncmp(buf, WPA_CTRL_RSP, os_strlen(WPA_CTRL_RSP)) == 0 ||
@@ -5573,8 +5592,14 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpa_supplicant_ctrl_iface_ctrl_rsp(
 			    wpa_s, buf + os_strlen(WPA_CTRL_RSP)))
 			reply_len = -1;
-		else
-			ctrl_rsp = 1;
+		else {
+			/*
+			 * Notify response from timeout to allow the control
+			 * interface response to be sent first.
+			 */
+			eloop_register_timeout(0, 0, wpas_ctrl_eapol_response,
+					       wpa_s, NULL);
+		}
 	} else if (os_strcmp(buf, "RECONFIGURE") == 0) {
 		if (wpa_supplicant_reload_configuration(wpa_s))
 			reply_len = -1;
@@ -5615,6 +5640,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 			     (wpa_s->wpa_state == WPA_COMPLETED))) {
 				wpa_s->normal_scans = 0;
 				wpa_s->scan_req = MANUAL_SCAN_REQ;
+				wpa_s->after_wps = 0;
 				wpa_supplicant_req_scan(wpa_s, 0, 0);
 			} else if (wpa_s->sched_scanning) {
 				wpa_printf(MSG_DEBUG, "Stop ongoing "
@@ -5776,9 +5802,6 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		os_memcpy(reply, "FAIL\n", 5);
 		reply_len = 5;
 	}
-
-	if (ctrl_rsp)
-		eapol_sm_notify_ctrl_response(wpa_s->eapol);
 
 	*resp_len = reply_len;
 	return reply;

@@ -2513,6 +2513,8 @@ static void nl80211_connect_failed_event(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static enum chan_width convert2width(int width);
+
 static void nl80211_radar_event(struct wpa_driver_nl80211_data *drv,
 				struct nlattr **tb)
 {
@@ -2523,11 +2525,40 @@ static void nl80211_radar_event(struct wpa_driver_nl80211_data *drv,
 		return;
 
 	os_memset(&data, 0, sizeof(data));
-	data.dfs_event.freq = nla_get_u16(tb[NL80211_ATTR_WIPHY_FREQ]);
-	event_type = nla_get_u8(tb[NL80211_ATTR_RADAR_EVENT]);
+	data.dfs_event.freq = nla_get_u32(tb[NL80211_ATTR_WIPHY_FREQ]);
+	event_type = nla_get_u32(tb[NL80211_ATTR_RADAR_EVENT]);
 
-	wpa_printf(MSG_DEBUG, "nl80211: DFS event on freq %d MHz",
-		   data.dfs_event.freq);
+	/* Check HT params */
+	if (tb[NL80211_ATTR_WIPHY_CHANNEL_TYPE]) {
+		data.dfs_event.ht_enabled = 1;
+		data.dfs_event.chan_offset = 0;
+
+		switch (nla_get_u32(tb[NL80211_ATTR_WIPHY_CHANNEL_TYPE])) {
+		case NL80211_CHAN_NO_HT:
+			data.dfs_event.ht_enabled = 0;
+			break;
+		case NL80211_CHAN_HT20:
+			break;
+		case NL80211_CHAN_HT40PLUS:
+			data.dfs_event.chan_offset = 1;
+			break;
+		case NL80211_CHAN_HT40MINUS:
+			data.dfs_event.chan_offset = -1;
+			break;
+		}
+	}
+
+	/* Get VHT params */
+	data.dfs_event.chan_width =
+		convert2width(nla_get_u32(tb[NL80211_ATTR_CHANNEL_WIDTH]));
+	data.dfs_event.cf1 = nla_get_u32(tb[NL80211_ATTR_CENTER_FREQ1]);
+	if (tb[NL80211_ATTR_CENTER_FREQ2])
+		data.dfs_event.cf2 = nla_get_u32(tb[NL80211_ATTR_CENTER_FREQ2]);
+
+	wpa_printf(MSG_DEBUG, "nl80211: DFS event on freq %d MHz, ht: %d, offset: %d, width: %d, cf1: %dMHz, cf2: %dMHz",
+		   data.dfs_event.freq, data.dfs_event.ht_enabled,
+		   data.dfs_event.chan_offset, data.dfs_event.chan_width,
+		   data.dfs_event.cf1, data.dfs_event.cf2);
 
 	switch (event_type) {
 	case NL80211_RADAR_DETECTED:
@@ -3798,6 +3829,11 @@ static int nl80211_mgmt_subscribe_non_ap(struct i802_bss *bss)
 	wpa_printf(MSG_DEBUG, "nl80211: Subscribe to mgmt frames with non-AP "
 		   "handle %p", bss->nl_mgmt);
 
+#ifdef CONFIG_INTERWORKING
+	/* QoS Map Configure */
+	if (nl80211_register_action_frame(bss, (u8 *) "\x01\x04", 2) < 0)
+		return -1;
+#endif /* CONFIG_INTERWORKING */
 #if defined(CONFIG_P2P) || defined(CONFIG_INTERWORKING)
 	/* GAS Initial Request */
 	if (nl80211_register_action_frame(bss, (u8 *) "\x04\x0a", 2) < 0)
@@ -6137,6 +6173,7 @@ static int wpa_driver_nl80211_send_frame(struct i802_bss *bss,
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	u64 cookie;
+	int res;
 
 	if (freq == 0) {
 		wpa_printf(MSG_DEBUG, "nl80211: send_frame - Use bss->freq=%u",
@@ -6152,8 +6189,26 @@ static int wpa_driver_nl80211_send_frame(struct i802_bss *bss,
 	}
 
 	wpa_printf(MSG_DEBUG, "nl80211: send_frame -> send_frame_cmd");
-	return nl80211_send_frame_cmd(bss, freq, wait_time, data, len,
-				      &cookie, no_cck, noack, offchanok);
+	res = nl80211_send_frame_cmd(bss, freq, wait_time, data, len,
+				     &cookie, no_cck, noack, offchanok);
+	if (res == 0 && !noack) {
+		const struct ieee80211_mgmt *mgmt;
+		u16 fc;
+
+		mgmt = (const struct ieee80211_mgmt *) data;
+		fc = le_to_host16(mgmt->frame_control);
+		if (WLAN_FC_GET_TYPE(fc) == WLAN_FC_TYPE_MGMT &&
+		    WLAN_FC_GET_STYPE(fc) == WLAN_FC_STYPE_ACTION) {
+			wpa_printf(MSG_MSGDUMP,
+				   "nl80211: Update send_action_cookie from 0x%llx to 0x%llx",
+				   (long long unsigned int)
+				   drv->send_action_cookie,
+				   (long long unsigned int) cookie);
+			drv->send_action_cookie = cookie;
+		}
+	}
+
+	return res;
 }
 
 
@@ -9233,10 +9288,8 @@ static int wpa_driver_nl80211_if_remove(struct i802_bss *bss,
 
 	wpa_printf(MSG_DEBUG, "nl80211: %s(type=%d ifname=%s) ifindex=%d",
 		   __func__, type, ifname, ifindex);
-	if (ifindex <= 0)
-		return -1;
-
-	nl80211_remove_iface(drv, ifindex);
+	if (ifindex > 0)
+		nl80211_remove_iface(drv, ifindex);
 
 #ifdef HOSTAPD
 	if (type != WPA_IF_AP_BSS)
@@ -10385,14 +10438,18 @@ static int nl80211_set_p2p_powersave(void *priv, int legacy_ps, int opp_ps,
 }
 
 
-static int nl80211_start_radar_detection(void *priv, int freq)
+static int nl80211_start_radar_detection(void *priv,
+					 struct hostapd_freq_params *freq)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	int ret;
 
-	wpa_printf(MSG_DEBUG, "nl80211: Start radar detection (CAC)");
+	wpa_printf(MSG_DEBUG, "nl80211: Start radar detection (CAC) %d MHz (ht_enabled=%d, vht_enabled=%d, bandwidth=%d MHz, cf1=%d MHz, cf2=%d MHz)",
+		   freq->freq, freq->ht_enabled, freq->vht_enabled,
+		   freq->bandwidth, freq->center_freq1, freq->center_freq2);
+
 	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_RADAR)) {
 		wpa_printf(MSG_DEBUG, "nl80211: Driver does not support radar "
 			   "detection");
@@ -10405,10 +10462,53 @@ static int nl80211_start_radar_detection(void *priv, int freq)
 
 	nl80211_cmd(bss->drv, msg, 0, NL80211_CMD_RADAR_DETECT);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
-	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
+	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq->freq);
 
-	/* only HT20 is supported at this point */
-	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE, NL80211_CHAN_HT20);
+	if (freq->vht_enabled) {
+		switch (freq->bandwidth) {
+		case 20:
+			NLA_PUT_U32(msg, NL80211_ATTR_CHANNEL_WIDTH,
+				    NL80211_CHAN_WIDTH_20);
+			break;
+		case 40:
+			NLA_PUT_U32(msg, NL80211_ATTR_CHANNEL_WIDTH,
+				    NL80211_CHAN_WIDTH_40);
+			break;
+		case 80:
+			if (freq->center_freq2)
+				NLA_PUT_U32(msg, NL80211_ATTR_CHANNEL_WIDTH,
+					    NL80211_CHAN_WIDTH_80P80);
+			else
+				NLA_PUT_U32(msg, NL80211_ATTR_CHANNEL_WIDTH,
+					    NL80211_CHAN_WIDTH_80);
+			break;
+		case 160:
+			NLA_PUT_U32(msg, NL80211_ATTR_CHANNEL_WIDTH,
+				    NL80211_CHAN_WIDTH_160);
+			break;
+		default:
+			return -1;
+		}
+		NLA_PUT_U32(msg, NL80211_ATTR_CENTER_FREQ1, freq->center_freq1);
+		if (freq->center_freq2)
+			NLA_PUT_U32(msg, NL80211_ATTR_CENTER_FREQ2,
+				    freq->center_freq2);
+	} else if (freq->ht_enabled) {
+		switch (freq->sec_channel_offset) {
+		case -1:
+			NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
+				    NL80211_CHAN_HT40MINUS);
+			break;
+		case 1:
+			NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
+				    NL80211_CHAN_HT40PLUS);
+			break;
+		default:
+			NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
+				    NL80211_CHAN_HT20);
+			break;
+		}
+	}
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	if (ret == 0)

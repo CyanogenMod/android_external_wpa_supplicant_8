@@ -29,6 +29,7 @@
 #include "ap_drv_ops.h"
 #include "ap_config.h"
 #include "hw_features.h"
+#include "dfs.h"
 
 
 int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
@@ -113,6 +114,13 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 			p2p_dev_addr = p2p_get_go_dev_addr(sta->p2p_ie);
 	}
 #endif /* CONFIG_P2P */
+
+#ifdef CONFIG_INTERWORKING
+	if (elems.ext_capab && elems.ext_capab_len > 4) {
+		if (elems.ext_capab[4] & 0x01)
+			sta->qos_map_enabled = 1;
+	}
+#endif /* CONFIG_INTERWORKING */
 
 #ifdef CONFIG_HS20
 	wpabuf_free(sta->hs20_ie);
@@ -785,6 +793,50 @@ static void hostapd_event_get_survey(struct hostapd_data *hapd,
 }
 
 
+#ifdef NEED_AP_MLME
+
+static void hostapd_event_dfs_radar_detected(struct hostapd_data *hapd,
+					     struct dfs_event *radar)
+{
+	wpa_printf(MSG_DEBUG, "DFS radar detected on %d MHz", radar->freq);
+	hostapd_dfs_radar_detected(hapd, radar->freq, radar->ht_enabled,
+				   radar->chan_offset, radar->chan_width,
+				   radar->cf1, radar->cf2);
+}
+
+
+static void hostapd_event_dfs_cac_finished(struct hostapd_data *hapd,
+					   struct dfs_event *radar)
+{
+	wpa_printf(MSG_DEBUG, "DFS CAC finished on %d MHz", radar->freq);
+	hostapd_dfs_complete_cac(hapd, 1, radar->freq, radar->ht_enabled,
+				 radar->chan_offset, radar->chan_width,
+				 radar->cf1, radar->cf2);
+}
+
+
+static void hostapd_event_dfs_cac_aborted(struct hostapd_data *hapd,
+					  struct dfs_event *radar)
+{
+	wpa_printf(MSG_DEBUG, "DFS CAC aborted on %d MHz", radar->freq);
+	hostapd_dfs_complete_cac(hapd, 0, radar->freq, radar->ht_enabled,
+				 radar->chan_offset, radar->chan_width,
+				 radar->cf1, radar->cf2);
+}
+
+
+static void hostapd_event_dfs_nop_finished(struct hostapd_data *hapd,
+					   struct dfs_event *radar)
+{
+	wpa_printf(MSG_DEBUG, "DFS NOP finished on %d MHz", radar->freq);
+	hostapd_dfs_nop_finished(hapd, radar->freq, radar->ht_enabled,
+				 radar->chan_offset, radar->chan_width,
+				 radar->cf1, radar->cf2);
+}
+
+#endif /* NEED_AP_MLME */
+
+
 void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			  union wpa_event_data *data)
 {
@@ -929,6 +981,34 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 	case EVENT_SURVEY:
 		hostapd_event_get_survey(hapd, &data->survey_results);
 		break;
+#ifdef NEED_AP_MLME
+	case EVENT_DFS_RADAR_DETECTED:
+		if (!data)
+			break;
+		hostapd_event_dfs_radar_detected(hapd, &data->dfs_event);
+		break;
+	case EVENT_DFS_CAC_FINISHED:
+		if (!data)
+			break;
+		hostapd_event_dfs_cac_finished(hapd, &data->dfs_event);
+		break;
+	case EVENT_DFS_CAC_ABORTED:
+		if (!data)
+			break;
+		hostapd_event_dfs_cac_aborted(hapd, &data->dfs_event);
+		break;
+	case EVENT_DFS_NOP_FINISHED:
+		if (!data)
+			break;
+		hostapd_event_dfs_nop_finished(hapd, &data->dfs_event);
+		break;
+	case EVENT_CHANNEL_LIST_CHANGED:
+		/* channel list changed (regulatory?), update channel list */
+		/* TODO: check this. hostapd_get_hw_features() initializes
+		 * too much stuff. */
+		/* hostapd_get_hw_features(hapd->iface); */
+		break;
+#endif /* NEED_AP_MLME */
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown event %d", event);
 		break;

@@ -21,6 +21,7 @@
 #include "hs20_supplicant.h"
 #include "notify.h"
 #include "bss.h"
+#include "gas_query.h"
 #include "scan.h"
 
 
@@ -595,7 +596,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 #ifdef CONFIG_P2P
-	if (wpas_p2p_in_progress(wpa_s) || wpas_wpa_is_in_progress(wpa_s)) {
+	if (wpas_p2p_in_progress(wpa_s) || wpas_wpa_is_in_progress(wpa_s, 0)) {
 		if (wpa_s->sta_scan_pending &&
 		    wpas_p2p_in_progress(wpa_s) == 2 &&
 		    wpa_s->global->p2p_cb_on_scan_complete) {
@@ -610,6 +611,14 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		}
 	}
 #endif /* CONFIG_P2P */
+
+#ifdef CONFIG_GAS
+	if (gas_query_in_progress(wpa_s->gas)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Delay scan while GAS query is in progress");
+		wpa_supplicant_req_scan(wpa_s, 1, 0);
+		return;
+	}
+#endif /* CONFIG_GAS */
 
 	if (wpa_s->conf->ap_scan == 2)
 		max_ssids = 1;
@@ -887,8 +896,10 @@ void wpa_supplicant_update_scan_int(struct wpa_supplicant *wpa_s, int sec)
 		new_int.usec = remaining.usec;
 	}
 
-	eloop_register_timeout(new_int.sec, new_int.usec, wpa_supplicant_scan,
-			       wpa_s, NULL);
+	if (cancelled) {
+		eloop_register_timeout(new_int.sec, new_int.usec,
+				       wpa_supplicant_scan, wpa_s, NULL);
+	}
 	wpa_s->scan_interval = sec;
 }
 

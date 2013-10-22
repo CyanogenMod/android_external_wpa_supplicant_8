@@ -112,6 +112,8 @@ static int cred_with_roaming_consortium(struct wpa_supplicant *wpa_s)
 	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
 		if (cred->roaming_consortium_len)
 			return 1;
+		if (cred->required_roaming_consortium_len)
+			return 1;
 	}
 	return 0;
 }
@@ -242,6 +244,7 @@ static int interworking_anqp_send_req(struct wpa_supplicant *wpa_s,
 			    interworking_anqp_resp_cb, wpa_s);
 	if (res < 0) {
 		wpa_printf(MSG_DEBUG, "ANQP: Failed to send Query Request");
+		wpabuf_free(buf);
 		ret = -1;
 		eloop_register_timeout(0, 0, interworking_continue_anqp, wpa_s,
 				       NULL);
@@ -249,7 +252,6 @@ static int interworking_anqp_send_req(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "ANQP: Query started with dialog token "
 			   "%u", res);
 
-	wpabuf_free(buf);
 	return ret;
 }
 
@@ -944,6 +946,27 @@ static int roaming_consortium_match(const u8 *ie, const struct wpabuf *anqp,
 }
 
 
+static int cred_no_required_oi_match(struct wpa_cred *cred, struct wpa_bss *bss)
+{
+	const u8 *ie;
+
+	if (cred->required_roaming_consortium_len == 0)
+		return 0;
+
+	ie = wpa_bss_get_ie(bss, WLAN_EID_ROAMING_CONSORTIUM);
+
+	if (ie == NULL &&
+	    (bss->anqp == NULL || bss->anqp->roaming_consortium == NULL))
+		return 1;
+
+	return !roaming_consortium_match(ie,
+					 bss->anqp ?
+					 bss->anqp->roaming_consortium : NULL,
+					 cred->required_roaming_consortium,
+					 cred->required_roaming_consortium_len);
+}
+
+
 static int cred_excluded_ssid(struct wpa_cred *cred, struct wpa_bss *bss)
 {
 	size_t i;
@@ -990,6 +1013,8 @@ static struct wpa_cred * interworking_credentials_available_roaming_consortium(
 			continue;
 
 		if (cred_excluded_ssid(cred, bss))
+			continue;
+		if (cred_no_required_oi_match(cred, bss))
 			continue;
 
 		if (selected == NULL ||
@@ -1098,6 +1123,11 @@ static int interworking_set_eap_params(struct wpa_ssid *ssid,
 
 	if (cred->ca_cert && cred->ca_cert[0] &&
 	    wpa_config_set_quoted(ssid, "ca_cert", cred->ca_cert) < 0)
+		return -1;
+
+	if (cred->domain_suffix_match && cred->domain_suffix_match[0] &&
+	    wpa_config_set_quoted(ssid, "domain_suffix_match",
+				  cred->domain_suffix_match) < 0)
 		return -1;
 
 	return 0;
@@ -1377,7 +1407,8 @@ static struct wpa_cred * interworking_credentials_available_3gpp(
 #endif /* CONFIG_EAP_PROXY */
 
 		if (cred->imsi == NULL || !cred->imsi[0] ||
-		    cred->milenage == NULL || !cred->milenage[0])
+		    (!wpa_s->conf->external_sim &&
+		     (cred->milenage == NULL || !cred->milenage[0])))
 			continue;
 
 		sep = os_strchr(cred->imsi, '-');
@@ -1403,6 +1434,8 @@ static struct wpa_cred * interworking_credentials_available_3gpp(
 		wpa_printf(MSG_DEBUG, "PLMN match %sfound", ret ? "" : "not ");
 		if (ret) {
 			if (cred_excluded_ssid(cred, bss))
+				continue;
+			if (cred_no_required_oi_match(cred, bss))
 				continue;
 			if (selected == NULL ||
 			    selected->priority < cred->priority)
@@ -1445,6 +1478,8 @@ static struct wpa_cred * interworking_credentials_available_realm(
 				continue;
 			if (nai_realm_find_eap(cred, &realm[i])) {
 				if (cred_excluded_ssid(cred, bss))
+					continue;
+				if (cred_no_required_oi_match(cred, bss))
 					continue;
 				if (selected == NULL ||
 				    selected->priority < cred->priority)
@@ -1514,6 +1549,7 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 			      struct wpa_cred *cred,
 			      struct wpabuf *domain_names)
 {
+	size_t i;
 #ifdef INTERWORKING_3GPP
 	char nai[100], *realm;
 
@@ -1528,6 +1564,12 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 		mnc_len = wpa_s->mnc_len;
 	}
 #endif /* CONFIG_PCSC */
+#ifdef CONFIG_EAP_PROXY
+	else if (cred->pcsc && wpa_s->mnc_len > 0 && wpa_s->imsi[0]) {
+		imsi = wpa_s->imsi;
+		mnc_len = wpa_s->mnc_len;
+	}
+#endif /* CONFIG_EAP_PROXY */
 	if (domain_names &&
 	    imsi && build_root_nai(nai, sizeof(nai), imsi, mnc_len, 0) == 0) {
 		realm = os_strchr(nai, '@');
@@ -1544,10 +1586,12 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 	if (domain_names == NULL || cred->domain == NULL)
 		return 0;
 
-	wpa_printf(MSG_DEBUG, "Interworking: Search for match with "
-		   "home SP FQDN %s", cred->domain);
-	if (domain_name_list_contains(domain_names, cred->domain))
-		return 1;
+	for (i = 0; i < cred->num_domain; i++) {
+		wpa_printf(MSG_DEBUG, "Interworking: Search for match with "
+			   "home SP FQDN %s", cred->domain[i]);
+		if (domain_name_list_contains(domain_names, cred->domain[i]))
+			return 1;
+	}
 
 	return 0;
 }
@@ -1833,12 +1877,12 @@ int anqp_send_req(struct wpa_supplicant *wpa_s, const u8 *dst,
 	res = gas_query_req(wpa_s->gas, dst, freq, buf, anqp_resp_cb, wpa_s);
 	if (res < 0) {
 		wpa_printf(MSG_DEBUG, "ANQP: Failed to send Query Request");
+		wpabuf_free(buf);
 		ret = -1;
 	} else
 		wpa_printf(MSG_DEBUG, "ANQP: Query started with dialog token "
 			   "%u", res);
 
-	wpabuf_free(buf);
 	return ret;
 }
 
@@ -2133,11 +2177,11 @@ int gas_send_request(struct wpa_supplicant *wpa_s, const u8 *dst,
 	res = gas_query_req(wpa_s->gas, dst, freq, buf, gas_resp_cb, wpa_s);
 	if (res < 0) {
 		wpa_printf(MSG_DEBUG, "GAS: Failed to send Query Request");
+		wpabuf_free(buf);
 		ret = -1;
 	} else
 		wpa_printf(MSG_DEBUG, "GAS: Query started with dialog token "
 			   "%u", res);
 
-	wpabuf_free(buf);
 	return ret;
 }

@@ -2572,6 +2572,15 @@ struct wpa_driver_ops {
 			u8 *buf, u16 *buf_len);
 
 	/**
+	 * set_qos_map - Set QoS Map
+	 * @priv: Private driver interface data
+	 * @qos_map_set: QoS Map
+	 * @qos_map_set_len: Length of QoS Map
+	 */
+	int (*set_qos_map)(void *priv, const u8 *qos_map_set,
+			   u8 qos_map_set_len);
+
+	/**
 	 * signal_poll - Get current connection information
 	 * @priv: Private driver interface data
 	 * @signal_info: Connection info structure
@@ -2746,10 +2755,10 @@ struct wpa_driver_ops {
 	/**
 	 * start_dfs_cac - Listen for radar interference on the channel
 	 * @priv: Private driver interface data
-	 * @freq: Frequency (in MHz) of the channel
+	 * @freq: Channel parameters
 	 * Returns: 0 on success, -1 on failure
 	 */
-	int (*start_dfs_cac)(void *priv, int freq);
+	int (*start_dfs_cac)(void *priv, struct hostapd_freq_params *freq);
 
 	/**
 	 * stop_ap - Removes beacon from AP
@@ -3970,6 +3979,11 @@ union wpa_event_data {
 	 */
 	struct dfs_event {
 		int freq;
+		int ht_enabled;
+		int chan_offset;
+		enum chan_width chan_width;
+		int cf1;
+		int cf2;
 	} dfs_event;
 
 	/**

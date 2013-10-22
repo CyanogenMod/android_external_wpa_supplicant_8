@@ -3794,7 +3794,8 @@ static void wpas_p2p_scan_res_join(struct wpa_supplicant *wpa_s,
 	if (bss) {
 		freq = bss->freq;
 		wpa_printf(MSG_DEBUG, "P2P: Target GO operating frequency "
-			   "from BSS table: %d MHz", freq);
+			   "from BSS table: %d MHz (SSID %s)", freq,
+			   wpa_ssid_txt(bss->ssid, bss->ssid_len));
 	}
 	if (freq > 0) {
 		u16 method;
@@ -4009,6 +4010,9 @@ static int wpas_p2p_join_start(struct wpa_supplicant *wpa_s)
 		res.freq = bss->freq;
 		res.ssid_len = bss->ssid_len;
 		os_memcpy(res.ssid, bss->ssid, bss->ssid_len);
+		wpa_printf(MSG_DEBUG, "P2P: Join target GO operating frequency "
+			   "from BSS table: %d MHz (SSID %s)", bss->freq,
+			   wpa_ssid_txt(bss->ssid, bss->ssid_len));
 	}
 
 	if (wpa_s->off_channel_freq || wpa_s->roc_waiting_drv_freq) {
@@ -5261,7 +5265,7 @@ int wpas_p2p_invite_group(struct wpa_supplicant *wpa_s, const char *ifname,
 	u8 *bssid = NULL;
 	struct wpa_ssid *ssid;
 	int persistent;
-	int force_freq = 0, pref_freq = 0;
+	int freq = 0, force_freq = 0, pref_freq = 0;
 	int res;
 
 	wpa_s->p2p_persistent_go_freq = 0;
@@ -5293,6 +5297,7 @@ int wpas_p2p_invite_group(struct wpa_supplicant *wpa_s, const char *ifname,
 		bssid = wpa_s->own_addr;
 		if (go_dev_addr == NULL)
 			go_dev_addr = wpa_s->global->p2p_dev_addr;
+		freq = ssid->frequency;
 	} else {
 		role = P2P_INVITE_ROLE_CLIENT;
 		if (wpa_s->wpa_state < WPA_ASSOCIATED) {
@@ -5304,6 +5309,8 @@ int wpas_p2p_invite_group(struct wpa_supplicant *wpa_s, const char *ifname,
 		if (go_dev_addr == NULL &&
 		    !is_zero_ether_addr(wpa_s->go_dev_addr))
 			go_dev_addr = wpa_s->go_dev_addr;
+		freq = wpa_s->current_bss ? wpa_s->current_bss->freq :
+			(int) wpa_s->assoc_freq;
 	}
 	wpa_s->parent->pending_invite_ssid_id = -1;
 
@@ -5315,7 +5322,7 @@ int wpas_p2p_invite_group(struct wpa_supplicant *wpa_s, const char *ifname,
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return -1;
 
-	res = wpas_p2p_setup_freqs(wpa_s, 0, &force_freq, &pref_freq);
+	res = wpas_p2p_setup_freqs(wpa_s, freq, &force_freq, &pref_freq);
 	if (res)
 		return res;
 	wpas_p2p_set_own_freq_preference(wpa_s, force_freq);

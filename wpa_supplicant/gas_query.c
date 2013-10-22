@@ -1,7 +1,7 @@
 /*
  * Generic advertisement service (GAS) query
  * Copyright (c) 2009, Atheros Communications
- * Copyright (c) 2011, Qualcomm Atheros
+ * Copyright (c) 2011-2013, Qualcomm Atheros, Inc.
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -21,6 +21,8 @@
 
 /** GAS query timeout in seconds */
 #define GAS_QUERY_TIMEOUT_PERIOD 2
+/** Retry period for GAS query requests in milliseconds */
+#define GAS_SERVICE_RETRY_PERIOD_MS 500
 
 
 /**
@@ -35,6 +37,7 @@ struct gas_query_pending {
 	unsigned int offchannel_tx_started:1;
 	int freq;
 	u16 status_code;
+	struct wpabuf *req;
 	struct wpabuf *adv_proto;
 	struct wpabuf *resp;
 	void (*cb)(void *ctx, const u8 *dst, u8 dialog_token,
@@ -50,11 +53,13 @@ struct gas_query_pending {
 struct gas_query {
 	struct wpa_supplicant *wpa_s;
 	struct dl_list pending; /* struct gas_query_pending */
+	struct gas_query_pending *current;
 };
 
 
 static void gas_query_tx_comeback_timeout(void *eloop_data, void *user_ctx);
 static void gas_query_timeout(void *eloop_data, void *user_ctx);
+static void gas_service_timeout(void *eloop_data, void *user_ctx);
 
 
 /**
@@ -81,13 +86,17 @@ static void gas_query_done(struct gas_query *gas,
 			   struct gas_query_pending *query,
 			   enum gas_query_result result)
 {
+	if (gas->current == query)
+		gas->current = NULL;
 	if (query->offchannel_tx_started)
 		offchannel_send_action_done(gas->wpa_s);
 	eloop_cancel_timeout(gas_query_tx_comeback_timeout, gas, query);
 	eloop_cancel_timeout(gas_query_timeout, gas, query);
+	eloop_cancel_timeout(gas_service_timeout, gas, query);
 	dl_list_del(&query->list);
 	query->cb(query->ctx, query->addr, query->dialog_token, result,
 		  query->adv_proto, query->resp, query->status_code);
+	wpabuf_free(query->req);
 	wpabuf_free(query->adv_proto);
 	wpabuf_free(query->resp);
 	os_free(query);
@@ -138,6 +147,44 @@ static int gas_query_append(struct gas_query_pending *query, const u8 *data,
 }
 
 
+static void gas_query_tx_status(struct wpa_supplicant *wpa_s,
+				unsigned int freq, const u8 *dst,
+				const u8 *src, const u8 *bssid,
+				const u8 *data, size_t data_len,
+				enum offchannel_send_action_result result)
+{
+	struct gas_query_pending *query;
+	struct gas_query *gas = wpa_s->gas;
+
+	if (gas->current == NULL) {
+		wpa_printf(MSG_DEBUG, "GAS: Unexpected TX status: freq=%u dst="
+			   MACSTR " result=%d - no query in progress",
+			   freq, MAC2STR(dst), result);
+		return;
+	}
+
+	query = gas->current;
+
+	wpa_printf(MSG_DEBUG, "GAS: TX status: freq=%u dst=" MACSTR
+		   " result=%d query=%p dialog_token=%u",
+		   freq, MAC2STR(dst), result, query, query->dialog_token);
+	if (os_memcmp(dst, query->addr, ETH_ALEN) != 0) {
+		wpa_printf(MSG_DEBUG, "GAS: TX status for unexpected destination");
+		return;
+	}
+
+	if (result == OFFCHANNEL_SEND_ACTION_SUCCESS) {
+		eloop_cancel_timeout(gas_query_timeout, gas, query);
+		eloop_register_timeout(GAS_QUERY_TIMEOUT_PERIOD, 0,
+				       gas_query_timeout, gas, query);
+	}
+	if (result == OFFCHANNEL_SEND_ACTION_FAILED) {
+		eloop_cancel_timeout(gas_query_timeout, gas, query);
+		eloop_register_timeout(0, 0, gas_query_timeout, gas, query);
+	}
+}
+
+
 static int gas_query_tx(struct gas_query *gas, struct gas_query_pending *query,
 			struct wpabuf *req)
 {
@@ -148,7 +195,7 @@ static int gas_query_tx(struct gas_query *gas, struct gas_query_pending *query,
 	res = offchannel_send_action(gas->wpa_s, query->freq, query->addr,
 				     gas->wpa_s->own_addr, query->addr,
 				     wpabuf_head(req), wpabuf_len(req), 1000,
-				     NULL, 0);
+				     gas_query_tx_status, 0);
 	if (res == 0)
 		query->offchannel_tx_started = 1;
 	return res;
@@ -426,9 +473,47 @@ static void gas_query_timeout(void *eloop_data, void *user_ctx)
 	struct gas_query *gas = eloop_data;
 	struct gas_query_pending *query = user_ctx;
 
-	wpa_printf(MSG_DEBUG, "GAS: No response received for query to " MACSTR,
-		   MAC2STR(query->addr));
+	wpa_printf(MSG_DEBUG, "GAS: No response received for query to " MACSTR
+		   " dialog token %u",
+		   MAC2STR(query->addr), query->dialog_token);
 	gas_query_done(gas, query, GAS_QUERY_TIMEOUT);
+}
+
+
+static void gas_service_timeout(void *eloop_data, void *user_ctx)
+{
+	struct gas_query *gas = eloop_data;
+	struct wpa_supplicant *wpa_s = gas->wpa_s;
+	struct gas_query_pending *query = user_ctx;
+	int conn;
+
+	conn = wpas_wpa_is_in_progress(wpa_s, 1);
+	if (conn || wpa_s->scanning || gas->current) {
+		wpa_printf(MSG_DEBUG, "GAS: Delaying GAS query Tx while another operation is in progress:%s%s%s",
+			   conn ? " connection" : "",
+			   wpa_s->scanning ? " scanning" : "",
+			   gas->current ? " gas_query" : "");
+		eloop_register_timeout(
+			GAS_SERVICE_RETRY_PERIOD_MS / 1000,
+			(GAS_SERVICE_RETRY_PERIOD_MS % 1000) * 1000,
+			gas_service_timeout, gas, query);
+		return;
+	}
+
+	if (gas_query_tx(gas, query, query->req) < 0) {
+		wpa_printf(MSG_DEBUG, "GAS: Failed to send Action frame to "
+			   MACSTR, MAC2STR(query->addr));
+		dl_list_del(&query->list);
+		wpabuf_free(query->req);
+		os_free(query);
+		return;
+	}
+	gas->current = query;
+
+	wpa_printf(MSG_DEBUG, "GAS: Starting query timeout for dialog token %u",
+		   query->dialog_token);
+	eloop_register_timeout(GAS_QUERY_TIMEOUT_PERIOD, 0,
+			       gas_query_timeout, gas, query);
 }
 
 
@@ -451,7 +536,8 @@ static int gas_query_dialog_token_available(struct gas_query *gas,
  * @gas: GAS query data from gas_query_init()
  * @dst: Destination MAC address for the query
  * @freq: Frequency (in MHz) for the channel on which to send the query
- * @req: GAS query payload
+ * @req: GAS query payload (to be freed by gas_query module in case of success
+ *	return)
  * @cb: Callback function for reporting GAS query result and response
  * @ctx: Context pointer to use with the @cb call
  * Returns: dialog token (>= 0) on success or -1 on failure
@@ -490,22 +576,15 @@ int gas_query_req(struct gas_query *gas, const u8 *dst, int freq,
 	query->freq = freq;
 	query->cb = cb;
 	query->ctx = ctx;
+	query->req = req;
 	dl_list_add(&gas->pending, &query->list);
 
 	*(wpabuf_mhead_u8(req) + 2) = dialog_token;
 
 	wpa_printf(MSG_DEBUG, "GAS: Starting request for " MACSTR
 		   " dialog_token %u", MAC2STR(dst), dialog_token);
-	if (gas_query_tx(gas, query, req) < 0) {
-		wpa_printf(MSG_DEBUG, "GAS: Failed to send Action frame to "
-			   MACSTR, MAC2STR(query->addr));
-		dl_list_del(&query->list);
-		os_free(query);
-		return -1;
-	}
 
-	eloop_register_timeout(GAS_QUERY_TIMEOUT_PERIOD, 0, gas_query_timeout,
-			       gas, query);
+	eloop_register_timeout(0, 0, gas_service_timeout, gas, query);
 
 	return dialog_token;
 }
@@ -525,4 +604,10 @@ void gas_query_cancel(struct gas_query *gas, const u8 *dst, u8 dialog_token)
 	if (query)
 		gas_query_done(gas, query, GAS_QUERY_CANCELLED);
 
+}
+
+
+int gas_query_in_progress(struct gas_query *gas)
+{
+	return gas->current != NULL;
 }

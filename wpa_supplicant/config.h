@@ -150,12 +150,37 @@ struct wpa_cred {
 	char *milenage;
 
 	/**
-	 * domain - Home service provider FQDN
+	 * domain_suffix_match - Constraint for server domain name
+	 *
+	 * If set, this FQDN is used as a suffix match requirement for the AAA
+	 * server certificate in SubjectAltName dNSName element(s). If a
+	 * matching dNSName is found, this constraint is met. If no dNSName
+	 * values are present, this constraint is matched against SubjetName CN
+	 * using same suffix match comparison. Suffix match here means that the
+	 * host/domain name is compared one label at a time starting from the
+	 * top-level domain and all the labels in @domain_suffix_match shall be
+	 * included in the certificate. The certificate may include additional
+	 * sub-level labels in addition to the required labels.
+	 *
+	 * For example, domain_suffix_match=example.com would match
+	 * test.example.com but would not match test-example.com.
+	 */
+	char *domain_suffix_match;
+
+	/**
+	 * domain - Home service provider FQDN(s)
 	 *
 	 * This is used to compare against the Domain Name List to figure out
-	 * whether the AP is operated by the Home SP.
+	 * whether the AP is operated by the Home SP. Multiple domain entries
+	 * can be used to configure alternative FQDNs that will be considered
+	 * home networks.
 	 */
-	char *domain;
+	char **domain;
+
+	/**
+	 * num_domain - Number of FQDNs in the domain array
+	 */
+	size_t num_domain;
 
 	/**
 	 * roaming_consortium - Roaming Consortium OI
@@ -174,6 +199,9 @@ struct wpa_cred {
 	 * roaming_consortium_len - Length of roaming_consortium
 	 */
 	size_t roaming_consortium_len;
+
+	u8 required_roaming_consortium[15];
+	size_t required_roaming_consortium_len;
 
 	/**
 	 * eap_method - EAP method to use
@@ -423,6 +451,11 @@ struct wpa_config {
 	 * EAP-AKA. If left out, this will be asked through control interface.
 	 */
 	char *pcsc_pin;
+
+	/**
+	 * external_sim - Use external processing for SIM/USIM operations
+	 */
+	int external_sim;
 
 	/**
 	 * driver_param - Driver interface parameters
