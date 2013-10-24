@@ -580,6 +580,8 @@ void p2p_channels_intersect(const struct p2p_channels *a,
 			    struct p2p_channels *res);
 int p2p_channels_includes(const struct p2p_channels *channels, u8 reg_class,
 			  u8 channel);
+void p2p_channels_dump(struct p2p_data *p2p, const char *title,
+		       const struct p2p_channels *chan);
 #ifdef ANDROID_P2P
 size_t p2p_copy_reg_class(struct p2p_reg_class *dc, struct p2p_reg_class *sc);
 #endif

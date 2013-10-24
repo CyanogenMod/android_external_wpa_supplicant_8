@@ -1819,7 +1819,7 @@ static void wpa_supplicant_enable_one_network(struct wpa_supplicant *wpa_s,
 	 * Try to reassociate since there is no current configuration and a new
 	 * network was made available.
 	 */
-	if (!wpa_s->current_ssid)
+	if (!wpa_s->current_ssid && !wpa_s->disconnected)
 		wpa_s->reassociate = 1;
 }
 
@@ -1840,7 +1840,7 @@ void wpa_supplicant_enable_network(struct wpa_supplicant *wpa_s,
 	} else
 		wpa_supplicant_enable_one_network(wpa_s, ssid);
 
-	if (wpa_s->reassociate) {
+	if (wpa_s->reassociate && !wpa_s->disconnected) {
 		if (wpa_s->sched_scanning) {
 			wpa_printf(MSG_DEBUG, "Stop ongoing sched_scan to add "
 				   "new network to scan filters");
@@ -3085,7 +3085,8 @@ next_driver:
 #ifdef CONFIG_EAP_PROXY
 {
 	size_t len;
-	wpa_s->mnc_len = eap_proxy_get_imsi(wpa_s->imsi, &len);
+	wpa_s->mnc_len = eapol_sm_get_eap_proxy_imsi(wpa_s->eapol, wpa_s->imsi,
+						     &len);
 	if (wpa_s->mnc_len > 0) {
 		wpa_s->imsi[len] = '\0';
 		wpa_printf(MSG_DEBUG, "eap_proxy: IMSI %s (MNC length %d)",
@@ -3521,7 +3522,7 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	os_free(global->params.override_driver);
 	os_free(global->params.override_ctrl_interface);
 
-	os_free(global->p2p_disallow_freq);
+	os_free(global->p2p_disallow_freq.range);
 	os_free(global->add_psk);
 
 	os_free(global);
