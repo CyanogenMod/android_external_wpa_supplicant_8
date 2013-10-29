@@ -217,7 +217,7 @@ static void wpa_supplicant_timeout(void *eloop_ctx, void *timeout_ctx)
 void wpa_supplicant_req_auth_timeout(struct wpa_supplicant *wpa_s,
 				     int sec, int usec)
 {
-	if (wpa_s->conf && wpa_s->conf->ap_scan == 0 &&
+	if (wpa_s->conf->ap_scan == 0 &&
 	    (wpa_s->drv_flags & WPA_DRIVER_FLAGS_WIRED))
 		return;
 
@@ -293,11 +293,10 @@ void wpa_supplicant_initiate_eapol(struct wpa_supplicant *wpa_s)
 				EAPOL_REQUIRE_KEY_BROADCAST;
 		}
 
-		if (wpa_s->conf && (wpa_s->drv_flags & WPA_DRIVER_FLAGS_WIRED))
+		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_WIRED)
 			eapol_conf.required_keys = 0;
 	}
-	if (wpa_s->conf)
-		eapol_conf.fast_reauth = wpa_s->conf->fast_reauth;
+	eapol_conf.fast_reauth = wpa_s->conf->fast_reauth;
 	eapol_conf.workaround = ssid->eap_workaround;
 	eapol_conf.eap_disabled =
 		!wpa_key_mgmt_wpa_ieee8021x(wpa_s->key_mgmt) &&
@@ -678,6 +677,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		wpa_drv_set_supp_port(wpa_s, 1);
 #endif /* IEEE8021X_EAPOL */
 		wpa_s->after_wps = 0;
+		wpa_s->known_wps_freq = 0;
 #ifdef CONFIG_P2P
 		wpas_p2p_completed(wpa_s);
 #endif /* CONFIG_P2P */

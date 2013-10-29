@@ -1550,6 +1550,7 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 			      struct wpabuf *domain_names)
 {
 	size_t i;
+	int ret = -1;
 #ifdef INTERWORKING_3GPP
 	char nai[100], *realm;
 
@@ -1580,11 +1581,13 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 		if (realm &&
 		    domain_name_list_contains(domain_names, realm))
 			return 1;
+		if (realm)
+			ret = 0;
 	}
 #endif /* INTERWORKING_3GPP */
 
 	if (domain_names == NULL || cred->domain == NULL)
-		return 0;
+		return ret;
 
 	for (i = 0; i < cred->num_domain; i++) {
 		wpa_printf(MSG_DEBUG, "Interworking: Search for match with "
@@ -2099,7 +2102,10 @@ int interworking_select(struct wpa_supplicant *wpa_s, int auto_select)
 	wpa_printf(MSG_DEBUG, "Interworking: Start scan for network "
 		   "selection");
 	wpa_s->scan_res_handler = interworking_scan_res_handler;
+	wpa_s->normal_scans = 0;
 	wpa_s->scan_req = MANUAL_SCAN_REQ;
+	wpa_s->after_wps = 0;
+	wpa_s->known_wps_freq = 0;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
 
 	return 0;

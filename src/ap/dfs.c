@@ -55,13 +55,37 @@ static int dfs_channel_available(struct hostapd_channel_data *chan)
 }
 
 
-static int dfs_is_ht40_allowed(struct hostapd_channel_data *chan)
+static int dfs_is_chan_allowed(struct hostapd_channel_data *chan, int n_chans)
 {
-	int allowed[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 149, 157,
-			  184, 192 };
-	unsigned int i;
+	/*
+	 * The tables contain first valid channel number based on channel width.
+	 * We will also choose this first channel as the control one.
+	 */
+	int allowed_40[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 149, 157,
+			     184, 192 };
+	/*
+	 * VHT80, valid channels based on center frequency:
+	 * 42, 58, 106, 122, 138, 155
+	 */
+	int allowed_80[] = { 36, 52, 100, 116, 132, 149 };
+	int *allowed = allowed_40;
+	unsigned int i, allowed_no = 0;
 
-	for (i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+	switch (n_chans) {
+	case 2:
+		allowed = allowed_40;
+		allowed_no = ARRAY_SIZE(allowed_40);
+		break;
+	case 4:
+		allowed = allowed_80;
+		allowed_no = ARRAY_SIZE(allowed_80);
+		break;
+	default:
+		wpa_printf(MSG_DEBUG, "Unknown width for %d channels", n_chans);
+		break;
+	}
+
+	for (i = 0; i < allowed_no; i++) {
 		if (chan->chan == allowed[i])
 			return 1;
 	}
@@ -92,7 +116,7 @@ static int dfs_find_channel(struct hostapd_data *hapd,
 		/* Skip HT40/VHT uncompatible channels */
 		if (hapd->iconf->ieee80211n &&
 		    hapd->iconf->secondary_channel) {
-			if (!dfs_is_ht40_allowed(chan))
+			if (!dfs_is_chan_allowed(chan, n_chans))
 				continue;
 
 			for (j = 1; j < n_chans; j++) {
@@ -130,7 +154,14 @@ static void dfs_adjust_vht_center_freq(struct hostapd_data *hapd,
 
 	switch (hapd->iconf->vht_oper_chwidth) {
 	case VHT_CHANWIDTH_USE_HT:
-		hapd->iconf->vht_oper_centr_freq_seg0_idx = chan->chan + 2;
+		if (hapd->iconf->secondary_channel == 1)
+			hapd->iconf->vht_oper_centr_freq_seg0_idx =
+				chan->chan + 2;
+		else if (hapd->iconf->secondary_channel == -1)
+			hapd->iconf->vht_oper_centr_freq_seg0_idx =
+				chan->chan - 2;
+		else
+			hapd->iconf->vht_oper_centr_freq_seg0_idx = chan->chan;
 		break;
 	case VHT_CHANWIDTH_80MHZ:
 		hapd->iconf->vht_oper_centr_freq_seg0_idx = chan->chan + 6;
@@ -138,6 +169,7 @@ static void dfs_adjust_vht_center_freq(struct hostapd_data *hapd,
 	case VHT_CHANWIDTH_160MHZ:
 		hapd->iconf->vht_oper_centr_freq_seg0_idx =
 						chan->chan + 14;
+		break;
 	default:
 		wpa_printf(MSG_INFO, "DFS only VHT20/40/80/160 is supported now");
 		break;
@@ -385,13 +417,14 @@ static int dfs_are_channels_overlapped(struct hostapd_data *hapd, int freq,
 	u8 radar_chan;
 	int res = 0;
 
-	if (hapd->iface->freq == freq)
-		res++;
-
 	/* Our configuration */
 	mode = hapd->iface->current_mode;
 	start_chan_idx = dfs_get_start_chan_idx(hapd);
 	n_chans = dfs_get_used_n_chans(hapd);
+
+	/* Check we are on DFS channel(s) */
+	if (!dfs_check_chans_radar(hapd, start_chan_idx, n_chans))
+		return 0;
 
 	/* Reported via radar event */
 	switch (chan_width) {
@@ -422,6 +455,8 @@ static int dfs_are_channels_overlapped(struct hostapd_data *hapd, int freq,
 
 	for (i = 0; i < n_chans; i++) {
 		chan = &mode->channels[start_chan_idx + i];
+		if (!(chan->flag & HOSTAPD_CHAN_RADAR))
+			continue;
 		for (j = 0; j < radar_n_chans; j++) {
 			wpa_printf(MSG_DEBUG, "checking our: %d, radar: %d",
 				   chan->chan, radar_chan + j * 4);
@@ -511,29 +546,13 @@ int hostapd_dfs_complete_cac(struct hostapd_data *hapd, int success, int freq,
 			     int ht_enabled, int chan_offset, int chan_width,
 			     int cf1, int cf2)
 {
-	struct hostapd_channel_data *channel;
-	int err = 1;
-
 	if (success) {
 		/* Complete iface/ap configuration */
 		set_dfs_state(hapd, freq, ht_enabled, chan_offset,
 			      chan_width, cf1, cf2,
 			      HOSTAPD_CHAN_DFS_AVAILABLE);
+		hapd->cac_started = 0;
 		hostapd_setup_interface_complete(hapd->iface, 0);
-	} else {
-		/* Switch to new channel */
-		set_dfs_state(hapd, freq, ht_enabled, chan_offset,
-			      chan_width, cf1, cf2,
-			      HOSTAPD_CHAN_DFS_UNAVAILABLE);
-		channel = dfs_get_valid_channel(hapd);
-		if (channel) {
-			hapd->iconf->channel = channel->chan;
-			hapd->iface->freq = channel->freq;
-			err = 0;
-		} else
-			wpa_printf(MSG_ERROR, "No valid channel available");
-
-		hostapd_setup_interface_complete(hapd->iface, err);
 	}
 
 	return 0;
@@ -553,7 +572,13 @@ static int hostapd_dfs_start_channel_switch(struct hostapd_data *hapd)
 		err = 0;
 	}
 
-	hapd->driver->stop_ap(hapd->drv_priv);
+	if (!hapd->cac_started) {
+		wpa_printf(MSG_DEBUG, "DFS radar detected");
+		hapd->driver->stop_ap(hapd->drv_priv);
+	} else {
+		wpa_printf(MSG_DEBUG, "DFS radar detected during CAC");
+		hapd->cac_started = 0;
+	}
 
 	hostapd_setup_interface_complete(hapd->iface, err);
 	return 0;
@@ -577,10 +602,6 @@ int hostapd_dfs_radar_detected(struct hostapd_data *hapd, int freq,
 	/* Skip if reported radar event not overlapped our channels */
 	res = dfs_are_channels_overlapped(hapd, freq, chan_width, cf1, cf2);
 	if (!res)
-		return 0;
-
-	/* we are working on non-DFS channel - skip event */
-	if (res == 0)
 		return 0;
 
 	/* radar detected while operating, switch the channel. */

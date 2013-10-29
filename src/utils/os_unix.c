@@ -17,10 +17,10 @@
 #endif /* ANDROID */
 
 #include "os.h"
+#include "common.h"
 
 #ifdef WPA_TRACE
 
-#include "common.h"
 #include "wpa_debug.h"
 #include "trace.h"
 #include "list.h"
@@ -268,7 +268,7 @@ int os_program_init(void)
 	struct __user_cap_header_struct header;
 	struct __user_cap_data_struct cap;
 
-	setgroups(sizeof(groups)/sizeof(groups[0]), groups);
+	setgroups(ARRAY_SIZE(groups), groups);
 
 	prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0);
 

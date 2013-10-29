@@ -485,6 +485,7 @@ const char * wpa_ssid_txt(const u8 *ssid, size_t ssid_len);
 
 char * wpa_config_parse_string(const char *value, size_t *len);
 int is_hex(const u8 *data, size_t len);
+int find_first_bit(u32 value);
 size_t merge_byte_arrays(u8 *res, size_t res_len,
 			 const u8 *src1, size_t src1_len,
 			 const u8 *src2, size_t src2_len);
@@ -517,6 +518,8 @@ int freq_range_list_parse(struct wpa_freq_range_list *res, const char *value);
 int freq_range_list_includes(const struct wpa_freq_range_list *list,
 			     unsigned int freq);
 char * freq_range_list_str(const struct wpa_freq_range_list *list);
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
 
 /*

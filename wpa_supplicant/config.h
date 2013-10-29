@@ -605,6 +605,8 @@ struct wpa_config {
 	int p2p_intra_bss;
 	unsigned int num_p2p_pref_chan;
 	struct p2p_channel *p2p_pref_chan;
+	struct wpa_freq_range_list p2p_no_go_freq;
+	int p2p_add_cli_chan;
 	int p2p_ignore_shared_freq;
 
 	struct wpabuf *wps_vendor_ext_m1;
@@ -824,6 +826,16 @@ struct wpa_config {
 	 * By default: 0 (disabled)
 	 */
 	int p2p_go_ht40;
+
+	/**
+	 * p2p_go_vht - Default mode for VHT enable when operating as GO
+	 *
+	 * This will take effect for p2p_group_add, p2p_connect, and p2p_invite.
+	 * Note that regulatory constraints and driver capabilities are
+	 * consulted anyway, so setting it to 1 can't do real harm.
+	 * By default: 0 (disabled)
+	 */
+	int p2p_go_vht;
 
 	/**
 	 * p2p_disabled - Whether P2P operations are disabled for this interface

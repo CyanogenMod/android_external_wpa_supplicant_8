@@ -37,6 +37,11 @@
 #define HOSTAPD_CHAN_DFS_AVAILABLE 0x00000300
 #define HOSTAPD_CHAN_DFS_MASK 0x00000300
 
+#define HOSTAPD_CHAN_VHT_10_70 0x00000800
+#define HOSTAPD_CHAN_VHT_30_50 0x00001000
+#define HOSTAPD_CHAN_VHT_50_30 0x00002000
+#define HOSTAPD_CHAN_VHT_70_10 0x00004000
+
 /**
  * struct hostapd_channel_data - Channel information
  */
@@ -57,7 +62,7 @@ struct hostapd_channel_data {
 	int flag;
 
 	/**
-	 * max_tx_power - Maximum transmit power in dBm
+	 * max_tx_power - Regulatory transmit power limit in dBm
 	 */
 	u8 max_tx_power;
 

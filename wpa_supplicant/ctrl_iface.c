@@ -1569,10 +1569,8 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 
 			if (wpa_s->current_ssid->parent_cred != cred)
 				continue;
-			if (!cred->domain)
-				continue;
 
-			for (i = 0; i < cred->num_domain; i++) {
+			for (i = 0; cred->domain && i < cred->num_domain; i++) {
 				ret = os_snprintf(pos, end - pos,
 						  "home_sp=%s\n",
 						  cred->domain[i]);
@@ -3707,12 +3705,12 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	int go_intent = -1;
 	int freq = 0;
 	int pd;
-	int ht40;
+	int ht40, vht;
 
 	/* <addr> <"pbc" | "pin" | PIN> [label|display|keypad]
 	 * [persistent|persistent=<network id>]
 	 * [join] [auth] [go_intent=<0..15>] [freq=<in MHz>] [provdisc]
-	 * [ht40] */
+	 * [ht40] [vht] */
 
 	if (hwaddr_aton(cmd, addr))
 		return -1;
@@ -3740,7 +3738,9 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	auth = os_strstr(pos, " auth") != NULL;
 	automatic = os_strstr(pos, " auto") != NULL;
 	pd = os_strstr(pos, " provdisc") != NULL;
-	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40;
+	vht = (os_strstr(cmd, " vht") != NULL) || wpa_s->conf->p2p_go_vht;
+	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40 ||
+		vht;
 
 	pos2 = os_strstr(pos, " go_intent=");
 	if (pos2) {
@@ -3781,7 +3781,7 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	new_pin = wpas_p2p_connect(wpa_s, addr, pin, wps_method,
 				   persistent_group, automatic, join,
 				   auth, go_intent, freq, persistent_id, pd,
-				   ht40);
+				   ht40, vht);
 	if (new_pin == -2) {
 		os_memcpy(buf, "FAIL-CHANNEL-UNAVAILABLE\n", 25);
 		return 25;
@@ -4145,7 +4145,7 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	struct wpa_ssid *ssid;
 	u8 *_peer = NULL, peer[ETH_ALEN];
 	int freq = 0, pref_freq = 0;
-	int ht40;
+	int ht40, vht;
 
 	id = atoi(cmd);
 	pos = os_strstr(cmd, " peer=");
@@ -4179,9 +4179,12 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 			return -1;
 	}
 
-	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40;
+	vht = (os_strstr(cmd, " vht") != NULL) || wpa_s->conf->p2p_go_vht;
+	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40 ||
+		vht;
 
-	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, ht40, pref_freq);
+	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, ht40, vht,
+			       pref_freq);
 }
 
 
@@ -4228,7 +4231,8 @@ static int p2p_ctrl_invite(struct wpa_supplicant *wpa_s, char *cmd)
 
 
 static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
-					 char *cmd, int freq, int ht40)
+					 char *cmd, int freq, int ht40,
+					 int vht)
 {
 	int id;
 	struct wpa_ssid *ssid;
@@ -4242,32 +4246,34 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL,
-					     0);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, vht,
+					     NULL, 0);
 }
 
 
 static int p2p_ctrl_group_add(struct wpa_supplicant *wpa_s, char *cmd)
 {
-	int freq = 0, ht40;
+	int freq = 0, ht40, vht;
 	char *pos;
 
 	pos = os_strstr(cmd, "freq=");
 	if (pos)
 		freq = atoi(pos + 5);
 
-	ht40 = (os_strstr(cmd, "ht40") != NULL) || wpa_s->conf->p2p_go_ht40;
+	vht = (os_strstr(cmd, "vht") != NULL) || wpa_s->conf->p2p_go_vht;
+	ht40 = (os_strstr(cmd, "ht40") != NULL) || wpa_s->conf->p2p_go_ht40 ||
+		vht;
 
 	if (os_strncmp(cmd, "persistent=", 11) == 0)
 		return p2p_ctrl_group_add_persistent(wpa_s, cmd + 11, freq,
-						     ht40);
+						     ht40, vht);
 	if (os_strcmp(cmd, "persistent") == 0 ||
 	    os_strncmp(cmd, "persistent ", 11) == 0)
-		return wpas_p2p_group_add(wpa_s, 1, freq, ht40);
+		return wpas_p2p_group_add(wpa_s, 1, freq, ht40, vht);
 	if (os_strncmp(cmd, "freq=", 5) == 0)
-		return wpas_p2p_group_add(wpa_s, 0, freq, ht40);
+		return wpas_p2p_group_add(wpa_s, 0, freq, ht40, vht);
 	if (ht40)
-		return wpas_p2p_group_add(wpa_s, 0, freq, ht40);
+		return wpas_p2p_group_add(wpa_s, 0, freq, ht40, vht);
 
 	wpa_printf(MSG_DEBUG, "CTRL: Invalid P2P_GROUP_ADD parameters '%s'",
 		   cmd);
@@ -5180,6 +5186,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpas_wps_cancel(wpa_s);
 #endif /* CONFIG_WPS */
 	wpa_s->after_wps = 0;
+	wpa_s->known_wps_freq = 0;
 
 #ifdef CONFIG_TDLS_TESTING
 	extern unsigned int tdls_testing;
@@ -5453,7 +5460,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpas_p2p_group_remove(wpa_s, buf + 17))
 			reply_len = -1;
 	} else if (os_strcmp(buf, "P2P_GROUP_ADD") == 0) {
-		if (wpas_p2p_group_add(wpa_s, 0, 0, 0))
+		if (wpas_p2p_group_add(wpa_s, 0, 0, 0, 0))
 			reply_len = -1;
 	} else if (os_strncmp(buf, "P2P_GROUP_ADD ", 14) == 0) {
 		if (p2p_ctrl_group_add(wpa_s, buf + 14))
@@ -5614,6 +5621,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 				wpa_s->normal_scans = 0;
 				wpa_s->scan_req = MANUAL_SCAN_REQ;
 				wpa_s->after_wps = 0;
+				wpa_s->known_wps_freq = 0;
 				wpa_supplicant_req_scan(wpa_s, 0, 0);
 			} else if (wpa_s->sched_scanning) {
 				wpa_printf(MSG_DEBUG, "Stop ongoing "

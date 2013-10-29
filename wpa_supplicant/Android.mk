@@ -772,6 +772,9 @@ OBJS += src/ap/beacon.c
 OBJS += src/ap/eap_user_db.c
 ifdef CONFIG_IEEE80211N
 OBJS += src/ap/ieee802_11_ht.c
+ifdef CONFIG_IEEE80211AC
+OBJS += src/ap/ieee802_11_vht.c
+endif
 endif
 ifdef CONFIG_WNM
 OBJS += src/ap/wnm_ap.c
@@ -787,6 +790,9 @@ OBJS += src/eap_server/eap_server_methods.c
 
 ifdef CONFIG_IEEE80211N
 L_CFLAGS += -DCONFIG_IEEE80211N
+ifdef CONFIG_IEEE80211AC
+L_CFLAGS += -DCONFIG_IEEE80211AC
+endif
 endif
 
 ifdef NEED_AP_MLME

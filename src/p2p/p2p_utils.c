@@ -94,6 +94,10 @@ int p2p_channel_to_freq(int op_class, int channel)
 		if (channel < 149 || channel > 161)
 			return -1;
 		return 5000 + 5 * channel;
+	case 128: /* center freqs 42, 58, 106, 122, 138, 155; 80 MHz */
+		if (channel < 36 || channel > 161)
+			return -1;
+		return 5000 + 5 * channel;
 	}
 	return -1;
 }
@@ -204,6 +208,105 @@ void p2p_channels_intersect(const struct p2p_channels *a,
 }
 
 
+static void p2p_op_class_union(struct p2p_reg_class *cl,
+			       const struct p2p_reg_class *b_cl)
+{
+	size_t i, j;
+
+	for (i = 0; i < b_cl->channels; i++) {
+		for (j = 0; j < cl->channels; j++) {
+			if (b_cl->channel[i] == cl->channel[j])
+				break;
+		}
+		if (j == cl->channels) {
+			if (cl->channels == P2P_MAX_REG_CLASS_CHANNELS)
+				return;
+			cl->channel[cl->channels++] = b_cl->channel[i];
+		}
+	}
+}
+
+
+/**
+ * p2p_channels_union - Union of channel lists
+ * @a: First set of channels
+ * @b: Second set of channels
+ * @res: Data structure for returning the union of channels
+ */
+void p2p_channels_union(const struct p2p_channels *a,
+			const struct p2p_channels *b,
+			struct p2p_channels *res)
+{
+	size_t i, j;
+
+	if (a != res)
+		os_memcpy(res, a, sizeof(*res));
+
+	for (i = 0; i < res->reg_classes; i++) {
+		struct p2p_reg_class *cl = &res->reg_class[i];
+		for (j = 0; j < b->reg_classes; j++) {
+			const struct p2p_reg_class *b_cl = &b->reg_class[j];
+			if (cl->reg_class != b_cl->reg_class)
+				continue;
+			p2p_op_class_union(cl, b_cl);
+		}
+	}
+
+	for (j = 0; j < b->reg_classes; j++) {
+		const struct p2p_reg_class *b_cl = &b->reg_class[j];
+
+		for (i = 0; i < res->reg_classes; i++) {
+			struct p2p_reg_class *cl = &res->reg_class[i];
+			if (cl->reg_class == b_cl->reg_class)
+				break;
+		}
+
+		if (i == res->reg_classes) {
+			if (res->reg_classes == P2P_MAX_REG_CLASSES)
+				return;
+			os_memcpy(&res->reg_class[res->reg_classes++],
+				  b_cl, sizeof(struct p2p_reg_class));
+		}
+	}
+}
+
+
+void p2p_channels_remove_freqs(struct p2p_channels *chan,
+			       const struct wpa_freq_range_list *list)
+{
+	size_t o, c;
+
+	if (list == NULL)
+		return;
+
+	o = 0;
+	while (o < chan->reg_classes) {
+		struct p2p_reg_class *op = &chan->reg_class[o];
+
+		c = 0;
+		while (c < op->channels) {
+			int freq = p2p_channel_to_freq(op->reg_class,
+						       op->channel[c]);
+			if (freq > 0 && freq_range_list_includes(list, freq)) {
+				op->channels--;
+				os_memmove(&op->channel[c],
+					   &op->channel[c + 1],
+					   op->channels - c);
+			} else
+				c++;
+		}
+
+		if (op->channels == 0) {
+			chan->reg_classes--;
+			os_memmove(&chan->reg_class[o], &chan->reg_class[o + 1],
+				   (chan->reg_classes - o) *
+				   sizeof(struct p2p_reg_class));
+		} else
+			o++;
+	}
+}
+
+
 /**
  * p2p_channels_includes - Check whether a channel is included in the list
  * @channels: List of supported channels
@@ -281,6 +384,29 @@ int p2p_supported_freq(struct p2p_data *p2p, unsigned int freq)
 		return 0;
 	return p2p_channels_includes(&p2p->cfg->channels, op_reg_class,
 				     op_channel);
+}
+
+
+int p2p_supported_freq_go(struct p2p_data *p2p, unsigned int freq)
+{
+	u8 op_reg_class, op_channel;
+	if (p2p_freq_to_channel(freq, &op_reg_class, &op_channel) < 0)
+		return 0;
+	return p2p_channels_includes(&p2p->cfg->channels, op_reg_class,
+				     op_channel) &&
+		!freq_range_list_includes(&p2p->no_go_freq, freq);
+}
+
+
+int p2p_supported_freq_cli(struct p2p_data *p2p, unsigned int freq)
+{
+	u8 op_reg_class, op_channel;
+	if (p2p_freq_to_channel(freq, &op_reg_class, &op_channel) < 0)
+		return 0;
+	return p2p_channels_includes(&p2p->cfg->channels, op_reg_class,
+				     op_channel) ||
+		p2p_channels_includes(&p2p->cfg->cli_channels, op_reg_class,
+				      op_channel);
 }
 
 

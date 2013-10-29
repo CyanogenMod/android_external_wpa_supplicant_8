@@ -324,6 +324,8 @@ struct p2p_data {
 	 */
 	struct p2p_channels channels;
 
+	struct wpa_freq_range_list no_go_freq;
+
 	enum p2p_pending_action_state {
 		P2P_NO_PENDING_ACTION,
 		P2P_PENDING_GO_NEG_REQUEST,
@@ -578,6 +580,11 @@ int p2p_freq_to_channel(unsigned int freq, u8 *op_class, u8 *channel);
 void p2p_channels_intersect(const struct p2p_channels *a,
 			    const struct p2p_channels *b,
 			    struct p2p_channels *res);
+void p2p_channels_union(const struct p2p_channels *a,
+			const struct p2p_channels *b,
+			struct p2p_channels *res);
+void p2p_channels_remove_freqs(struct p2p_channels *chan,
+			       const struct wpa_freq_range_list *list);
 int p2p_channels_includes(const struct p2p_channels *channels, u8 reg_class,
 			  u8 channel);
 void p2p_channels_dump(struct p2p_data *p2p, const char *title,
@@ -644,8 +651,8 @@ void p2p_buf_add_noa(struct wpabuf *buf, u8 noa_index, u8 opp_ps, u8 ctwindow,
 void p2p_buf_add_ext_listen_timing(struct wpabuf *buf, u16 period,
 				   u16 interval);
 void p2p_buf_add_p2p_interface(struct wpabuf *buf, struct p2p_data *p2p);
-void p2p_build_wps_ie(struct p2p_data *p2p, struct wpabuf *buf, int pw_id,
-		      int all_attr);
+int p2p_build_wps_ie(struct p2p_data *p2p, struct wpabuf *buf, int pw_id,
+		     int all_attr);
 
 /* p2p_sd.c */
 struct p2p_sd_query * p2p_pending_sd_req(struct p2p_data *p2p,
@@ -737,7 +744,8 @@ int p2p_send_action(struct p2p_data *p2p, unsigned int freq, const u8 *dst,
 		    size_t len, unsigned int wait_time);
 void p2p_stop_listen_for_freq(struct p2p_data *p2p, int freq);
 int p2p_prepare_channel(struct p2p_data *p2p, struct p2p_device *dev,
-			unsigned int force_freq, unsigned int pref_freq);
+			unsigned int force_freq, unsigned int pref_freq,
+			int go);
 void p2p_dbg(struct p2p_data *p2p, const char *fmt, ...)
 PRINTF_FORMAT(2, 3);
 void p2p_info(struct p2p_data *p2p, const char *fmt, ...)
