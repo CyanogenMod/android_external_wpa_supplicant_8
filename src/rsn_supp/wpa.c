@@ -1132,7 +1132,8 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 		goto failed;
 	}
 
-	wpa_sm_set_rekey_offload(sm);
+	if (ie.gtk)
+		wpa_sm_set_rekey_offload(sm);
 
 	return;
 
@@ -1353,13 +1354,14 @@ static void wpa_supplicant_process_1_of_2(struct wpa_sm *sm,
 			MAC2STR(sm->bssid), wpa_cipher_txt(sm->group_cipher));
 		wpa_sm_cancel_auth_timeout(sm);
 		wpa_sm_set_state(sm, WPA_COMPLETED);
-
-		wpa_sm_set_rekey_offload(sm);
 	} else {
 		wpa_supplicant_key_neg_complete(sm, sm->bssid,
 						key_info &
 						WPA_KEY_INFO_SECURE);
 	}
+
+	wpa_sm_set_rekey_offload(sm);
+
 	return;
 
 failed:
