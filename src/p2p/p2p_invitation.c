@@ -228,20 +228,18 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 		goto fail;
 	}
 
-	p2p_channels_intersect(&p2p->cfg->channels, &dev->channels,
-			       &intersection);
-
 	if (p2p->cfg->invitation_process) {
 		status = p2p->cfg->invitation_process(
 			p2p->cfg->cb_ctx, sa, msg.group_bssid, msg.group_id,
 			msg.group_id + ETH_ALEN, msg.group_id_len - ETH_ALEN,
-			&go, group_bssid, &op_freq, persistent, &intersection);
+			&go, group_bssid, &op_freq, persistent);
 	}
 
 	if (op_freq) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Invitation "
 			"processing forced frequency %d MHz", op_freq);
-		if (p2p_freq_to_channel(op_freq, &reg_class, &channel) < 0) {
+		if (p2p_freq_to_channel(p2p->cfg->country, op_freq,
+					&reg_class, &channel) < 0) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
 				"P2P: Unknown forced freq %d MHz from "
 				"invitation_process()", op_freq);
@@ -249,6 +247,8 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 			goto fail;
 		}
 
+		p2p_channels_intersect(&p2p->cfg->channels, &dev->channels,
+				       &intersection);
 		if (!p2p_channels_includes(&intersection, reg_class, channel))
 		{
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -265,6 +265,8 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 			"P2P: No forced channel from invitation processing - "
 			"figure out best one to use");
 
+		p2p_channels_intersect(&p2p->cfg->channels, &dev->channels,
+				       &intersection);
 		/* Default to own configuration as a starting point */
 		p2p->op_reg_class = p2p->cfg->op_reg_class;
 		p2p->op_channel = p2p->cfg->op_channel;
@@ -276,6 +278,7 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 		if (msg.operating_channel) {
 			int req_freq;
 			req_freq = p2p_channel_to_freq(
+				(const char *) msg.operating_channel,
 				msg.operating_channel[3],
 				msg.operating_channel[4]);
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG, "P2P: Peer "
@@ -321,17 +324,10 @@ void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
 				status = P2P_SC_FAIL_NO_COMMON_CHANNELS;
 				goto fail;
 			}
-		} else if (!(dev->flags & P2P_DEV_FORCE_FREQ) &&
-			   !p2p->cfg->cfg_op_channel) {
-			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
-				"P2P: Try to reselect channel selection with "
-				"peer information received; "
-				"previously selected op_class %u channel %u",
-				p2p->op_reg_class, p2p->op_channel);
-			p2p_reselect_channel(p2p, &intersection);
 		}
 
-		op_freq = p2p_channel_to_freq(p2p->op_reg_class,
+		op_freq = p2p_channel_to_freq(p2p->cfg->country,
+					      p2p->op_reg_class,
 					      p2p->op_channel);
 		if (op_freq < 0) {
 			wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -366,7 +362,8 @@ fail:
 	if (rx_freq > 0)
 		freq = rx_freq;
 	else
-		freq = p2p_channel_to_freq(p2p->cfg->reg_class,
+		freq = p2p_channel_to_freq(p2p->cfg->country,
+					   p2p->cfg->reg_class,
 					   p2p->cfg->channel);
 	if (freq < 0) {
 		wpa_msg(p2p->cfg->msg_ctx, MSG_DEBUG,
@@ -536,8 +533,11 @@ void p2p_invitation_req_cb(struct p2p_data *p2p, int success)
 	 * channel.
 	 */
 	p2p_set_state(p2p, P2P_INVITE);
-
-	p2p_set_timeout(p2p, 0, success ? 350000 : 100000);
+#ifdef ANDROID_P2P
+	p2p_set_timeout(p2p, 0, 350000);
+#else
+	p2p_set_timeout(p2p, 0, 100000);
+#endif
 }
 
 

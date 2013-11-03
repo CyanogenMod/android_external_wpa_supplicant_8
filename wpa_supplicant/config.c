@@ -3090,7 +3090,6 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(beacon_int), 0 },
 	{ FUNC(ap_vendor_elements), 0 },
 	{ INT_RANGE(ignore_old_scan_res, 0, 1), 0 },
-	{ INT(sched_scan_interval), 0 },
 };
 
 #undef FUNC

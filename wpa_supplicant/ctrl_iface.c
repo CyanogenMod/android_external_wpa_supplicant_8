@@ -50,7 +50,7 @@ static int wpa_supplicant_global_iface_interfaces(struct wpa_global *global,
 
 static int pno_start(struct wpa_supplicant *wpa_s)
 {
-	int ret, interval;
+	int ret;
 	size_t i, num_ssid;
 	struct wpa_ssid *ssid;
 	struct wpa_driver_scan_params params;
@@ -108,10 +108,7 @@ static int pno_start(struct wpa_supplicant *wpa_s)
 	if (wpa_s->conf->filter_rssi)
 		params.filter_rssi = wpa_s->conf->filter_rssi;
 
-	interval = wpa_s->conf->sched_scan_interval ?
-		wpa_s->conf->sched_scan_interval : 10;
-
-	ret = wpa_drv_sched_scan(wpa_s, &params, interval * 1000);
+	ret = wpa_drv_sched_scan(wpa_s, &params, 10 * 1000);
 	os_free(params.filter_ssids);
 	if (ret == 0)
 		wpa_s->pno = 1;
@@ -4992,19 +4989,6 @@ static int wpas_ctrl_iface_wnm_sleep(struct wpa_supplicant *wpa_s, char *cmd)
 	return ret;
 }
 
-
-static int wpas_ctrl_iface_wnm_bss_query(struct wpa_supplicant *wpa_s, char *cmd)
-{
-	int query_reason;
-
-	query_reason = atoi(cmd);
-
-	wpa_printf(MSG_DEBUG, "CTRL_IFACE: WNM_BSS_QUERY query_reason=%d",
-		   query_reason);
-
-	return wnm_send_bss_transition_mgmt_query(wpa_s, query_reason);
-}
-
 #endif /* CONFIG_WNM */
 
 
@@ -5052,27 +5036,7 @@ static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 {
 	int ret;
 
-	if (os_strncasecmp(cmd, "SETBAND ", 8) == 0) {
-		int val = atoi(cmd + 8);
-		/*
-		* Use driver_cmd for drivers that support it, but ignore the
-		* return value since scan requests from wpa_supplicant will
-		* provide a list of channels to scan for based on the SETBAND
-		* setting.
-		*/
-		wpa_printf(MSG_DEBUG, "SETBAND: %d", val);
-		wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
-		ret = 0;
-		if (val == 0)
-			wpa_s->setband = WPA_SETBAND_AUTO;
-		else if (val == 1)
-			wpa_s->setband = WPA_SETBAND_5G;
-		else if (val == 2)
-			wpa_s->setband = WPA_SETBAND_2G;
-		else
-			ret = -1;
-	} else
-		ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
+	ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
 	if (ret == 0)
 		ret = sprintf(buf, "%s\n", "OK");
 	return ret;
@@ -5661,9 +5625,6 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "WNM_SLEEP ", 10) == 0) {
 		if (wpas_ctrl_iface_wnm_sleep(wpa_s, buf + 10))
 			reply_len = -1;
-	} else if (os_strncmp(buf, "WNM_BSS_QUERY ", 10) == 0) {
-		if (wpas_ctrl_iface_wnm_bss_query(wpa_s, buf + 10))
-				reply_len = -1;
 #endif /* CONFIG_WNM */
 	} else if (os_strcmp(buf, "FLUSH") == 0) {
 		wpa_supplicant_ctrl_iface_flush(wpa_s);

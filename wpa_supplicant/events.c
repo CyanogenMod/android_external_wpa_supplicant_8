@@ -333,24 +333,11 @@ int wpa_supplicant_scard_init(struct wpa_supplicant *wpa_s,
 }
 
 
-static int has_wep_key(struct wpa_ssid *ssid)
-{
-	int i;
-
-	for (i = 0; i < NUM_WEP_KEYS; i++) {
-		if (ssid->wep_key_len[i])
-			return 1;
-	}
-
-	return 0;
-}
-
-
 #ifndef CONFIG_NO_SCAN_PROCESSING
 static int wpa_supplicant_match_privacy(struct wpa_bss *bss,
 					struct wpa_ssid *ssid)
 {
-	int privacy = 0;
+	int i, privacy = 0;
 
 	if (ssid->mixed_cell)
 		return 1;
@@ -360,9 +347,12 @@ static int wpa_supplicant_match_privacy(struct wpa_bss *bss,
 		return 1;
 #endif /* CONFIG_WPS */
 
-	if (has_wep_key(ssid))
-		privacy = 1;
-
+	for (i = 0; i < NUM_WEP_KEYS; i++) {
+		if (ssid->wep_key_len[i]) {
+			privacy = 1;
+			break;
+		}
+	}
 #ifdef IEEE8021X_EAPOL
 	if ((ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA) &&
 	    ssid->eapol_flags & (EAPOL_FLAG_REQUIRE_KEY_UNICAST |
@@ -795,13 +785,6 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 		    !(ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA)) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - non-WPA network "
 				"not allowed");
-			continue;
-		}
-
-		if (wpa && !wpa_key_mgmt_wpa(ssid->key_mgmt) &&
-		    has_wep_key(ssid)) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - ignore WPA/WPA2 "
-				"AP for WEP network block");
 			continue;
 		}
 
@@ -1797,16 +1780,6 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE ||
 	    (wpa_s->current_ssid &&
 	     wpa_s->current_ssid->mode == IEEE80211_MODE_IBSS)) {
-		if (wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE &&
-		    (wpa_s->drv_flags &
-		     WPA_DRIVER_FLAGS_SET_KEYS_AFTER_ASSOC_DONE)) {
-			/*
-			 * Set the key after having received joined-IBSS event
-			 * from the driver.
-			 */
-			wpa_supplicant_set_wpa_none_key(wpa_s,
-							wpa_s->current_ssid);
-		}
 		wpa_supplicant_cancel_auth_timeout(wpa_s);
 		wpa_supplicant_set_state(wpa_s, WPA_COMPLETED);
 	} else if (!ft_completed) {
@@ -2246,12 +2219,8 @@ static void wpa_supplicant_event_tdls(struct wpa_supplicant *wpa_s,
 			wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, data->tdls.peer);
 		break;
 	case TDLS_REQUEST_TEARDOWN:
-		if (wpa_tdls_is_external_setup(wpa_s->wpa))
-			wpa_tdls_teardown_link(wpa_s->wpa, data->tdls.peer,
-					       data->tdls.reason_code);
-		else
-			wpa_drv_tdls_oper(wpa_s, TDLS_TEARDOWN,
-					  data->tdls.peer);
+		wpa_tdls_teardown_link(wpa_s->wpa, data->tdls.peer,
+				       data->tdls.reason_code);
 		break;
 	}
 }
@@ -2504,7 +2473,6 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 					    data->deauth_info.ie,
 					    data->deauth_info.ie_len);
 			}
-			wpa_reset_ft_completed(wpa_s->wpa);
 		}
 #ifdef CONFIG_AP
 		if (wpa_s->ap_iface && data && data->deauth_info.addr) {
@@ -2603,11 +2571,72 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
 			sme_event_assoc_reject(wpa_s, data);
 		else {
+#ifdef ANDROID_P2P
+#if defined(LEGACY_STA_EVENTS)
+                /* If assoc reject is reported by the driver, then avoid
+                 * waiting for  the authentication timeout. Cancel the
+                 * authentication timeout and retry the assoc.
+                 */
+                if(wpa_s->assoc_retries++ < 5) {
+                        wpa_printf(MSG_ERROR, "Retrying assoc "
+                        "Iteration:%d", wpa_s->assoc_retries);
+                        wpa_supplicant_cancel_auth_timeout(wpa_s);
+
+                        /* Clear the states */
+                        wpa_sm_notify_disassoc(wpa_s->wpa);
+                        wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+
+                        wpa_s->reassociate = 1;
+                        wpa_supplicant_req_scan(wpa_s, 1, 0);
+                } else
+                        wpa_s->assoc_retries = 0;
+#else
+			if(!wpa_s->current_ssid) {
+				wpa_printf(MSG_ERROR, "current_ssid == NULL");
+				break;
+			}
+			/* If assoc reject is reported by the driver, then avoid
+			 * waiting for  the authentication timeout. Cancel the
+			 * authentication timeout and retry the assoc.
+			 */
+			if(wpa_s->current_ssid->assoc_retry++ < 10) {
+				wpa_printf(MSG_ERROR, "Retrying assoc: %d ",
+								wpa_s->current_ssid->assoc_retry);
+
+				wpa_supplicant_cancel_auth_timeout(wpa_s);
+
+				/* Clear the states */
+				wpa_sm_notify_disassoc(wpa_s->wpa);
+				wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+
+				wpa_s->reassociate = 1;
+				if (wpa_s->p2p_group_interface == NOT_P2P_GROUP_INTERFACE) {
+					const u8 *bl_bssid = data->assoc_reject.bssid;
+					if (!bl_bssid || is_zero_ether_addr(bl_bssid))
+						bl_bssid = wpa_s->pending_bssid;
+					wpa_blacklist_add(wpa_s, bl_bssid);
+					wpa_supplicant_req_scan(wpa_s, 0, 0);
+				} else {
+					wpa_supplicant_req_scan(wpa_s, 1, 0);
+				}
+			} else if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE) {
+				/* If we ASSOC_REJECT's hits threshold, disable the 
+			 	 * network
+			 	 */
+				wpa_printf(MSG_ERROR, "Assoc retry threshold reached. "
+				"Disabling the network");
+				wpa_s->current_ssid->assoc_retry = 0;
+				wpa_supplicant_disable_network(wpa_s, wpa_s->current_ssid);
+				wpas_p2p_group_remove(wpa_s, wpa_s->ifname);
+			}
+#endif
+#else
 			const u8 *bssid = data->assoc_reject.bssid;
 			if (bssid == NULL || is_zero_ether_addr(bssid))
 				bssid = wpa_s->pending_bssid;
 			wpas_connection_failed(wpa_s, bssid);
 			wpa_supplicant_mark_disassoc(wpa_s);
+#endif /* ANDROID_P2P */
 		}
 		break;
 	case EVENT_AUTH_TIMED_OUT:

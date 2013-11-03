@@ -693,7 +693,6 @@ struct p2p_config {
 	 * @persistent_group: Whether this is an invitation to reinvoke a
 	 *	persistent group (instead of invitation to join an active
 	 *	group)
-	 * @channels: Available operating channels for the group
 	 * Returns: Status code (P2P_SC_*)
 	 *
 	 * This optional callback can be used to implement persistent reconnect
@@ -714,8 +713,7 @@ struct p2p_config {
 	u8 (*invitation_process)(void *ctx, const u8 *sa, const u8 *bssid,
 				 const u8 *go_dev_addr, const u8 *ssid,
 				 size_t ssid_len, int *go, u8 *group_bssid,
-				 int *force_freq, int persistent_group,
-				 const struct p2p_channels *channels);
+				 int *force_freq, int persistent_group);
 
 	/**
 	 * invitation_received - Callback on Invitation Request RX
@@ -906,12 +904,6 @@ void p2p_stop_find_for_freq(struct p2p_data *p2p, int freq);
  * much use for normal P2P operations.
  */
 int p2p_listen(struct p2p_data *p2p, unsigned int timeout);
-
-/**
- * p2p_stop_listen - Stop P2P Listen
- * @p2p: P2P module context from p2p_init()
- */
-void p2p_stop_listen(struct p2p_data *p2p);
 
 /**
  * p2p_connect - Start P2P group formation (GO negotiation)
@@ -1655,15 +1647,6 @@ int p2p_channels_includes_freq(const struct p2p_channels *channels,
  * Returns: 0 if channel not usable for P2P, 1 if usable for P2P
  */
 int p2p_supported_freq(struct p2p_data *p2p, unsigned int freq);
-
-/**
- * p2p_get_pref_freq - Get channel from preferred channel list
- * @p2p: P2P module context from p2p_init()
- * @channels: List of channels
- * Returns: Preferred channel
- */
-unsigned int p2p_get_pref_freq(struct p2p_data *p2p,
-			       const struct p2p_channels *channels);
 
 void p2p_update_channel_list(struct p2p_data *p2p, struct p2p_channels *chan);
 

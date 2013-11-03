@@ -54,7 +54,6 @@ struct wpa_eapol_ie_parse {
 	const u8 *vht_capabilities;
 	size_t vht_capabilities_len;
 	u8 qosinfo;
-	u16 aid;
 };
 
 int wpa_supplicant_parse_ies(const u8 *buf, size_t len,

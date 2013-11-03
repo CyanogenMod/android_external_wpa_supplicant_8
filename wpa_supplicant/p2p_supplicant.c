@@ -61,16 +61,6 @@
 #define P2P_MAX_INITIAL_CONN_WAIT 10
 #endif /* P2P_MAX_INITIAL_CONN_WAIT */
 
-#ifndef P2P_MAX_INITIAL_CONN_WAIT_GO
-/*
- * How many seconds to wait for initial 4-way handshake to get completed after
- * WPS provisioning step on the GO. This controls the extra time the P2P
- * operation is considered to be in progress (e.g., to delay other scans) after
- * WPS provisioning has been completed on the GO during group formation.
- */
-#define P2P_MAX_INITIAL_CONN_WAIT_GO 10
-#endif /* P2P_MAX_INITIAL_CONN_WAIT_GO */
-
 #ifndef P2P_CONCURRENT_SEARCH_DELAY
 #define P2P_CONCURRENT_SEARCH_DELAY 500
 #endif /* P2P_CONCURRENT_SEARCH_DELAY */
@@ -746,10 +736,8 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 							     ssid, go_dev_addr);
 	if (network_id < 0 && ssid)
 		network_id = ssid->id;
-	if (!client) {
+	if (!client)
 		wpas_notify_p2p_group_started(wpa_s, ssid, network_id, 0);
-		os_get_time(&wpa_s->global->p2p_go_wait_client);
-	}
 }
 
 
@@ -2418,20 +2406,10 @@ static void wpas_prov_disc_fail(void *ctx, const u8 *peer,
 }
 
 
-static int freq_included(const struct p2p_channels *channels, unsigned int freq)
-{
-	if (channels == NULL)
-		return 1; /* Assume no restrictions */
-	return p2p_channels_includes_freq(channels, freq);
-
-}
-
-
 static u8 wpas_invitation_process(void *ctx, const u8 *sa, const u8 *bssid,
 				  const u8 *go_dev_addr, const u8 *ssid,
 				  size_t ssid_len, int *go, u8 *group_bssid,
-				  int *force_freq, int persistent_group,
-				  const struct p2p_channels *channels)
+				  int *force_freq, int persistent_group)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	struct wpa_ssid *s;
@@ -2527,25 +2505,6 @@ accept_inv:
 			   "shared interface");
 		*force_freq = res;
 		wpas_p2p_set_own_freq_preference(wpa_s, res);
-	}
-
-	if (*force_freq > 0 &&
-	    (wpa_s->drv_flags & WPA_DRIVER_FLAGS_MULTI_CHANNEL_CONCURRENT)) {
-		if (*go == 0) {
-			/* We are the client */
-			wpa_printf(MSG_DEBUG, "P2P: Peer was found to be "
-				   "running a GO but we are capable of MCC, "
-				   "figure out the best channel to use");
-			*force_freq = 0;
-		} else if (!freq_included(channels, *force_freq)) {
-			/* We are the GO, and *force_freq is not in the
-			 * intersection */
-			wpa_printf(MSG_DEBUG, "P2P: Forced GO freq %d MHz not "
-				   "in intersection but we are capable of MCC, "
-				   "figure out the best channel to use",
-				   *force_freq);
-			*force_freq = 0;
-		}
 	}
 
 	return P2P_SC_SUCCESS;
@@ -3137,12 +3096,6 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 		wpa_printf(MSG_DEBUG, "P2P: Random operating channel: "
 			   "%d:%d", p2p.op_reg_class, p2p.op_channel);
 	}
-
-	if (wpa_s->conf->p2p_pref_chan && wpa_s->conf->num_p2p_pref_chan) {
-		p2p.pref_chan = wpa_s->conf->p2p_pref_chan;
-		p2p.num_pref_chan = wpa_s->conf->num_p2p_pref_chan;
-	}
-
 	if (wpa_s->conf->country[0] && wpa_s->conf->country[1]) {
 		os_memcpy(p2p.country, wpa_s->conf->country, 2);
 		p2p.country[2] = 0x04;
@@ -4065,12 +4018,6 @@ void wpas_p2p_cancel_remain_on_channel_cb(struct wpa_supplicant *wpa_s,
 	if (wpa_s->p2p_long_listen > 0) {
 		wpa_printf(MSG_DEBUG, "P2P: Continuing long Listen state");
 		wpas_p2p_listen_start(wpa_s, wpa_s->p2p_long_listen);
-	} else {
-		/*
-		 * When listen duration is over, stop listen & update p2p_state
-		 * to IDLE.
-		 */
-		p2p_stop_listen(wpa_s->global->p2p);
 	}
 }
 
@@ -4112,57 +4059,11 @@ int wpas_p2p_group_remove(struct wpa_supplicant *wpa_s, const char *ifname)
 }
 
 
-static int wpas_p2p_select_go_freq(struct wpa_supplicant *wpa_s, int freq)
+static int freq_included(const struct p2p_channels *channels, unsigned int freq)
 {
-	unsigned int r;
-
-	if (freq == 2) {
-		wpa_printf(MSG_DEBUG, "P2P: Request to start GO on 2.4 GHz "
-			   "band");
-		if (wpa_s->best_24_freq > 0 &&
-		    p2p_supported_freq(wpa_s->global->p2p,
-				       wpa_s->best_24_freq)) {
-			freq = wpa_s->best_24_freq;
-			wpa_printf(MSG_DEBUG, "P2P: Use best 2.4 GHz band "
-				   "channel: %d MHz", freq);
-		} else {
-			os_get_random((u8 *) &r, sizeof(r));
-			freq = 2412 + (r % 3) * 25;
-			wpa_printf(MSG_DEBUG, "P2P: Use random 2.4 GHz band "
-				   "channel: %d MHz", freq);
-		}
-	}
-
-	if (freq == 5) {
-		wpa_printf(MSG_DEBUG, "P2P: Request to start GO on 5 GHz "
-			   "band");
-		if (wpa_s->best_5_freq > 0 &&
-		    p2p_supported_freq(wpa_s->global->p2p,
-				       wpa_s->best_5_freq)) {
-			freq = wpa_s->best_5_freq;
-			wpa_printf(MSG_DEBUG, "P2P: Use best 5 GHz band "
-				   "channel: %d MHz", freq);
-		} else {
-			os_get_random((u8 *) &r, sizeof(r));
-			freq = 5180 + (r % 4) * 20;
-			if (!p2p_supported_freq(wpa_s->global->p2p, freq)) {
-				wpa_printf(MSG_DEBUG, "P2P: Could not select "
-					   "5 GHz channel for P2P group");
-				return -1;
-			}
-			wpa_printf(MSG_DEBUG, "P2P: Use random 5 GHz band "
-				   "channel: %d MHz", freq);
-		}
-	}
-
-	if (freq > 0 && !p2p_supported_freq(wpa_s->global->p2p, freq)) {
-		wpa_printf(MSG_DEBUG, "P2P: The forced channel for GO "
-			   "(%u MHz) is not supported for P2P uses",
-			   freq);
-		return -1;
-	}
-
-	return freq;
+	if (channels == NULL)
+		return 1; /* Assume no restrictions */
+	return p2p_channels_includes_freq(channels, freq);
 }
 
 
@@ -4173,7 +4074,6 @@ static int wpas_p2p_init_go_params(struct wpa_supplicant *wpa_s,
 {
 	u8 bssid[ETH_ALEN];
 	int res;
-	unsigned int pref_freq;
 
 	os_memset(params, 0, sizeof(*params));
 	params->role_go = 1;
@@ -4230,11 +4130,6 @@ static int wpas_p2p_init_go_params(struct wpa_supplicant *wpa_s,
 		params->freq = wpa_s->best_5_freq;
 		wpa_printf(MSG_DEBUG, "P2P: Set GO freq based on best 5 GHz "
 			   "channel %d MHz", params->freq);
-	} else if ((pref_freq = p2p_get_pref_freq(wpa_s->global->p2p,
-						  channels))) {
-		params->freq = pref_freq;
-		wpa_printf(MSG_DEBUG, "P2P: Set GO freq %d MHz from preferred "
-			   "channels", params->freq);
 	} else {
 		int chan;
 		for (chan = 0; chan < 11; chan++) {
@@ -4360,6 +4255,7 @@ int wpas_p2p_group_add(struct wpa_supplicant *wpa_s, int persistent_group,
 		       int freq, int ht40)
 {
 	struct p2p_go_neg_results params;
+	unsigned int r;
 
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return -1;
@@ -4368,9 +4264,51 @@ int wpas_p2p_group_add(struct wpa_supplicant *wpa_s, int persistent_group,
 	wpa_printf(MSG_DEBUG, "P2P: Stop any on-going P2P FIND");
 	wpas_p2p_stop_find_oper(wpa_s);
 
-	freq = wpas_p2p_select_go_freq(wpa_s, freq);
-	if (freq < 0)
+	if (freq == 2) {
+		wpa_printf(MSG_DEBUG, "P2P: Request to start GO on 2.4 GHz "
+			   "band");
+		if (wpa_s->best_24_freq > 0 &&
+		    p2p_supported_freq(wpa_s->global->p2p,
+				       wpa_s->best_24_freq)) {
+			freq = wpa_s->best_24_freq;
+			wpa_printf(MSG_DEBUG, "P2P: Use best 2.4 GHz band "
+				   "channel: %d MHz", freq);
+		} else {
+			os_get_random((u8 *) &r, sizeof(r));
+			freq = 2412 + (r % 3) * 25;
+			wpa_printf(MSG_DEBUG, "P2P: Use random 2.4 GHz band "
+				   "channel: %d MHz", freq);
+		}
+	}
+
+	if (freq == 5) {
+		wpa_printf(MSG_DEBUG, "P2P: Request to start GO on 5 GHz "
+			   "band");
+		if (wpa_s->best_5_freq > 0 &&
+		    p2p_supported_freq(wpa_s->global->p2p,
+				       wpa_s->best_5_freq)) {
+			freq = wpa_s->best_5_freq;
+			wpa_printf(MSG_DEBUG, "P2P: Use best 5 GHz band "
+				   "channel: %d MHz", freq);
+		} else {
+			os_get_random((u8 *) &r, sizeof(r));
+			freq = 5180 + (r % 4) * 20;
+			if (!p2p_supported_freq(wpa_s->global->p2p, freq)) {
+				wpa_printf(MSG_DEBUG, "P2P: Could not select "
+					   "5 GHz channel for P2P group");
+				return -1;
+			}
+			wpa_printf(MSG_DEBUG, "P2P: Use random 5 GHz band "
+				   "channel: %d MHz", freq);
+		}
+	}
+
+	if (freq > 0 && !p2p_supported_freq(wpa_s->global->p2p, freq)) {
+		wpa_printf(MSG_DEBUG, "P2P: The forced channel for GO "
+			   "(%u MHz) is not supported for P2P uses",
+			   freq);
 		return -1;
+	}
 
 	if (wpas_p2p_init_go_params(wpa_s, &params, freq, ht40, NULL))
 		return -1;
@@ -4464,10 +4402,6 @@ int wpas_p2p_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return wpas_start_p2p_client(wpa_s, ssid, addr_allocated);
 
 	if (ssid->mode != WPAS_MODE_P2P_GO)
-		return -1;
-
-	freq = wpas_p2p_select_go_freq(wpa_s, freq);
-	if (freq < 0)
 		return -1;
 
 	if (wpas_p2p_init_go_params(wpa_s, &params, freq, ht40, channels))
@@ -5226,7 +5160,7 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s)
 			   "during provisioning");
 		return;
 	}
-
+#ifndef ANDROID_P2P
 	if (wpa_s->show_group_started) {
 		/*
 		 * Use the normal group formation timeout between the end of
@@ -5239,6 +5173,7 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s)
 			   "complete");
 		return;
 	}
+#endif
 
 	wpa_printf(MSG_DEBUG, "P2P: Set P2P group idle timeout to %u seconds",
 		   timeout);
@@ -5760,19 +5695,6 @@ int wpas_p2p_in_progress(struct wpa_supplicant *wpa_s)
 		}
 	}
 
-	if (!ret && wpa_s->global->p2p_go_wait_client.sec) {
-		struct os_time now;
-		os_get_time(&now);
-		if (now.sec > wpa_s->global->p2p_go_wait_client.sec +
-		    P2P_MAX_INITIAL_CONN_WAIT_GO) {
-			/* Wait for the first client has expired */
-			wpa_s->global->p2p_go_wait_client.sec = 0;
-		} else {
-			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Waiting for initial client connection during group formation");
-			ret = 1;
-		}
-	}
-
 	return ret;
 }
 
@@ -5832,7 +5754,6 @@ struct wpa_ssid * wpas_p2p_get_persistent(struct wpa_supplicant *wpa_s,
 void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 				       const u8 *addr)
 {
-	wpa_s->global->p2p_go_wait_client.sec = 0;
 	if (addr == NULL)
 		return;
 	wpas_p2p_add_persistent_group_client(wpa_s, addr);
