@@ -322,11 +322,9 @@ static void subscr_addr_add_url(struct subscription *s, const char *url,
 	url_len -= 7;
 
 	/* Make a copy of the string to allow modification during parsing */
-	scratch_mem = os_malloc(url_len + 1);
+	scratch_mem = dup_binstr(url, url_len);
 	if (scratch_mem == NULL)
 		goto fail;
-	os_memcpy(scratch_mem, url, url_len);
-	scratch_mem[url_len] = '\0';
 	wpa_printf(MSG_DEBUG, "WPS UPnP: Adding URL '%s'", scratch_mem);
 	host = scratch_mem;
 	path = os_strchr(host, '/');
@@ -984,6 +982,7 @@ static void upnp_wps_device_stop(struct upnp_wps_device_sm *sm)
 
 	wpa_printf(MSG_DEBUG, "WPS UPnP: Stop device");
 	web_listener_stop(sm);
+	ssdp_listener_stop(sm);
 	upnp_wps_free_msearchreply(&sm->msearch_replies);
 	upnp_wps_free_subscriptions(&sm->subscriptions, NULL);
 
@@ -997,7 +996,6 @@ static void upnp_wps_device_stop(struct upnp_wps_device_sm *sm)
 	if (sm->multicast_sd >= 0)
 		close(sm->multicast_sd);
 	sm->multicast_sd = -1;
-	ssdp_listener_stop(sm);
 
 	sm->started = 0;
 }

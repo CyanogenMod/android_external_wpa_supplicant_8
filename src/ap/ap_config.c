@@ -1,6 +1,6 @@
 /*
  * hostapd / Configuration helper functions
- * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -162,6 +162,18 @@ struct hostapd_config * hostapd_config_defaults(void)
 
 	conf->ap_table_max_size = 255;
 	conf->ap_table_expiration_time = 60;
+
+#ifdef CONFIG_TESTING_OPTIONS
+	conf->ignore_probe_probability = 0.0d;
+	conf->ignore_auth_probability = 0.0d;
+	conf->ignore_assoc_probability = 0.0d;
+	conf->ignore_reassoc_probability = 0.0d;
+	conf->corrupt_gtk_rekey_mic_probability = 0.0d;
+#endif /* CONFIG_TESTING_OPTIONS */
+
+#ifdef CONFIG_ACS
+	conf->acs_num_scans = 5;
+#endif /* CONFIG_ACS */
 
 	return conf;
 }
@@ -432,6 +444,7 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->server_cert);
 	os_free(conf->private_key);
 	os_free(conf->private_key_passwd);
+	os_free(conf->ocsp_stapling_response);
 	os_free(conf->dh_file);
 	os_free(conf->pac_opaque_encr_key);
 	os_free(conf->eap_fast_a_id);
@@ -442,19 +455,6 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->radius);
 	os_free(conf->radius_das_shared_secret);
 	hostapd_config_free_vlan(conf);
-	if (conf->ssid.dyn_vlan_keys) {
-		struct hostapd_ssid *ssid = &conf->ssid;
-		size_t i;
-		for (i = 0; i <= ssid->max_dyn_vlan_keys; i++) {
-			if (ssid->dyn_vlan_keys[i] == NULL)
-				continue;
-			hostapd_config_free_wep(ssid->dyn_vlan_keys[i]);
-			os_free(ssid->dyn_vlan_keys[i]);
-		}
-		os_free(ssid->dyn_vlan_keys);
-		ssid->dyn_vlan_keys = NULL;
-	}
-
 	os_free(conf->time_zone);
 
 #ifdef CONFIG_IEEE80211R
@@ -523,6 +523,8 @@ static void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	wpabuf_free(conf->vendor_elements);
 
 	os_free(conf->sae_groups);
+
+	os_free(conf->server_id);
 }
 
 
@@ -598,11 +600,23 @@ int hostapd_rate_found(int *list, int rate)
 }
 
 
-const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
+int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id)
 {
 	struct hostapd_vlan *v = vlan;
 	while (v) {
 		if (v->vlan_id == vlan_id || v->vlan_id == VLAN_ID_WILDCARD)
+			return 1;
+		v = v->next;
+	}
+	return 0;
+}
+
+
+const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
+{
+	struct hostapd_vlan *v = vlan;
+	while (v) {
+		if (v->vlan_id == vlan_id)
 			return v->ifname;
 		v = v->next;
 	}
@@ -611,14 +625,31 @@ const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
 
 
 const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
-			   const u8 *addr, const u8 *prev_psk)
+			   const u8 *addr, const u8 *p2p_dev_addr,
+			   const u8 *prev_psk)
 {
 	struct hostapd_wpa_psk *psk;
 	int next_ok = prev_psk == NULL;
 
+	if (p2p_dev_addr) {
+		wpa_printf(MSG_DEBUG, "Searching a PSK for " MACSTR
+			   " p2p_dev_addr=" MACSTR " prev_psk=%p",
+			   MAC2STR(addr), MAC2STR(p2p_dev_addr), prev_psk);
+		if (!is_zero_ether_addr(p2p_dev_addr))
+			addr = NULL; /* Use P2P Device Address for matching */
+	} else {
+		wpa_printf(MSG_DEBUG, "Searching a PSK for " MACSTR
+			   " prev_psk=%p",
+			   MAC2STR(addr), prev_psk);
+	}
+
 	for (psk = conf->ssid.wpa_psk; psk != NULL; psk = psk->next) {
 		if (next_ok &&
-		    (psk->group || os_memcmp(psk->addr, addr, ETH_ALEN) == 0))
+		    (psk->group ||
+		     (addr && os_memcmp(psk->addr, addr, ETH_ALEN) == 0) ||
+		     (!addr && p2p_dev_addr &&
+		      os_memcmp(psk->p2p_dev_addr, p2p_dev_addr, ETH_ALEN) ==
+		      0)))
 			return psk->psk;
 
 		if (psk->psk == prev_psk)

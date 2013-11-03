@@ -61,9 +61,36 @@ struct bsd_driver_data {
 	int	prev_roaming;	/* roaming state to restore on deinit */
 	int	prev_privacy;	/* privacy state to restore on deinit */
 	int	prev_wpa;	/* wpa state to restore on deinit */
+	enum ieee80211_opmode opmode;	/* operation mode */
 };
 
 /* Generic functions for hostapd and wpa_supplicant */
+
+static enum ieee80211_opmode
+get80211opmode(struct bsd_driver_data *drv)
+{
+	struct ifmediareq ifmr;
+
+	(void) memset(&ifmr, 0, sizeof(ifmr));
+	(void) strncpy(ifmr.ifm_name, drv->ifname, sizeof(ifmr.ifm_name));
+
+	if (ioctl(drv->sock, SIOCGIFMEDIA, (caddr_t)&ifmr) >= 0) {
+		if (ifmr.ifm_current & IFM_IEEE80211_ADHOC) {
+			if (ifmr.ifm_current & IFM_FLAG0)
+				return IEEE80211_M_AHDEMO;
+			else
+				return IEEE80211_M_IBSS;
+		}
+		if (ifmr.ifm_current & IFM_IEEE80211_HOSTAP)
+			return IEEE80211_M_HOSTAP;
+		if (ifmr.ifm_current & IFM_IEEE80211_MONITOR)
+			return IEEE80211_M_MONITOR;
+		if (ifmr.ifm_current & IFM_IEEE80211_MBSS)
+			return IEEE80211_M_MBSS;
+	}
+	return IEEE80211_M_STA;
+}
+
 
 static int
 bsd_set80211(void *priv, int op, int val, const void *arg, int arg_len)
@@ -265,10 +292,15 @@ bsd_ctrl_iface(void *priv, int enable)
 		return -1;
 	}
 
-	if (enable)
+	if (enable) {
+		if (ifr.ifr_flags & IFF_UP)
+			return 0;
 		ifr.ifr_flags |= IFF_UP;
-	else
+	} else {
+		if (!(ifr.ifr_flags & IFF_UP))
+			return 0;
 		ifr.ifr_flags &= ~IFF_UP;
+	}
 
 	if (ioctl(drv->sock, SIOCSIFFLAGS, &ifr) < 0) {
 		perror("ioctl[SIOCSIFFLAGS]");
@@ -278,12 +310,21 @@ bsd_ctrl_iface(void *priv, int enable)
 	return 0;
 }
 
+#ifdef HOSTAPD
+static int
+bsd_commit(void *priv)
+{
+	return bsd_ctrl_iface(priv, 1);
+}
+#endif /* HOSTAPD */
+
 static int
 bsd_set_key(const char *ifname, void *priv, enum wpa_alg alg,
 	    const unsigned char *addr, int key_idx, int set_tx, const u8 *seq,
 	    size_t seq_len, const u8 *key, size_t key_len)
 {
 	struct ieee80211req_key wk;
+	struct bsd_driver_data *drv = priv;
 
 	wpa_printf(MSG_DEBUG, "%s: alg=%d addr=%p key_idx=%d set_tx=%d "
 		   "seq_len=%zu key_len=%zu", __func__, alg, addr, key_idx,
@@ -338,6 +379,14 @@ bsd_set_key(const char *ifname, void *priv, enum wpa_alg alg,
 	}
 	if (wk.ik_keyix != IEEE80211_KEYIX_NONE && set_tx)
 		wk.ik_flags |= IEEE80211_KEY_DEFAULT;
+#ifndef HOSTAPD
+	/*
+	 * Ignore replay failures in IBSS and AHDEMO mode.
+	 */
+	if (drv->opmode == IEEE80211_M_IBSS ||
+	    drv->opmode == IEEE80211_M_AHDEMO)
+		wk.ik_flags |= IEEE80211_KEY_NOREPLAY;
+#endif /* HOSTAPD */
 	wk.ik_keylen = key_len;
 	if (seq) {
 #ifdef WORDS_BIGENDIAN
@@ -473,6 +522,7 @@ bsd_set_ieee8021x(void *priv, struct wpa_bss_params *params)
 	return bsd_ctrl_iface(priv, 1);
 }
 
+#ifdef HOSTAPD
 static int
 bsd_set_sta_authorized(void *priv, const u8 *addr,
 		       int total_flags, int flags_or, int flags_and)
@@ -492,6 +542,7 @@ bsd_set_sta_authorized(void *priv, const u8 *addr,
 				   IEEE80211_MLME_AUTHORIZE :
 				   IEEE80211_MLME_UNAUTHORIZE, 0, addr);
 }
+#endif /* HOSTAPD */
 
 static void
 bsd_new_sta(void *priv, void *ctx, u8 addr[IEEE80211_ADDR_LEN])
@@ -1295,6 +1346,11 @@ wpa_driver_bsd_add_scan_entry(struct wpa_scan_results *res,
 	result->caps = sr->isr_capinfo;
 	result->qual = sr->isr_rssi;
 	result->noise = sr->isr_noise;
+	/*
+	 * the rssi value reported by the kernel is in 0.5dB steps relative to
+	 * the reported noise floor. see ieee80211_node.h for details.
+	 */
+	result->level = sr->isr_rssi / 2 + sr->isr_noise;
 
 	pos = (u8 *)(result + 1);
 
@@ -1461,6 +1517,12 @@ wpa_driver_bsd_init(void *ctx, const char *ifname)
 	drv->sock = socket(PF_INET, SOCK_DGRAM, 0);
 	if (drv->sock < 0)
 		goto fail1;
+
+	os_strlcpy(drv->ifname, ifname, sizeof(drv->ifname));
+	/* Down interface during setup. */
+	if (bsd_ctrl_iface(drv, 0) < 0)
+		goto fail;
+
 	drv->route = socket(PF_ROUTE, SOCK_RAW, 0);
 	if (drv->route < 0)
 		goto fail;
@@ -1468,11 +1530,6 @@ wpa_driver_bsd_init(void *ctx, const char *ifname)
 		wpa_driver_bsd_event_receive, ctx, drv);
 
 	drv->ctx = ctx;
-	os_strlcpy(drv->ifname, ifname, sizeof(drv->ifname));
-
-	/* Down interface during setup. */
-	if (bsd_ctrl_iface(drv, 0) < 0)
-		goto fail;
 
 	if (!GETPARAM(drv, IEEE80211_IOC_ROAMING, drv->prev_roaming)) {
 		wpa_printf(MSG_DEBUG, "%s: failed to get roaming state: %s",
@@ -1492,6 +1549,8 @@ wpa_driver_bsd_init(void *ctx, const char *ifname)
 
 	if (wpa_driver_bsd_capa(drv))
 		goto fail;
+
+	drv->opmode = get80211opmode(drv);
 
 	return drv;
 fail:
@@ -1548,6 +1607,8 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 	.read_sta_data		= bsd_read_sta_driver_data,
 	.sta_disassoc		= bsd_sta_disassoc,
 	.sta_deauth		= bsd_sta_deauth,
+	.sta_set_flags		= bsd_set_sta_authorized,
+	.commit			= bsd_commit,
 #else /* HOSTAPD */
 	.init			= wpa_driver_bsd_init,
 	.deinit			= wpa_driver_bsd_deinit,
@@ -1566,6 +1627,5 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 	.hapd_set_ssid		= bsd_set_ssid,
 	.hapd_get_ssid		= bsd_get_ssid,
 	.hapd_send_eapol	= bsd_send_eapol,
-	.sta_set_flags		= bsd_set_sta_authorized,
 	.set_generic_elem	= bsd_set_opt_ie,
 };

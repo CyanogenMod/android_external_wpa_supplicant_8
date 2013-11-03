@@ -437,6 +437,13 @@ static int wpa_supplicant_set_key(void *_wpa_s, enum wpa_alg alg,
 		/* Clear the MIC error counter when setting a new PTK. */
 		wpa_s->mic_errors_seen = 0;
 	}
+#ifdef CONFIG_TESTING_GET_GTK
+	if (key_idx > 0 && addr && is_broadcast_ether_addr(addr) &&
+	    alg != WPA_ALG_NONE && key_len <= sizeof(wpa_s->last_gtk)) {
+		os_memcpy(wpa_s->last_gtk, key, key_len);
+		wpa_s->last_gtk_len = key_len;
+	}
+#endif /* CONFIG_TESTING_GET_GTK */
 	return wpa_drv_set_key(wpa_s, alg, addr, key_idx, set_tx, seq, seq_len,
 			       key, key_len);
 }
@@ -506,8 +513,6 @@ static int wpa_supplicant_mark_authenticated(void *ctx, const u8 *target_ap)
 }
 #endif /* CONFIG_IEEE80211R */
 
-#endif /* CONFIG_NO_WPA */
-
 
 #ifdef CONFIG_TDLS
 
@@ -551,7 +556,7 @@ static int wpa_supplicant_tdls_oper(void *ctx, int oper, const u8 *peer)
 
 
 static int wpa_supplicant_tdls_peer_addset(
-	void *ctx, const u8 *peer, int add, u16 capability,
+	void *ctx, const u8 *peer, int add, u16 aid, u16 capability,
 	const u8 *supp_rates, size_t supp_rates_len,
 	const struct ieee80211_ht_capabilities *ht_capab,
 	const struct ieee80211_vht_capabilities *vht_capab,
@@ -563,7 +568,7 @@ static int wpa_supplicant_tdls_peer_addset(
 	os_memset(&params, 0, sizeof(params));
 
 	params.addr = peer;
-	params.aid = 1;
+	params.aid = aid;
 	params.capability = capability;
 	params.flags = WPA_STA_TDLS_PEER | WPA_STA_AUTHORIZED;
 
@@ -588,6 +593,8 @@ static int wpa_supplicant_tdls_peer_addset(
 }
 
 #endif /* CONFIG_TDLS */
+
+#endif /* CONFIG_NO_WPA */
 
 
 enum wpa_ctrl_req_type wpa_supplicant_ctrl_req_from_string(const char *field)

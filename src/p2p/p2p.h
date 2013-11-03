@@ -53,10 +53,6 @@ enum p2p_wps_method {
 	WPS_NOT_READY, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC
 };
 
-enum p2p_sd_action {
-	SRV_UPDATE, SRV_ADD, SRV_DEL, SRV_FLUSH
-};
-
 /**
  * struct p2p_go_neg_results - P2P Group Owner Negotiation results
  */
@@ -147,7 +143,6 @@ struct p2p_data;
 enum p2p_scan_type {
 	P2P_SCAN_SOCIAL,
 	P2P_SCAN_FULL,
-	P2P_SCAN_SPECIFIC,
 	P2P_SCAN_SOCIAL_PLUS_ONE
 };
 
@@ -375,23 +370,18 @@ struct p2p_config {
 	 */
 	unsigned int max_listen;
 
-#ifdef ANDROID_P2P
-	enum p2p_concurrency_type {
-		P2P_NON_CONCURRENT,
-		P2P_SINGLE_CHANNEL_CONCURRENT,
-		P2P_MULTI_CHANNEL_CONCURRENT,
-	} p2p_concurrency;
-#endif
-
-	/**
-	 * msg_ctx - Context to use with wpa_msg() calls
-	 */
-	void *msg_ctx;
-
 	/**
 	 * cb_ctx - Context to use with callback functions
 	 */
 	void *cb_ctx;
+
+	/**
+	 * debug_print - Debug print
+	 * @ctx: Callback context from cb_ctx
+	 * @level: Debug verbosity level (MSG_*)
+	 * @msg: Debug message
+	 */
+	void (*debug_print)(void *ctx, int level, const char *msg);
 
 
 	/* Callbacks to request lower layer driver operations */
@@ -558,6 +548,12 @@ struct p2p_config {
 	void (*dev_lost)(void *ctx, const u8 *dev_addr);
 
 	/**
+	 * find_stopped - Notification of a p2p_find operation stopping
+	 * @ctx: Callback context from cb_ctx
+	 */
+	void (*find_stopped)(void *ctx);
+
+	/**
 	 * go_neg_req_rx - Notification of a receive GO Negotiation Request
 	 * @ctx: Callback context from cb_ctx
 	 * @src: Source address of the message triggering this notification
@@ -693,6 +689,7 @@ struct p2p_config {
 	 * @persistent_group: Whether this is an invitation to reinvoke a
 	 *	persistent group (instead of invitation to join an active
 	 *	group)
+	 * @channels: Available operating channels for the group
 	 * Returns: Status code (P2P_SC_*)
 	 *
 	 * This optional callback can be used to implement persistent reconnect
@@ -713,7 +710,8 @@ struct p2p_config {
 	u8 (*invitation_process)(void *ctx, const u8 *sa, const u8 *bssid,
 				 const u8 *go_dev_addr, const u8 *ssid,
 				 size_t ssid_len, int *go, u8 *group_bssid,
-				 int *force_freq, int persistent_group);
+				 int *force_freq, int persistent_group,
+				 const struct p2p_channels *channels);
 
 	/**
 	 * invitation_received - Callback on Invitation Request RX
@@ -906,6 +904,12 @@ void p2p_stop_find_for_freq(struct p2p_data *p2p, int freq);
 int p2p_listen(struct p2p_data *p2p, unsigned int timeout);
 
 /**
+ * p2p_stop_listen - Stop P2P Listen
+ * @p2p: P2P module context from p2p_init()
+ */
+void p2p_stop_listen(struct p2p_data *p2p);
+
+/**
  * p2p_connect - Start P2P group formation (GO negotiation)
  * @p2p: P2P module context from p2p_init()
  * @peer_addr: MAC address of the peer P2P client
@@ -1039,11 +1043,7 @@ void p2p_sd_response(struct p2p_data *p2p, int freq, const u8 *dst,
  * of the local services. This will increment the Service Update Indicator
  * value which will be used in SD Request and Response frames.
  */
-#ifdef ANDROID_P2P
-void p2p_sd_service_update(struct p2p_data *p2p, int action);
-#else
 void p2p_sd_service_update(struct p2p_data *p2p);
-#endif
 
 
 enum p2p_invite_role {
@@ -1648,6 +1648,15 @@ int p2p_channels_includes_freq(const struct p2p_channels *channels,
  */
 int p2p_supported_freq(struct p2p_data *p2p, unsigned int freq);
 
+/**
+ * p2p_get_pref_freq - Get channel from preferred channel list
+ * @p2p: P2P module context from p2p_init()
+ * @channels: List of channels
+ * Returns: Preferred channel
+ */
+unsigned int p2p_get_pref_freq(struct p2p_data *p2p,
+			       const struct p2p_channels *channels);
+
 void p2p_update_channel_list(struct p2p_data *p2p, struct p2p_channels *chan);
 
 /**
@@ -1832,5 +1841,16 @@ struct wpabuf * wifi_display_encaps(struct wpabuf *subelems);
  */
 int p2p_set_disc_int(struct p2p_data *p2p, int min_disc_int, int max_disc_int,
 		     int max_disc_tu);
+
+/**
+ * p2p_get_state_txt - Get current P2P state for debug purposes
+ * @p2p: P2P module context from p2p_init()
+ * Returns: Name of the current P2P module state
+ *
+ * It should be noted that the P2P module state names are internal information
+ * and subject to change at any point, i.e., this information should be used
+ * mainly for debugging purposes.
+ */
+const char * p2p_get_state_txt(struct p2p_data *p2p);
 
 #endif /* P2P_H */

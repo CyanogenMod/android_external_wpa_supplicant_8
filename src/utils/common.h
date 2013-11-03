@@ -205,6 +205,7 @@ static inline unsigned int wpa_swap_32(unsigned int v)
 #define be_to_host16(n) (n)
 #define host_to_be16(n) (n)
 #define le_to_host32(n) bswap_32(n)
+#define host_to_le32(n) bswap_32(n)
 #define be_to_host32(n) (n)
 #define host_to_be32(n) (n)
 #define le_to_host64(n) bswap_64(n)
@@ -487,6 +488,7 @@ int is_hex(const u8 *data, size_t len);
 size_t merge_byte_arrays(u8 *res, size_t res_len,
 			 const u8 *src1, size_t src1_len,
 			 const u8 *src2, size_t src2_len);
+char * dup_binstr(const void *src, size_t len);
 
 static inline int is_zero_ether_addr(const u8 *a)
 {

@@ -266,7 +266,7 @@ int wps_pin_str_valid(const char *pin)
 
 
 void wps_fail_event(struct wps_context *wps, enum wps_msg_type msg,
-		    u16 config_error, u16 error_indication)
+		    u16 config_error, u16 error_indication, const u8 *mac_addr)
 {
 	union wps_event_data data;
 
@@ -277,20 +277,26 @@ void wps_fail_event(struct wps_context *wps, enum wps_msg_type msg,
 	data.fail.msg = msg;
 	data.fail.config_error = config_error;
 	data.fail.error_indication = error_indication;
+	os_memcpy(data.fail.peer_macaddr, mac_addr, ETH_ALEN);
 	wps->event_cb(wps->cb_ctx, WPS_EV_FAIL, &data);
 }
 
 
-void wps_success_event(struct wps_context *wps)
+void wps_success_event(struct wps_context *wps, const u8 *mac_addr)
 {
+	union wps_event_data data;
+
 	if (wps->event_cb == NULL)
 		return;
 
-	wps->event_cb(wps->cb_ctx, WPS_EV_SUCCESS, NULL);
+	os_memset(&data, 0, sizeof(data));
+	os_memcpy(data.success.peer_macaddr, mac_addr, ETH_ALEN);
+	wps->event_cb(wps->cb_ctx, WPS_EV_SUCCESS, &data);
 }
 
 
-void wps_pwd_auth_fail_event(struct wps_context *wps, int enrollee, int part)
+void wps_pwd_auth_fail_event(struct wps_context *wps, int enrollee, int part,
+			     const u8 *mac_addr)
 {
 	union wps_event_data data;
 
@@ -300,6 +306,7 @@ void wps_pwd_auth_fail_event(struct wps_context *wps, int enrollee, int part)
 	os_memset(&data, 0, sizeof(data));
 	data.pwd_auth_fail.enrollee = enrollee;
 	data.pwd_auth_fail.part = part;
+	os_memcpy(data.pwd_auth_fail.peer_macaddr, mac_addr, ETH_ALEN);
 	wps->event_cb(wps->cb_ctx, WPS_EV_PWD_AUTH_FAIL, &data);
 }
 
@@ -319,6 +326,24 @@ void wps_pbc_timeout_event(struct wps_context *wps)
 		return;
 
 	wps->event_cb(wps->cb_ctx, WPS_EV_PBC_TIMEOUT, NULL);
+}
+
+
+void wps_pbc_active_event(struct wps_context *wps)
+{
+	if (wps->event_cb == NULL)
+		return;
+
+	wps->event_cb(wps->cb_ctx, WPS_EV_PBC_ACTIVE, NULL);
+}
+
+
+void wps_pbc_disable_event(struct wps_context *wps)
+{
+	if (wps->event_cb == NULL)
+		return;
+
+	wps->event_cb(wps->cb_ctx, WPS_EV_PBC_DISABLE, NULL);
 }
 
 
@@ -343,9 +368,35 @@ struct wpabuf * wps_get_oob_cred(struct wps_context *wps)
 	if (wps_build_version(plain) ||
 	    wps_build_cred(&data, plain) ||
 	    wps_build_wfa_ext(plain, 0, NULL, 0)) {
+		os_free(data.new_psk);
 		wpabuf_free(plain);
 		return NULL;
 	}
+
+	if (wps->wps_state == WPS_STATE_NOT_CONFIGURED && data.new_psk &&
+	    wps->ap) {
+		struct wps_credential cred;
+
+		wpa_printf(MSG_DEBUG, "WPS: Moving to Configured state based "
+			   "on credential token generation");
+
+		os_memset(&cred, 0, sizeof(cred));
+		os_memcpy(cred.ssid, wps->ssid, wps->ssid_len);
+		cred.ssid_len = wps->ssid_len;
+		cred.auth_type = WPS_AUTH_WPAPSK | WPS_AUTH_WPA2PSK;
+		cred.encr_type = WPS_ENCR_TKIP | WPS_ENCR_AES;
+		os_memcpy(cred.key, data.new_psk, data.new_psk_len);
+		cred.key_len = data.new_psk_len;
+
+		wps->wps_state = WPS_STATE_CONFIGURED;
+		wpa_hexdump_ascii_key(MSG_DEBUG,
+				      "WPS: Generated random passphrase",
+				      data.new_psk, data.new_psk_len);
+		if (wps->cred_cb)
+			wps->cred_cb(wps->cb_ctx, &cred);
+	}
+
+	os_free(data.new_psk);
 
 	return plain;
 }

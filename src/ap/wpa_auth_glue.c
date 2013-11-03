@@ -28,6 +28,7 @@
 
 
 static void hostapd_wpa_auth_conf(struct hostapd_bss_config *conf,
+				  struct hostapd_config *iconf,
 				  struct wpa_auth_config *wconf)
 {
 	os_memset(wconf, 0, sizeof(*wconf));
@@ -74,6 +75,10 @@ static void hostapd_wpa_auth_conf(struct hostapd_bss_config *conf,
 #ifdef CONFIG_HS20
 	wconf->disable_gtk = conf->disable_dgaf;
 #endif /* CONFIG_HS20 */
+#ifdef CONFIG_TESTING_OPTIONS
+	wconf->corrupt_gtk_rekey_mic_probability =
+		iconf->corrupt_gtk_rekey_mic_probability;
+#endif /* CONFIG_TESTING_OPTIONS */
 }
 
 
@@ -181,6 +186,7 @@ static int hostapd_wpa_auth_get_eapol(void *ctx, const u8 *addr,
 
 
 static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+					   const u8 *p2p_dev_addr,
 					   const u8 *prev_psk)
 {
 	struct hostapd_data *hapd = ctx;
@@ -195,7 +201,7 @@ static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
 	}
 #endif /* CONFIG_SAE */
 
-	psk = hostapd_get_psk(hapd->conf, addr, prev_psk);
+	psk = hostapd_get_psk(hapd->conf, addr, p2p_dev_addr, prev_psk);
 	/*
 	 * This is about to iterate over all psks, prev_psk gives the last
 	 * returned psk which should not be returned again.
@@ -466,7 +472,7 @@ hostapd_wpa_auth_add_sta(void *ctx, const u8 *sta_addr)
 		return sta->wpa_sm;
 	}
 
-	sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth, sta->addr);
+	sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth, sta->addr, NULL);
 	if (sta->wpa_sm == NULL) {
 		ap_free_sta(hapd, sta);
 		return NULL;
@@ -509,7 +515,7 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
 	const u8 *wpa_ie;
 	size_t wpa_ie_len;
 
-	hostapd_wpa_auth_conf(hapd->conf, &_conf);
+	hostapd_wpa_auth_conf(hapd->conf, hapd->iconf, &_conf);
 	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_EAPOL_TX_STATUS)
 		_conf.tx_status = 1;
 	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_AP_MLME)
@@ -583,7 +589,7 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
 void hostapd_reconfig_wpa(struct hostapd_data *hapd)
 {
 	struct wpa_auth_config wpa_auth_conf;
-	hostapd_wpa_auth_conf(hapd->conf, &wpa_auth_conf);
+	hostapd_wpa_auth_conf(hapd->conf, hapd->iconf, &wpa_auth_conf);
 	wpa_reconfig(hapd->wpa_auth, &wpa_auth_conf);
 }
 

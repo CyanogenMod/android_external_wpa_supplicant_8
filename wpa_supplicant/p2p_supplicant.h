@@ -14,10 +14,12 @@ struct p2p_go_neg_results;
 enum p2p_send_action_result;
 struct p2p_peer_info;
 struct p2p_channels;
+struct wps_event_fail;
 
 int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit(struct wpa_supplicant *wpa_s);
 void wpas_p2p_deinit_global(struct wpa_global *global);
+int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s);
 int wpas_p2p_connect(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		     const char *pin, enum p2p_wps_method wps_method,
 		     int persistent_group, int auto_join, int join,
@@ -76,6 +78,7 @@ void wpas_p2p_group_deinit(struct wpa_supplicant *wpa_s);
 void wpas_dev_found(void *ctx, const u8 *addr,
 		    const struct p2p_peer_info *info,
 		    int new_device);
+void wpas_p2p_group_formation_failed(struct wpa_supplicant *wpa_s);
 void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res);
 void wpas_go_neg_req_rx(void *ctx, const u8 *src, u16 dev_passwd_id);
 void wpas_prov_disc_req(void *ctx, const u8 *peer, u16 config_methods,
@@ -98,11 +101,7 @@ int wpas_p2p_sd_cancel_request(struct wpa_supplicant *wpa_s, u64 req);
 void wpas_p2p_sd_response(struct wpa_supplicant *wpa_s, int freq,
 			  const u8 *dst, u8 dialog_token,
 			  const struct wpabuf *resp_tlvs);
-#ifdef ANDROID_P2P
-void wpas_p2p_sd_service_update(struct wpa_supplicant *wpa_s, int action);
-#else
 void wpas_p2p_sd_service_update(struct wpa_supplicant *wpa_s);
-#endif
 void wpas_p2p_service_flush(struct wpa_supplicant *wpa_s);
 int wpas_p2p_service_add_bonjour(struct wpa_supplicant *wpa_s,
 				 struct wpabuf *query, struct wpabuf *resp);
@@ -157,11 +156,27 @@ int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s);
 int wpas_p2p_get_ht40_mode(struct wpa_supplicant *wpa_s,
 			   struct hostapd_hw_modes *mode, u8 channel);
 unsigned int wpas_p2p_search_delay(struct wpa_supplicant *wpa_s);
+void wpas_p2p_new_psk_cb(struct wpa_supplicant *wpa_s, const u8 *mac_addr,
+			 const u8 *p2p_dev_addr,
+			 const u8 *psk, size_t psk_len);
+void wpas_p2p_remove_client(struct wpa_supplicant *wpa_s, const u8 *peer,
+			    int iface_addr);
 
 #ifdef CONFIG_P2P
 void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s);
+int wpas_p2p_4way_hs_failed(struct wpa_supplicant *wpa_s);
+void wpas_p2p_ap_setup_failed(struct wpa_supplicant *wpa_s);
 #else /* CONFIG_P2P */
 static inline void wpas_p2p_continue_after_scan(struct wpa_supplicant *wpa_s)
+{
+}
+
+static inline int wpas_p2p_4way_hs_failed(struct wpa_supplicant *wpa_s)
+{
+	return 0;
+}
+
+static inline void wpas_p2p_ap_setup_failed(struct wpa_supplicant *wpa_s)
 {
 }
 #endif /* CONFIG_P2P */

@@ -104,6 +104,15 @@ struct wpa_interface {
 	 * receiving of EAPOL frames from an additional interface.
 	 */
 	const char *bridge_ifname;
+
+	/**
+	 * p2p_mgmt - Interface used for P2P management (P2P Device operations)
+	 *
+	 * Indicates whether wpas_p2p_init() must be called for this interface.
+	 * This is used only when the driver supports a dedicated P2P Device
+	 * interface that is not a network interface.
+	 */
+	int p2p_mgmt;
 };
 
 /**
@@ -153,6 +162,11 @@ struct wpa_params {
 	 * ctrl_interface - Global ctrl_iface path/parameter
 	 */
 	char *ctrl_interface;
+
+	/**
+	 * ctrl_interface_group - Global ctrl_iface group
+	 */
+	char *ctrl_interface_group;
 
 	/**
 	 * dbus_ctrl_interface - Enable the DBus control interface
@@ -238,6 +252,7 @@ struct wpa_global {
 	struct wpa_supplicant *p2p_group_formation;
 	struct wpa_supplicant *p2p_invite_group;
 	u8 p2p_dev_addr[ETH_ALEN];
+	struct os_time p2p_go_wait_client;
 	struct dl_list p2p_srv_bonjour; /* struct p2p_srv_bonjour */
 	struct dl_list p2p_srv_upnp; /* struct p2p_srv_upnp */
 	int p2p_disabled;
@@ -250,12 +265,15 @@ struct wpa_global {
 		WPA_CONC_PREF_P2P
 	} conc_pref;
 	unsigned int p2p_cb_on_scan_complete:1;
+	unsigned int p2p_per_sta_psk:1;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	int wifi_display;
 #define MAX_WFD_SUBELEMS 10
 	struct wpabuf *wfd_subelem[MAX_WFD_SUBELEMS];
 #endif /* CONFIG_WIFI_DISPLAY */
+
+	struct psk_list_entry *add_psk; /* From group formation */
 };
 
 
@@ -350,6 +368,8 @@ struct wpa_supplicant {
 	struct wpa_ssid_value *disallow_aps_ssid;
 	size_t disallow_aps_ssid_count;
 
+	enum { WPA_SETBAND_AUTO, WPA_SETBAND_5G, WPA_SETBAND_2G } setband;
+
 	/* previous scan was wildcard when interleaving between
 	 * wildcard scans and specific SSID scan when max_ssids=1 */
 	int prev_scan_wildcard;
@@ -402,10 +422,8 @@ struct wpa_supplicant {
 			     * previous association event */
 
 	struct scard_data *scard;
-#ifdef PCSC_FUNCS
 	char imsi[20];
 	int mnc_len;
-#endif /* PCSC_FUNCS */
 
 	unsigned char last_eapol_src[ETH_ALEN];
 
@@ -563,6 +581,8 @@ struct wpa_supplicant {
 	unsigned int roc_waiting_drv_freq;
 	int action_tx_wait_time;
 
+	int p2p_mgmt;
+
 #ifdef CONFIG_P2P
 	struct p2p_go_neg_results *go_params;
 	int create_p2p_iface;
@@ -634,6 +654,7 @@ struct wpa_supplicant {
 	int p2p_go_intent;
 	int p2p_connect_freq;
 	struct os_time p2p_auto_started;
+	struct wpa_ssid *p2p_last_4way_hs_fail;
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;
@@ -692,6 +713,24 @@ struct wpa_supplicant {
 	u8 last_gas_dialog_token;
 
 	unsigned int no_keep_alive:1;
+
+#ifdef CONFIG_WNM
+	u8 wnm_dialog_token;
+	u8 wnm_reply;
+	u8 wnm_num_neighbor_report;
+	u8 wnm_mode;
+	u16 wnm_dissoc_timer;
+	u8 wnm_validity_interval;
+	u8 wnm_bss_termination_duration[12];
+	struct neighbor_report *wnm_neighbor_report_elements;
+#endif /* CONFIG_WNM */
+
+#ifdef CONFIG_TESTING_GET_GTK
+	u8 last_gtk[32];
+	size_t last_gtk_len;
+#endif /* CONFIG_TESTING_GET_GTK */
+
+	unsigned int num_multichan_concurrent;
 };
 
 
@@ -704,6 +743,8 @@ void wpa_supplicant_apply_vht_overrides(
 	struct wpa_driver_associate_params *params);
 
 int wpa_set_wep_keys(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
+int wpa_supplicant_set_wpa_none_key(struct wpa_supplicant *wpa_s,
+				    struct wpa_ssid *ssid);
 
 int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s);
 
@@ -782,6 +823,7 @@ int disallowed_ssid(struct wpa_supplicant *wpa_s, const u8 *ssid,
 		    size_t ssid_len);
 void wpas_request_connection(struct wpa_supplicant *wpa_s);
 int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf);
+int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s);
 
 /**
  * wpa_supplicant_ctrl_iface_ctrl_rsp_handle - Handle a control response
@@ -826,5 +868,8 @@ static inline int network_is_persistent_group(struct wpa_ssid *ssid)
 int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid);
 
 int wpas_init_ext_pw(struct wpa_supplicant *wpa_s);
+
+int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
+			   int *freq_array, unsigned int len);
 
 #endif /* WPA_SUPPLICANT_I_H */

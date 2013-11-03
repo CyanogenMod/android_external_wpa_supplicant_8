@@ -485,8 +485,29 @@ void handle_probe_req(struct hostapd_data *hapd,
 	}
 #endif /* CONFIG_INTERWORKING */
 
+#ifdef CONFIG_P2P
+	if ((hapd->conf->p2p & P2P_GROUP_OWNER) &&
+	    supp_rates_11b_only(&elems)) {
+		/* Indicates support for 11b rates only */
+		wpa_printf(MSG_EXCESSIVE, "P2P: Ignore Probe Request from "
+			   MACSTR " with only 802.11b rates",
+			   MAC2STR(mgmt->sa));
+		return;
+	}
+#endif /* CONFIG_P2P */
+
 	/* TODO: verify that supp_rates contains at least one matching rate
 	 * with AP configuration */
+
+#ifdef CONFIG_TESTING_OPTIONS
+	if (hapd->iconf->ignore_probe_probability > 0.0d &&
+	    drand48() < hapd->iconf->ignore_probe_probability) {
+		wpa_printf(MSG_INFO,
+			   "TESTING: ignoring probe request from " MACSTR,
+			   MAC2STR(mgmt->sa));
+		return;
+	}
+#endif /* CONFIG_TESTING_OPTIONS */
 
 	resp = hostapd_gen_probe_resp(hapd, sta, mgmt, elems.p2p != NULL,
 				      &resp_len);

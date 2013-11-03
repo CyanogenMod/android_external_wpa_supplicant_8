@@ -11,3 +11,6 @@ ifeq ($(WPA_SUPPLICANT_VERSION),VER_0_8_X)
 include $(LOCAL_PATH)/hostapd/Android.mk \
         $(LOCAL_PATH)/wpa_supplicant/Android.mk
 endif
+ifeq ($(WPA_SUPPLICANT_VERSION),VER_2_1_DEVEL)
+include $(call all-subdir-makefiles)
+endif

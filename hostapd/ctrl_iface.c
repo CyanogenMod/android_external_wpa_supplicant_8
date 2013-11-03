@@ -33,6 +33,7 @@
 #include "ap/wps_hostapd.h"
 #include "ap/ctrl_iface_ap.h"
 #include "ap/ap_drv_ops.h"
+#include "ap/wpa_auth.h"
 #include "wps/wps_defs.h"
 #include "wps/wps.h"
 #include "config_file.h"
@@ -490,6 +491,75 @@ static int hostapd_ctrl_iface_wps_config(struct hostapd_data *hapd, char *txt)
 
 	return hostapd_wps_config_ap(hapd, ssid, auth, encr, key);
 }
+
+
+static const char * pbc_status_str(enum pbc_status status)
+{
+	switch (status) {
+	case WPS_PBC_STATUS_DISABLE:
+		return "Disabled";
+	case WPS_PBC_STATUS_ACTIVE:
+		return "Active";
+	case WPS_PBC_STATUS_TIMEOUT:
+		return "Timed-out";
+	case WPS_PBC_STATUS_OVERLAP:
+		return "Overlap";
+	default:
+		return "Unknown";
+	}
+}
+
+
+static int hostapd_ctrl_iface_wps_get_status(struct hostapd_data *hapd,
+					     char *buf, size_t buflen)
+{
+	int ret;
+	char *pos, *end;
+
+	pos = buf;
+	end = buf + buflen;
+
+	ret = os_snprintf(pos, end - pos, "PBC Status: %s\n",
+			  pbc_status_str(hapd->wps_stats.pbc_status));
+
+	if (ret < 0 || ret >= end - pos)
+		return pos - buf;
+	pos += ret;
+
+	ret = os_snprintf(pos, end - pos, "Last WPS result: %s\n",
+			  (hapd->wps_stats.status == WPS_STATUS_SUCCESS ?
+			   "Success":
+			   (hapd->wps_stats.status == WPS_STATUS_FAILURE ?
+			    "Failed" : "None")));
+
+	if (ret < 0 || ret >= end - pos)
+		return pos - buf;
+	pos += ret;
+
+	/* If status == Failure - Add possible Reasons */
+	if(hapd->wps_stats.status == WPS_STATUS_FAILURE &&
+	   hapd->wps_stats.failure_reason > 0) {
+		ret = os_snprintf(pos, end - pos,
+				  "Failure Reason: %s\n",
+				  wps_ei_str(hapd->wps_stats.failure_reason));
+
+		if (ret < 0 || ret >= end - pos)
+			return pos - buf;
+		pos += ret;
+	}
+
+	if (hapd->wps_stats.status) {
+		ret = os_snprintf(pos, end - pos, "Peer Address: " MACSTR "\n",
+				  MAC2STR(hapd->wps_stats.peer_addr));
+
+		if (ret < 0 || ret >= end - pos)
+			return pos - buf;
+		pos += ret;
+	}
+
+	return pos - buf;
+}
+
 #endif /* CONFIG_WPS */
 
 
@@ -541,15 +611,25 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 					   const char *cmd)
 {
 	u8 addr[ETH_ALEN];
-	const char *url;
+	const char *url, *timerstr;
 	u8 buf[1000], *pos;
 	struct ieee80211_mgmt *mgmt;
 	size_t url_len;
+	int disassoc_timer;
 
 	if (hwaddr_aton(cmd, addr))
 		return -1;
-	url = cmd + 17;
-	if (*url != ' ')
+
+	timerstr = cmd + 17;
+	if (*timerstr != ' ')
+		return -1;
+	timerstr++;
+	disassoc_timer = atoi(timerstr);
+	if (disassoc_timer < 0 || disassoc_timer > 65535)
+		return -1;
+
+	url = os_strchr(timerstr, ' ');
+	if (url == NULL)
 		return -1;
 	url++;
 	url_len = os_strlen(url);
@@ -568,8 +648,9 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 	mgmt->u.action.u.bss_tm_req.dialog_token = 1;
 	mgmt->u.action.u.bss_tm_req.req_mode =
 		WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT;
-	mgmt->u.action.u.bss_tm_req.disassoc_timer = host_to_le16(0);
-	mgmt->u.action.u.bss_tm_req.validity_interval = 0;
+	mgmt->u.action.u.bss_tm_req.disassoc_timer =
+		host_to_le16(disassoc_timer);
+	mgmt->u.action.u.bss_tm_req.validity_interval = 0x01;
 
 	pos = mgmt->u.action.u.bss_tm_req.variable;
 
@@ -582,6 +663,41 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 		wpa_printf(MSG_DEBUG, "Failed to send BSS Transition "
 			   "Management Request frame");
 		return -1;
+	}
+
+	/* send disassociation frame after time-out */
+	if (disassoc_timer) {
+		struct sta_info *sta;
+		int timeout, beacon_int;
+
+		/*
+		 * Prevent STA from reconnecting using cached PMKSA to force
+		 * full authentication with the authentication server (which may
+		 * decide to reject the connection),
+		 */
+		wpa_auth_pmksa_remove(hapd->wpa_auth, addr);
+
+		sta = ap_get_sta(hapd, addr);
+		if (sta == NULL) {
+			wpa_printf(MSG_DEBUG, "Station " MACSTR " not found "
+				   "for ESS disassociation imminent message",
+				   MAC2STR(addr));
+			return -1;
+		}
+
+		beacon_int = hapd->iconf->beacon_int;
+		if (beacon_int < 1)
+			beacon_int = 100; /* best guess */
+		/* Calculate timeout in ms based on beacon_int in TU */
+		timeout = disassoc_timer * beacon_int * 128 / 125;
+		wpa_printf(MSG_DEBUG, "Disassociation timer for " MACSTR
+			   " set to %d ms", MAC2STR(addr), timeout);
+
+		sta->timeout_next = STA_DISASSOC_FROM_CLI;
+		eloop_cancel_timeout(ap_handle_timer, hapd, sta);
+		eloop_register_timeout(timeout / 1000,
+				       timeout % 1000 * 1000,
+				       ap_handle_timer, hapd, sta);
 	}
 
 	return 0;
@@ -960,6 +1076,9 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "WPS_CONFIG ", 11) == 0) {
 		if (hostapd_ctrl_iface_wps_config(hapd, buf + 11) < 0)
 			reply_len = -1;
+	} else if (os_strncmp(buf, "WPS_GET_STATUS", 13) == 0) {
+		reply_len = hostapd_ctrl_iface_wps_get_status(hapd, reply,
+							      reply_size);
 #ifdef CONFIG_WPS_NFC
 	} else if (os_strncmp(buf, "WPS_NFC_TAG_READ ", 17) == 0) {
 		if (hostapd_ctrl_iface_wps_nfc_tag_read(hapd, buf + 17))
@@ -1039,7 +1158,7 @@ static char * hostapd_ctrl_iface_path(struct hostapd_data *hapd)
 }
 
 
-static void hostapd_ctrl_iface_msg_cb(void *ctx, int level,
+static void hostapd_ctrl_iface_msg_cb(void *ctx, int level, int global,
 				      const char *txt, size_t len)
 {
 	struct hostapd_data *hapd = ctx;
@@ -1225,7 +1344,10 @@ void hostapd_ctrl_iface_deinit(struct hostapd_data *hapd)
 					   "directory not empty - leaving it "
 					   "behind");
 			} else {
-				perror("rmdir[ctrl_interface]");
+				wpa_printf(MSG_ERROR,
+					   "rmdir[ctrl_interface=%s]: %s",
+					   hapd->conf->ctrl_interface,
+					   strerror(errno));
 			}
 		}
 	}
@@ -1455,7 +1577,10 @@ void hostapd_global_ctrl_iface_deinit(struct hapd_interfaces *interfaces)
 					   "directory not empty - leaving it "
 					   "behind");
 			} else {
-				perror("rmdir[ctrl_interface]");
+				wpa_printf(MSG_ERROR,
+					   "rmdir[ctrl_interface=%s]: %s",
+					   interfaces->global_iface_path,
+					   strerror(errno));
 			}
 		}
 		os_free(interfaces->global_iface_path);

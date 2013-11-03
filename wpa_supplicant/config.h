@@ -24,6 +24,7 @@
 #define DEFAULT_BSS_EXPIRATION_SCAN_COUNT 2
 #define DEFAULT_MAX_NUM_STA 128
 #define DEFAULT_ACCESS_NETWORK_TYPE 15
+#define DEFAULT_SCAN_CUR_FREQ 0
 
 #include "config_ssid.h"
 #include "wps/wps.h"
@@ -645,6 +646,22 @@ struct wpa_config {
 	unsigned int max_num_sta;
 
 	/**
+	 * freq_list - Array of allowed scan frequencies or %NULL for all
+	 *
+	 * This is an optional zero-terminated array of frequencies in
+	 * megahertz (MHz) to allow for narrowing scanning range.
+	 */
+	int *freq_list;
+
+	/**
+	 * scan_cur_freq - Whether to scan only the current channel
+	 *
+	 * If true, attempt to scan only the current channel if any other
+	 * VIFs on this radio are already associated on a particular channel.
+	 */
+	int scan_cur_freq;
+
+	/**
 	 * changed_parameters - Bitmap of changed parameters since last update
 	 */
 	unsigned int changed_parameters;
@@ -854,6 +871,11 @@ struct wpa_config {
 	 * allowing it to update the internal BSS table.
 	 */
 	int ignore_old_scan_res;
+
+	/**
+	 * sched_scan_interval -  schedule scan interval
+	 */
+	unsigned int sched_scan_interval;
 };
 
 

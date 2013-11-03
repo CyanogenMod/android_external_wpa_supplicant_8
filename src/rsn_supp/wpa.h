@@ -56,7 +56,7 @@ struct wpa_sm_ctx {
 			      u8 action_code, u8 dialog_token,
 			      u16 status_code, const u8 *buf, size_t len);
 	int (*tdls_oper)(void *ctx, int oper, const u8 *peer);
-	int (*tdls_peer_addset)(void *ctx, const u8 *addr, int add,
+	int (*tdls_peer_addset)(void *ctx, const u8 *addr, int add, u16 aid,
 				u16 capability, const u8 *supp_rates,
 				size_t supp_rates_len,
 				const struct ieee80211_ht_capabilities *ht_capab,
@@ -123,6 +123,7 @@ unsigned int wpa_sm_get_param(struct wpa_sm *sm,
 
 int wpa_sm_get_status(struct wpa_sm *sm, char *buf, size_t buflen,
 		      int verbose);
+int wpa_sm_pmf_enabled(struct wpa_sm *sm);
 
 void wpa_sm_key_request(struct wpa_sm *sm, int error, int pairwise);
 
@@ -244,6 +245,11 @@ static inline int wpa_sm_get_status(struct wpa_sm *sm, char *buf,
 	return 0;
 }
 
+static inline int wpa_sm_pmf_enabled(struct wpa_sm *sm)
+{
+	return 0;
+}
+
 static inline void wpa_sm_key_request(struct wpa_sm *sm, int error,
 				      int pairwise)
 {
@@ -315,6 +321,7 @@ int wpa_ft_process_response(struct wpa_sm *sm, const u8 *ies, size_t ies_len,
 			    int ft_action, const u8 *target_ap,
 			    const u8 *ric_ies, size_t ric_ies_len);
 int wpa_ft_is_completed(struct wpa_sm *sm);
+void wpa_reset_ft_completed(struct wpa_sm *sm);
 int wpa_ft_validate_reassoc_resp(struct wpa_sm *sm, const u8 *ies,
 				 size_t ies_len, const u8 *src_addr);
 int wpa_ft_start_over_ds(struct wpa_sm *sm, const u8 *target_ap,
@@ -344,6 +351,10 @@ wpa_ft_process_response(struct wpa_sm *sm, const u8 *ies, size_t ies_len,
 static inline int wpa_ft_is_completed(struct wpa_sm *sm)
 {
 	return 0;
+}
+
+static inline void wpa_reset_ft_completed(struct wpa_sm *sm)
+{
 }
 
 static inline int

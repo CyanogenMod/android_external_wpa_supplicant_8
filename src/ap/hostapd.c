@@ -221,30 +221,6 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 		errors++;
 	}
 
-	if (ssid->dyn_vlan_keys) {
-		size_t i;
-		for (i = 0; i <= ssid->max_dyn_vlan_keys; i++) {
-			const char *ifname;
-			struct hostapd_wep_keys *key = ssid->dyn_vlan_keys[i];
-			if (key == NULL)
-				continue;
-			ifname = hostapd_get_vlan_id_ifname(hapd->conf->vlan,
-							    i);
-			if (ifname == NULL)
-				continue;
-
-			idx = key->idx;
-			if (hostapd_drv_set_key(ifname, hapd, WPA_ALG_WEP,
-						broadcast_ether_addr, idx, 1,
-						NULL, 0, key->key[idx],
-						key->len[idx])) {
-				wpa_printf(MSG_WARNING, "Could not set "
-					   "dynamic VLAN WEP encryption.");
-				errors++;
-			}
-		}
-	}
-
 	return errors;
 }
 
@@ -806,7 +782,8 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 		return -1;
 	}
 
-	ieee802_11_set_beacon(hapd);
+	if (!hapd->conf->start_disabled)
+		ieee802_11_set_beacon(hapd);
 
 	if (hapd->wpa_auth && wpa_init_keys(hapd->wpa_auth) < 0)
 		return -1;
@@ -832,6 +809,74 @@ static void hostapd_tx_queue_params(struct hostapd_iface *iface)
 			wpa_printf(MSG_DEBUG, "Failed to set TX queue "
 				   "parameters for queue %d.", i);
 			/* Continue anyway */
+		}
+	}
+}
+
+
+static int hostapd_set_acl_list(struct hostapd_data *hapd,
+				struct mac_acl_entry *mac_acl,
+				int n_entries, u8 accept_acl)
+{
+	struct hostapd_acl_params *acl_params;
+	int i, err;
+
+	acl_params = os_zalloc(sizeof(*acl_params) +
+			       (n_entries * sizeof(acl_params->mac_acl[0])));
+	if (!acl_params)
+		return -ENOMEM;
+
+	for (i = 0; i < n_entries; i++)
+		os_memcpy(acl_params->mac_acl[i].addr, mac_acl[i].addr,
+			  ETH_ALEN);
+
+	acl_params->acl_policy = accept_acl;
+	acl_params->num_mac_acl = n_entries;
+
+	err = hostapd_drv_set_acl(hapd, acl_params);
+
+	os_free(acl_params);
+
+	return err;
+}
+
+
+static void hostapd_set_acl(struct hostapd_data *hapd)
+{
+	struct hostapd_config *conf = hapd->iconf;
+	int err;
+	u8 accept_acl;
+
+	if (hapd->iface->drv_max_acl_mac_addrs == 0)
+		return;
+	if (!(conf->bss->num_accept_mac || conf->bss->num_deny_mac))
+		return;
+
+	if (conf->bss->macaddr_acl == DENY_UNLESS_ACCEPTED) {
+		if (conf->bss->num_accept_mac) {
+			accept_acl = 1;
+			err = hostapd_set_acl_list(hapd, conf->bss->accept_mac,
+						   conf->bss->num_accept_mac,
+						   accept_acl);
+			if (err) {
+				wpa_printf(MSG_DEBUG, "Failed to set accept acl");
+				return;
+			}
+		} else {
+			wpa_printf(MSG_DEBUG, "Mismatch between ACL Policy & Accept/deny lists file");
+		}
+	} else if (conf->bss->macaddr_acl == ACCEPT_UNLESS_DENIED) {
+		if (conf->bss->num_deny_mac) {
+			accept_acl = 0;
+			err = hostapd_set_acl_list(hapd, conf->bss->deny_mac,
+						   conf->bss->num_deny_mac,
+						   accept_acl);
+			if (err) {
+				wpa_printf(MSG_DEBUG, "Failed to set deny acl");
+				return;
+			}
+		} else {
+			wpa_printf(MSG_DEBUG, "Mismatch between ACL Policy & Accept/deny lists file");
 		}
 	}
 }
@@ -873,6 +918,10 @@ static int setup_interface(struct hostapd_iface *iface)
 			wpa_printf(MSG_ERROR, "Could not select hw_mode and "
 				   "channel. (%d)", ret);
 			return -1;
+		}
+		if (ret == 1) {
+			wpa_printf(MSG_DEBUG, "Interface initialization will be completed in a callback (ACS)");
+			return 0;
 		}
 		ret = hostapd_check_ht_capab(iface);
 		if (ret < 0)
@@ -961,6 +1010,8 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 	hostapd_tx_queue_params(iface);
 
 	ap_list_init(iface);
+
+	hostapd_set_acl(hapd);
 
 	if (hostapd_driver_commit(hapd) < 0) {
 		wpa_printf(MSG_ERROR, "%s: Failed to commit driver "

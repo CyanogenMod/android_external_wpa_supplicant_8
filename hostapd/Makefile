@@ -323,6 +323,13 @@ OBJS += ../src/eap_server/eap_server_pwd.o ../src/eap_common/eap_pwd_common.o
 NEED_SHA256=y
 endif
 
+ifdef CONFIG_EAP_EKE
+CFLAGS += -DEAP_SERVER_EKE
+OBJS += ../src/eap_server/eap_server_eke.o ../src/eap_common/eap_eke_common.o
+NEED_DH_GROUPS=y
+NEED_DH_GROUPS_ALL=y
+endif
+
 ifdef CONFIG_EAP_VENDOR_TEST
 CFLAGS += -DEAP_SERVER_VENDOR_TEST
 OBJS += ../src/eap_server/eap_server_vendor_test.o
@@ -810,6 +817,12 @@ else
 OBJS_c += ../src/utils/edit_simple.o
 endif
 
+ifdef CONFIG_ACS
+CFLAGS += -DCONFIG_ACS
+OBJS += ../src/ap/acs.o
+LIBS += -lm
+endif
+
 ifdef CONFIG_NO_STDOUT_DEBUG
 CFLAGS += -DCONFIG_NO_STDOUT_DEBUG
 endif
@@ -822,6 +835,10 @@ ifdef CONFIG_SQLITE
 CFLAGS += -DCONFIG_SQLITE
 LIBS += -lsqlite3
 LIBS_h += -lsqlite3
+endif
+
+ifdef CONFIG_TESTING_OPTIONS
+CFLAGS += -DCONFIG_TESTING_OPTIONS
 endif
 
 ALL=hostapd hostapd_cli

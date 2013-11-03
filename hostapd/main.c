@@ -194,6 +194,8 @@ static struct hostapd_iface * hostapd_init(const char *config_file)
 	return hapd_iface;
 
 fail:
+	wpa_printf(MSG_ERROR, "Failed to set up interface with %s",
+		   config_file);
 	if (conf)
 		hostapd_config_free(conf);
 	if (hapd_iface) {
@@ -277,6 +279,7 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 		iface->extended_capa = capa.extended_capa;
 		iface->extended_capa_mask = capa.extended_capa_mask;
 		iface->extended_capa_len = capa.extended_capa_len;
+		iface->drv_max_acl_mac_addrs = capa.max_acl_mac_addrs;
 	}
 
 	return 0;
@@ -301,13 +304,18 @@ hostapd_interface_init(struct hapd_interfaces *interfaces,
 			iface->bss[0]->conf->logger_stdout_level--;
 	}
 
-	if (iface->conf->bss[0].iface[0] != 0 ||
-	    hostapd_drv_none(iface->bss[0])) {
-		if (hostapd_driver_init(iface) ||
-			hostapd_setup_interface(iface)) {
-			hostapd_interface_deinit_free(iface);
-			return NULL;
-		}
+	if (iface->conf->bss[0].iface[0] == '\0' &&
+	    !hostapd_drv_none(iface->bss[0])) {
+		wpa_printf(MSG_ERROR, "Interface name not specified in %s",
+			   config_fname);
+		hostapd_interface_deinit_free(iface);
+		return NULL;
+	}
+
+	if (hostapd_driver_init(iface) ||
+	    hostapd_setup_interface(iface)) {
+		hostapd_interface_deinit_free(iface);
+		return NULL;
 	}
 
 	return iface;
@@ -647,22 +655,28 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (hostapd_global_init(&interfaces, entropy_file))
+	if (hostapd_global_init(&interfaces, entropy_file)) {
+		wpa_printf(MSG_ERROR, "Failed to initilize global context");
 		return -1;
+	}
 
 	/* Initialize interfaces */
 	for (i = 0; i < interfaces.count; i++) {
 		interfaces.iface[i] = hostapd_interface_init(&interfaces,
 							     argv[optind + i],
 							     debug);
-		if (!interfaces.iface[i])
+		if (!interfaces.iface[i]) {
+			wpa_printf(MSG_ERROR, "Failed to initialize interface");
 			goto out;
+		}
 	}
 
 	hostapd_global_ctrl_iface_init(&interfaces);
 
-	if (hostapd_global_run(&interfaces, daemonize, pid_file))
+	if (hostapd_global_run(&interfaces, daemonize, pid_file)) {
+		wpa_printf(MSG_ERROR, "Failed to start eloop");
 		goto out;
+	}
 
 	ret = 0;
 

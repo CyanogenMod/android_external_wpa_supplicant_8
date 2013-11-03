@@ -79,6 +79,7 @@ static const char *commands_help =
 #endif /* CONFIG_WPS_NFC */
 "   wps_ap_pin <cmd> [params..]  enable/disable AP PIN\n"
 "   wps_config <SSID> <auth> <encr> <key>  configure AP\n"
+"   wps_get_status       show current WPS status\n"
 #endif /* CONFIG_WPS */
 "   get_config           show current configuration\n"
 "   help                 show this usage help\n"
@@ -522,6 +523,13 @@ static int hostapd_cli_cmd_wps_ap_pin(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int hostapd_cli_cmd_wps_get_status(struct wpa_ctrl *ctrl, int argc,
+					  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "WPS_GET_STATUS");
+}
+
+
 static int hostapd_cli_cmd_wps_config(struct wpa_ctrl *ctrl, int argc,
 				      char *argv[])
 {
@@ -593,14 +601,14 @@ static int hostapd_cli_cmd_ess_disassoc(struct wpa_ctrl *ctrl, int argc,
 	char buf[300];
 	int res;
 
-	if (argc < 2) {
-		printf("Invalid 'ess_disassoc' command - two arguments (STA "
-		       "addr and URL) are needed\n");
+	if (argc < 3) {
+		printf("Invalid 'ess_disassoc' command - three arguments (STA "
+		       "addr, disassoc timer, and URL) are needed\n");
 		return -1;
 	}
 
-	res = os_snprintf(buf, sizeof(buf), "ESS_DISASSOC %s %s",
-			  argv[0], argv[1]);
+	res = os_snprintf(buf, sizeof(buf), "ESS_DISASSOC %s %s %s",
+			  argv[0], argv[1], argv[2]);
 	if (res < 0 || res >= (int) sizeof(buf))
 		return -1;
 	return wpa_ctrl_command(ctrl, buf);
@@ -823,6 +831,7 @@ static struct hostapd_cli_cmd hostapd_cli_commands[] = {
 #endif /* CONFIG_WPS_NFC */
 	{ "wps_ap_pin", hostapd_cli_cmd_wps_ap_pin },
 	{ "wps_config", hostapd_cli_cmd_wps_config },
+	{ "wps_get_status", hostapd_cli_cmd_wps_get_status },
 #endif /* CONFIG_WPS */
 	{ "disassoc_imminent", hostapd_cli_cmd_disassoc_imminent },
 	{ "ess_disassoc", hostapd_cli_cmd_ess_disassoc },

@@ -549,6 +549,14 @@ struct ieee80211_mgmt {
 					 * Entries (optional) */
 					u8 variable[0];
 				} STRUCT_PACKED bss_tm_resp;
+				struct {
+					u8 action; /* 6 */
+					u8 dialog_token;
+					u8 query_reason;
+					/* BSS Transition Candidate List
+					 * Entries (optional) */
+					u8 variable[0];
+				} STRUCT_PACKED bss_tm_query;
 			} u;
 		} STRUCT_PACKED action;
 	} u;
@@ -1048,6 +1056,28 @@ enum wnm_action {
 #define WNM_BSS_TM_REQ_DISASSOC_IMMINENT BIT(2)
 #define WNM_BSS_TM_REQ_BSS_TERMINATION_INCLUDED BIT(3)
 #define WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT BIT(4)
+
+/* IEEE Std 802.11-2012 - Table 8-253 */
+enum bss_trans_mgmt_status_code {
+	WNM_BSS_TM_ACCEPT = 0,
+	WNM_BSS_TM_REJECT_UNSPECIFIED = 1,
+	WNM_BSS_TM_REJECT_INSUFFICIENT_BEACON = 2,
+	WNM_BSS_TM_REJECT_INSUFFICIENT_CAPABITY = 3,
+	WNM_BSS_TM_REJECT_UNDESIRED = 4,
+	WNM_BSS_TM_REJECT_DELAY_REQUEST = 5,
+	WNM_BSS_TM_REJECT_STA_CANDIDATE_LIST_PROVIDED = 6,
+	WNM_BSS_TM_REJECT_NO_SUITABLE_CANDIDATES = 7,
+	WNM_BSS_TM_REJECT_LEAVING_ESS = 8
+};
+
+#define WNM_NEIGHBOR_TSF                         1
+#define WNM_NEIGHBOR_CONDENSED_COUNTRY_STRING    2
+#define WNM_NEIGHBOR_BSS_TRANSITION_CANDIDATE    3
+#define WNM_NEIGHBOR_BSS_TERMINATION_DURATION    4
+#define WNM_NEIGHBOR_BEARING                     5
+#define WNM_NEIGHBOR_MEASUREMENT_PILOT          66
+#define WNM_NEIGHBOR_RRM_ENABLED_CAPABILITIES   70
+#define WNM_NEIGHBOR_MULTIPLE_BSSID             71
 
 /* IEEE Std 802.11-2012, 8.4.2.62 20/40 BSS Coexistence element */
 #define WLAN_20_40_BSS_COEX_INFO_REQ            BIT(0)

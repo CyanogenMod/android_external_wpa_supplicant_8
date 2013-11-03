@@ -1,6 +1,6 @@
 /*
  * IEEE 802.11 RSN / WPA Authenticator
- * Copyright (c) 2004-2011, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -82,11 +82,14 @@ static inline int wpa_auth_get_eapol(struct wpa_authenticator *wpa_auth,
 
 
 static inline const u8 * wpa_auth_get_psk(struct wpa_authenticator *wpa_auth,
-					  const u8 *addr, const u8 *prev_psk)
+					  const u8 *addr,
+					  const u8 *p2p_dev_addr,
+					  const u8 *prev_psk)
 {
 	if (wpa_auth->cb.get_psk == NULL)
 		return NULL;
-	return wpa_auth->cb.get_psk(wpa_auth->cb.ctx, addr, prev_psk);
+	return wpa_auth->cb.get_psk(wpa_auth->cb.ctx, addr, p2p_dev_addr,
+				    prev_psk);
 }
 
 
@@ -508,7 +511,8 @@ int wpa_reconfig(struct wpa_authenticator *wpa_auth,
 
 
 struct wpa_state_machine *
-wpa_auth_sta_init(struct wpa_authenticator *wpa_auth, const u8 *addr)
+wpa_auth_sta_init(struct wpa_authenticator *wpa_auth, const u8 *addr,
+		  const u8 *p2p_dev_addr)
 {
 	struct wpa_state_machine *sm;
 
@@ -516,6 +520,8 @@ wpa_auth_sta_init(struct wpa_authenticator *wpa_auth, const u8 *addr)
 	if (sm == NULL)
 		return NULL;
 	os_memcpy(sm->addr, addr, ETH_ALEN);
+	if (p2p_dev_addr)
+		os_memcpy(sm->p2p_dev_addr, p2p_dev_addr, ETH_ALEN);
 
 	sm->wpa_auth = wpa_auth;
 	sm->group = wpa_auth->group;
@@ -1232,7 +1238,7 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 	else
 		version = WPA_KEY_INFO_TYPE_HMAC_MD5_RC4;
 
-	pairwise = key_info & WPA_KEY_INFO_KEY_TYPE;
+	pairwise = !!(key_info & WPA_KEY_INFO_KEY_TYPE);
 
 	wpa_printf(MSG_DEBUG, "WPA: Send EAPOL(version=%d secure=%d mic=%d "
 		   "ack=%d install=%d pairwise=%d kde_len=%lu keyidx=%d "
@@ -1347,6 +1353,16 @@ void __wpa_send_eapol(struct wpa_authenticator *wpa_auth,
 		}
 		wpa_eapol_key_mic(sm->PTK.kck, version, (u8 *) hdr, len,
 				  key->key_mic);
+#ifdef CONFIG_TESTING_OPTIONS
+		if (!pairwise &&
+		    wpa_auth->conf.corrupt_gtk_rekey_mic_probability > 0.0d &&
+		    drand48() <
+		    wpa_auth->conf.corrupt_gtk_rekey_mic_probability) {
+			wpa_auth_logger(wpa_auth, sm->addr, LOGGER_INFO,
+					"Corrupting group EAPOL-Key Key MIC");
+			key->key_mic[0]++;
+		}
+#endif /* CONFIG_TESTING_OPTIONS */
 	}
 
 	wpa_auth_set_eapol(sm->wpa_auth, sm->addr, WPA_EAPOL_inc_EapolFramesTx,
@@ -1668,7 +1684,7 @@ SM_STATE(WPA_PTK, INITPSK)
 {
 	const u8 *psk;
 	SM_ENTRY_MA(WPA_PTK, INITPSK, wpa_ptk);
-	psk = wpa_auth_get_psk(sm->wpa_auth, sm->addr, NULL);
+	psk = wpa_auth_get_psk(sm->wpa_auth, sm->addr, sm->p2p_dev_addr, NULL);
 	if (psk) {
 		os_memcpy(sm->PMK, psk, PMK_LEN);
 #ifdef CONFIG_IEEE80211R
@@ -1761,7 +1777,8 @@ SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
 	 * the packet */
 	for (;;) {
 		if (wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt)) {
-			pmk = wpa_auth_get_psk(sm->wpa_auth, sm->addr, pmk);
+			pmk = wpa_auth_get_psk(sm->wpa_auth, sm->addr,
+					       sm->p2p_dev_addr, pmk);
 			if (pmk == NULL)
 				break;
 		} else
@@ -2148,7 +2165,8 @@ SM_STEP(WPA_PTK)
 		}
 		break;
 	case WPA_PTK_INITPSK:
-		if (wpa_auth_get_psk(sm->wpa_auth, sm->addr, NULL))
+		if (wpa_auth_get_psk(sm->wpa_auth, sm->addr, sm->p2p_dev_addr,
+				     NULL))
 			SM_ENTER(WPA_PTK, PTKSTART);
 		else {
 			wpa_auth_logger(sm->wpa_auth, sm->addr, LOGGER_INFO,
@@ -2931,6 +2949,22 @@ int wpa_auth_pmksa_add_preauth(struct wpa_authenticator *wpa_auth,
 		return 0;
 
 	return -1;
+}
+
+
+void wpa_auth_pmksa_remove(struct wpa_authenticator *wpa_auth,
+			   const u8 *sta_addr)
+{
+	struct rsn_pmksa_cache_entry *pmksa;
+
+	if (wpa_auth == NULL || wpa_auth->pmksa == NULL)
+		return;
+	pmksa = pmksa_cache_auth_get(wpa_auth->pmksa, sta_addr, NULL);
+	if (pmksa) {
+		wpa_printf(MSG_DEBUG, "WPA: Remove PMKSA cache entry for "
+			   MACSTR " based on request", MAC2STR(sta_addr));
+		pmksa_cache_free_entry(wpa_auth->pmksa, pmksa);
+	}
 }
 
 

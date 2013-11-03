@@ -219,6 +219,80 @@ static void wpas_wps_security_workaround(struct wpa_supplicant *wpa_s,
 }
 
 
+static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
+					struct wpa_ssid *new_ssid)
+{
+	struct wpa_ssid *ssid, *next;
+
+	for (ssid = wpa_s->conf->ssid, next = ssid ? ssid->next : NULL; ssid;
+	     ssid = next, next = ssid ? ssid->next : NULL) {
+		/*
+		 * new_ssid has already been added to the list in
+		 * wpas_wps_add_network(), so skip it.
+		 */
+		if (ssid == new_ssid)
+			continue;
+
+		if (ssid->bssid_set || new_ssid->bssid_set) {
+			if (ssid->bssid_set != new_ssid->bssid_set)
+				continue;
+			if (os_memcmp(ssid->bssid, new_ssid->bssid, ETH_ALEN) !=
+			    0)
+				continue;
+		}
+
+		/* compare SSID */
+		if (ssid->ssid_len == 0 || ssid->ssid_len != new_ssid->ssid_len)
+			continue;
+
+		if (ssid->ssid && new_ssid->ssid) {
+			if (os_memcmp(ssid->ssid, new_ssid->ssid,
+				      ssid->ssid_len) != 0)
+				continue;
+		} else if (ssid->ssid || new_ssid->ssid)
+			continue;
+
+		/* compare security parameters */
+		if (ssid->auth_alg != new_ssid->auth_alg ||
+		    ssid->key_mgmt != new_ssid->key_mgmt ||
+		    ssid->proto != new_ssid->proto ||
+		    ssid->pairwise_cipher != new_ssid->pairwise_cipher ||
+		    ssid->group_cipher != new_ssid->group_cipher)
+			continue;
+
+		if (ssid->passphrase && new_ssid->passphrase) {
+			if (os_strlen(ssid->passphrase) !=
+			    os_strlen(new_ssid->passphrase))
+				continue;
+			if (os_strcmp(ssid->passphrase, new_ssid->passphrase) !=
+			    0)
+				continue;
+		} else if (ssid->passphrase || new_ssid->passphrase)
+			continue;
+
+		if ((ssid->psk_set || new_ssid->psk_set) &&
+		    os_memcmp(ssid->psk, new_ssid->psk, sizeof(ssid->psk)) != 0)
+			continue;
+
+		if (ssid->auth_alg == WPA_ALG_WEP) {
+			if (ssid->wep_tx_keyidx != new_ssid->wep_tx_keyidx)
+				continue;
+			if (os_memcmp(ssid->wep_key, new_ssid->wep_key,
+				      sizeof(ssid->wep_key)))
+				continue;
+			if (os_memcmp(ssid->wep_key_len, new_ssid->wep_key_len,
+				      sizeof(ssid->wep_key_len)))
+				continue;
+		}
+
+		/* Remove the duplicated older network entry. */
+		wpa_printf(MSG_DEBUG, "Remove duplicate network %d", ssid->id);
+		wpas_notify_network_removed(wpa_s, ssid);
+		wpa_config_remove_network(wpa_s->conf, ssid->id);
+	}
+}
+
+
 static int wpa_supplicant_wps_cred(void *ctx,
 				   const struct wps_credential *cred)
 {
@@ -438,6 +512,8 @@ static int wpa_supplicant_wps_cred(void *ctx,
 	if (cred->ap_channel)
 		wpa_s->wps_ap_channel = cred->ap_channel;
 
+	wpas_wps_remove_dup_network(wpa_s, ssid);
+
 #ifndef CONFIG_NO_CONFIG_WRITE
 	if (wpa_s->conf->update_config &&
 	    wpa_config_write(wpa_s->confname, wpa_s->conf)) {
@@ -491,11 +567,13 @@ static void wpa_supplicant_wps_event_m2d(struct wpa_supplicant *wpa_s,
 }
 
 
-static const char * wps_event_fail_reason[NUM_WPS_EI_VALUES] = {
-	"No Error", /* WPS_EI_NO_ERROR */
-	"TKIP Only Prohibited", /* WPS_EI_SECURITY_TKIP_ONLY_PROHIBITED */
-	"WEP Prohibited" /* WPS_EI_SECURITY_WEP_PROHIBITED */
-};
+static void wpas_wps_clear_timeout(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	wpa_printf(MSG_DEBUG, "WPS: Clear WPS network from timeout");
+	wpas_clear_wps(wpa_s);
+}
+
 
 static void wpa_supplicant_wps_event_fail(struct wpa_supplicant *wpa_s,
 					  struct wps_event_fail *fail)
@@ -505,13 +583,13 @@ static void wpa_supplicant_wps_event_fail(struct wpa_supplicant *wpa_s,
 		wpa_msg(wpa_s, MSG_INFO,
 			WPS_EVENT_FAIL "msg=%d config_error=%d reason=%d (%s)",
 			fail->msg, fail->config_error, fail->error_indication,
-			wps_event_fail_reason[fail->error_indication]);
+			wps_ei_str(fail->error_indication));
 		if (wpa_s->parent && wpa_s->parent != wpa_s)
 			wpa_msg(wpa_s->parent, MSG_INFO, WPS_EVENT_FAIL
 				"msg=%d config_error=%d reason=%d (%s)",
 				fail->msg, fail->config_error,
 				fail->error_indication,
-				wps_event_fail_reason[fail->error_indication]);
+				wps_ei_str(fail->error_indication));
 	} else {
 		wpa_msg(wpa_s, MSG_INFO,
 			WPS_EVENT_FAIL "msg=%d config_error=%d",
@@ -521,7 +599,14 @@ static void wpa_supplicant_wps_event_fail(struct wpa_supplicant *wpa_s,
 				"msg=%d config_error=%d",
 				fail->msg, fail->config_error);
 	}
-	wpas_clear_wps(wpa_s);
+
+	/*
+	 * Need to allow WPS processing to complete, e.g., by sending WSC_NACK.
+	 */
+	wpa_printf(MSG_DEBUG, "WPS: Register timeout to clear WPS network");
+	eloop_cancel_timeout(wpas_wps_clear_timeout, wpa_s, NULL);
+	eloop_register_timeout(0, 100000, wpas_wps_clear_timeout, wpa_s, NULL);
+
 	wpas_notify_wps_event_fail(wpa_s, fail);
 #ifdef CONFIG_P2P
 	wpas_p2p_wps_failed(wpa_s, fail);
@@ -572,6 +657,9 @@ static void wpa_supplicant_wps_event_success(struct wpa_supplicant *wpa_s)
 	wpa_msg(wpa_s, MSG_INFO, WPS_EVENT_SUCCESS);
 	wpa_s->wps_success = 1;
 	wpas_notify_wps_event_success(wpa_s);
+	if (wpa_s->current_ssid)
+		wpas_clear_temp_disabled(wpa_s, wpa_s->current_ssid, 1);
+	wpa_s->extra_blacklist_count = 0;
 
 	/*
 	 * Enable the networks disabled during wpas_wps_reassoc after 10
@@ -734,6 +822,12 @@ static void wpa_supplicant_wps_event(void *ctx, enum wps_event event,
 		break;
 	case WPS_EV_PBC_TIMEOUT:
 		break;
+	case WPS_EV_PBC_ACTIVE:
+		wpa_msg(wpa_s, MSG_INFO, WPS_EVENT_ACTIVE);
+		break;
+	case WPS_EV_PBC_DISABLE:
+		wpa_msg(wpa_s, MSG_INFO, WPS_EVENT_DISABLE);
+		break;
 	case WPS_EV_ER_AP_ADD:
 		wpa_supplicant_wps_event_er_ap_add(wpa_s, &data->ap);
 		break;
@@ -759,6 +853,17 @@ static void wpa_supplicant_wps_event(void *ctx, enum wps_event event,
 	case WPS_EV_AP_PIN_SUCCESS:
 		break;
 	}
+}
+
+
+static int wpa_supplicant_wps_rf_band(void *ctx)
+{
+	struct wpa_supplicant *wpa_s = ctx;
+
+	if (!wpa_s->current_ssid || !wpa_s->assoc_freq)
+		return 0;
+
+	return (wpa_s->assoc_freq > 2484) ? WPS_RF_50GHZ : WPS_RF_24GHZ;
 }
 
 
@@ -789,9 +894,8 @@ static void wpas_clear_wps(struct wpa_supplicant *wpa_s)
 	while (ssid) {
 		if (ssid->key_mgmt & WPA_KEY_MGMT_WPS) {
 			if (ssid == wpa_s->current_ssid) {
-				wpa_s->current_ssid = NULL;
-				if (ssid != NULL)
-					wpas_notify_network_changed(wpa_s);
+				wpa_supplicant_deauthenticate(
+					wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 			}
 			id = ssid->id;
 			remove_ssid = ssid;
@@ -888,21 +992,10 @@ static struct wpa_ssid * wpas_wps_add_network(struct wpa_supplicant *wpa_s,
 }
 
 
-static void wpas_wps_reassoc(struct wpa_supplicant *wpa_s,
-			     struct wpa_ssid *selected, const u8 *bssid)
+static void wpas_wps_temp_disable(struct wpa_supplicant *wpa_s,
+				  struct wpa_ssid *selected)
 {
 	struct wpa_ssid *ssid;
-	struct wpa_bss *bss;
-
-	wpa_s->after_wps = 0;
-	wpa_s->known_wps_freq = 0;
-	if (bssid) {
-		bss = wpa_bss_get_bssid_latest(wpa_s, bssid);
-		if (bss && bss->freq > 0) {
-			wpa_s->known_wps_freq = 1;
-			wpa_s->wps_freq = bss->freq;
-		}
-	}
 
 	if (wpa_s->current_ssid)
 		wpa_supplicant_deauthenticate(
@@ -930,6 +1023,26 @@ static void wpas_wps_reassoc(struct wpa_supplicant *wpa_s,
 		}
 		ssid = ssid->next;
 	}
+}
+
+
+static void wpas_wps_reassoc(struct wpa_supplicant *wpa_s,
+			     struct wpa_ssid *selected, const u8 *bssid)
+{
+	struct wpa_bss *bss;
+
+	wpa_s->after_wps = 0;
+	wpa_s->known_wps_freq = 0;
+	if (bssid) {
+		bss = wpa_bss_get_bssid_latest(wpa_s, bssid);
+		if (bss && bss->freq > 0) {
+			wpa_s->known_wps_freq = 1;
+			wpa_s->wps_freq = bss->freq;
+		}
+	}
+
+	wpas_wps_temp_disable(wpa_s, selected);
+
 	wpa_s->disconnected = 0;
 	wpa_s->reassociate = 1;
 	wpa_s->scan_runs = 0;
@@ -1092,11 +1205,20 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 }
 
 
-static int wpas_wps_new_psk_cb(void *ctx, const u8 *mac_addr, const u8 *psk,
+static int wpas_wps_new_psk_cb(void *ctx, const u8 *mac_addr,
+			       const u8 *p2p_dev_addr, const u8 *psk,
 			       size_t psk_len)
 {
-	wpa_printf(MSG_DEBUG, "WPS: Received new WPA/WPA2-PSK from WPS for "
-		   "STA " MACSTR, MAC2STR(mac_addr));
+	if (is_zero_ether_addr(p2p_dev_addr)) {
+		wpa_printf(MSG_DEBUG,
+			   "Received new WPA/WPA2-PSK from WPS for STA " MACSTR,
+			   MAC2STR(mac_addr));
+	} else {
+		wpa_printf(MSG_DEBUG,
+			   "Received new WPA/WPA2-PSK from WPS for STA " MACSTR
+			   " P2P Device Addr " MACSTR,
+			   MAC2STR(mac_addr), MAC2STR(p2p_dev_addr));
+	}
 	wpa_hexdump_key(MSG_DEBUG, "Per-device PSK", psk, psk_len);
 
 	/* TODO */
@@ -1225,6 +1347,7 @@ int wpas_wps_init(struct wpa_supplicant *wpa_s)
 
 	wps->cred_cb = wpa_supplicant_wps_cred;
 	wps->event_cb = wpa_supplicant_wps_event;
+	wps->rf_band_cb = wpa_supplicant_wps_rf_band;
 	wps->cb_ctx = wpa_s;
 
 	wps->dev.device_name = wpa_s->conf->device_name;
@@ -1298,6 +1421,7 @@ int wpas_wps_init(struct wpa_supplicant *wpa_s)
 void wpas_wps_deinit(struct wpa_supplicant *wpa_s)
 {
 	eloop_cancel_timeout(wpas_wps_timeout, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_wps_clear_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_wps_reenable_networks_cb, wpa_s, NULL);
 	wpas_wps_clear_ap_info(wpa_s);
 
@@ -2010,6 +2134,15 @@ static int wpas_wps_use_cred(struct wpa_supplicant *wpa_s,
 			     struct wps_parse_attr *attr)
 {
 	wpa_s->wps_ap_channel = 0;
+
+	/*
+	 * Disable existing networks temporarily to allow the newly learned
+	 * credential to be preferred. Enable the temporarily disabled networks
+	 * after 10 seconds.
+	 */
+	wpas_wps_temp_disable(wpa_s, NULL);
+	eloop_register_timeout(10, 0, wpas_wps_reenable_networks_cb, wpa_s,
+			       NULL);
 
 	if (wps_oob_use_cred(wpa_s->wps, attr) < 0)
 		return -1;

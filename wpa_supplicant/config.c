@@ -322,11 +322,9 @@ static int wpa_config_parse_psk(const struct parse_data *data,
 			return 0;
 		ssid->psk_set = 0;
 		os_free(ssid->passphrase);
-		ssid->passphrase = os_malloc(len + 1);
+		ssid->passphrase = dup_binstr(value, len);
 		if (ssid->passphrase == NULL)
 			return -1;
-		os_memcpy(ssid->passphrase, value, len);
-		ssid->passphrase[len] = '\0';
 		return 0;
 #else /* CONFIG_NO_PBKDF2 */
 		wpa_printf(MSG_ERROR, "Line %d: ASCII passphrase not "
@@ -1374,6 +1372,60 @@ static char * wpa_config_write_p2p_client_list(const struct parse_data *data,
 }
 #endif /* NO_CONFIG_WRITE */
 
+
+static int wpa_config_parse_psk_list(const struct parse_data *data,
+				     struct wpa_ssid *ssid, int line,
+				     const char *value)
+{
+	struct psk_list_entry *p;
+	const char *pos;
+
+	p = os_zalloc(sizeof(*p));
+	if (p == NULL)
+		return -1;
+
+	pos = value;
+	if (os_strncmp(pos, "P2P-", 4) == 0) {
+		p->p2p = 1;
+		pos += 4;
+	}
+
+	if (hwaddr_aton(pos, p->addr)) {
+		wpa_printf(MSG_ERROR, "Line %d: Invalid psk_list address '%s'",
+			   line, pos);
+		os_free(p);
+		return -1;
+	}
+	pos += 17;
+	if (*pos != '-') {
+		wpa_printf(MSG_ERROR, "Line %d: Invalid psk_list '%s'",
+			   line, pos);
+		os_free(p);
+		return -1;
+	}
+	pos++;
+
+	if (hexstr2bin(pos, p->psk, PMK_LEN) || pos[PMK_LEN * 2] != '\0') {
+		wpa_printf(MSG_ERROR, "Line %d: Invalid psk_list PSK '%s'",
+			   line, pos);
+		os_free(p);
+		return -1;
+	}
+
+	dl_list_add(&ssid->psk_list, &p->list);
+
+	return 0;
+}
+
+
+#ifndef NO_CONFIG_WRITE
+static char * wpa_config_write_psk_list(const struct parse_data *data,
+					struct wpa_ssid *ssid)
+{
+	return NULL;
+}
+#endif /* NO_CONFIG_WRITE */
+
 #endif /* CONFIG_P2P */
 
 /* Helper macros for network block parser */
@@ -1524,6 +1576,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INT(eap_workaround) },
 	{ STRe(pac_file) },
 	{ INTe(fragment_size) },
+	{ INTe(ocsp) },
 #endif /* IEEE8021X_EAPOL */
 	{ INT_RANGE(mode, 0, 4) },
 	{ INT_RANGE(proactive_key_caching, 0, 1) },
@@ -1540,6 +1593,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(ignore_broadcast_ssid, 0, 2) },
 #ifdef CONFIG_P2P
 	{ FUNC(p2p_client_list) },
+	{ FUNC(psk_list) },
 #endif /* CONFIG_P2P */
 #ifdef CONFIG_HT_OVERRIDES
 	{ INT_RANGE(disable_ht, 0, 1) },
@@ -1732,6 +1786,8 @@ static void eap_peer_config_free(struct eap_peer_config *eap)
  */
 void wpa_config_free_ssid(struct wpa_ssid *ssid)
 {
+	struct psk_list_entry *psk;
+
 	os_free(ssid->ssid);
 	os_free(ssid->passphrase);
 	os_free(ssid->ext_psk);
@@ -1746,6 +1802,11 @@ void wpa_config_free_ssid(struct wpa_ssid *ssid)
 #ifdef CONFIG_HT_OVERRIDES
 	os_free(ssid->ht_mcs);
 #endif /* CONFIG_HT_OVERRIDES */
+	while ((psk = dl_list_first(&ssid->psk_list, struct psk_list_entry,
+				    list))) {
+		dl_list_del(&psk->list);
+		os_free(psk);
+	}
 	os_free(ssid);
 }
 
@@ -1828,6 +1889,7 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->pssid);
 	os_free(config->p2p_pref_chan);
 	os_free(config->autoscan);
+	os_free(config->freq_list);
 	wpabuf_free(config->wps_nfc_dh_pubkey);
 	wpabuf_free(config->wps_nfc_dh_privkey);
 	wpabuf_free(config->wps_nfc_dev_pw);
@@ -1908,6 +1970,7 @@ struct wpa_ssid * wpa_config_add_network(struct wpa_config *config)
 	if (ssid == NULL)
 		return NULL;
 	ssid->id = id;
+	dl_list_init(&ssid->psk_list);
 	if (last)
 		last->next = ssid;
 	else
@@ -2585,6 +2648,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->bss_expiration_scan_count = DEFAULT_BSS_EXPIRATION_SCAN_COUNT;
 	config->max_num_sta = DEFAULT_MAX_NUM_STA;
 	config->access_network_type = DEFAULT_ACCESS_NETWORK_TYPE;
+	config->scan_cur_freq = DEFAULT_SCAN_CUR_FREQ;
 	config->wmm_ac_params[0] = ac_be;
 	config->wmm_ac_params[1] = ac_bk;
 	config->wmm_ac_params[2] = ac_vi;
@@ -2731,6 +2795,21 @@ static int wpa_global_config_parse_bin(const struct global_parse_data *data,
 	*dst = tmp;
 	wpa_printf(MSG_DEBUG, "%s", data->name);
 
+	return 0;
+}
+
+
+static int wpa_config_process_freq_list(const struct global_parse_data *data,
+					struct wpa_config *config, int line,
+					const char *value)
+{
+	int *freqs;
+
+	freqs = wpa_config_parse_int_array(value);
+	if (freqs == NULL)
+		return -1;
+	os_free(config->freq_list);
+	config->freq_list = freqs;
 	return 0;
 }
 
@@ -3090,6 +3169,9 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(beacon_int), 0 },
 	{ FUNC(ap_vendor_elements), 0 },
 	{ INT_RANGE(ignore_old_scan_res, 0, 1), 0 },
+	{ FUNC(freq_list), 0 },
+	{ INT(scan_cur_freq), 0 },
+	{ INT(sched_scan_interval), 0 },
 };
 
 #undef FUNC

@@ -44,6 +44,8 @@ extern "C" {
 #define WPA_EVENT_EAP_PEER_CERT "CTRL-EVENT-EAP-PEER-CERT "
 /** EAP TLS certificate chain validation error */
 #define WPA_EVENT_EAP_TLS_CERT_ERROR "CTRL-EVENT-EAP-TLS-CERT-ERROR "
+/** EAP status */
+#define WPA_EVENT_EAP_STATUS "CTRL-EVENT-EAP-STATUS "
 /** EAP authentication completed successfully */
 #define WPA_EVENT_EAP_SUCCESS "CTRL-EVENT-EAP-SUCCESS "
 /** EAP authentication failed (EAP-Failure received) */
@@ -64,6 +66,9 @@ extern "C" {
 /** Notify the Userspace about the freq conflict */
 #define WPA_EVENT_FREQ_CONFLICT "CTRL-EVENT-FREQ-CONFLICT "
 #endif
+
+/** RSN IBSS 4-way handshakes completed with specified peer */
+#define IBSS_RSN_COMPLETED "IBSS-RSN-COMPLETED "
 
 /** WPS overlap detected in PBC mode */
 #define WPS_EVENT_OVERLAP "WPS-OVERLAP-DETECTED "
@@ -86,6 +91,10 @@ extern "C" {
 #define WPS_EVENT_SUCCESS "WPS-SUCCESS "
 /** WPS enrollment attempt timed out and was terminated */
 #define WPS_EVENT_TIMEOUT "WPS-TIMEOUT "
+/* PBC mode was activated */
+#define WPS_EVENT_ACTIVE "WPS-PBC-ACTIVE "
+/* PBC mode was disabled */
+#define WPS_EVENT_DISABLE "WPS-PBC-DISABLE "
 
 #define WPS_EVENT_ENROLLEE_SEEN "WPS-ENROLLEE-SEEN "
 
@@ -133,6 +142,10 @@ extern "C" {
 #define P2P_EVENT_INVITATION_RECEIVED "P2P-INVITATION-RECEIVED "
 #define P2P_EVENT_INVITATION_RESULT "P2P-INVITATION-RESULT "
 #define P2P_EVENT_FIND_STOPPED "P2P-FIND-STOPPED "
+#define P2P_EVENT_PERSISTENT_PSK_FAIL "P2P-PERSISTENT-PSK-FAIL id="
+
+/* parameters: <PMF enabled> <timeout in ms> <Session Information URL> */
+#define ESS_DISASSOC_IMMINENT "ESS-DISASSOC-IMMINENT "
 
 #define INTERWORKING_AP "INTERWORKING-AP "
 #define INTERWORKING_NO_MATCH "INTERWORKING-NO-MATCH "

@@ -25,6 +25,7 @@ enum wps_event;
 union wps_event_data;
 
 struct hostapd_iface;
+struct hostapd_dynamic_iface;
 
 struct hapd_interfaces {
 	int (*reload_config)(struct hostapd_iface *iface);
@@ -37,13 +38,20 @@ struct hapd_interfaces {
 	int (*driver_init)(struct hostapd_iface *iface);
 
 	size_t count;
+	size_t count_dynamic;
 	int global_ctrl_sock;
 	char *global_iface_path;
 	char *global_iface_name;
 	gid_t ctrl_iface_group;
 	struct hostapd_iface **iface;
+	struct hostapd_dynamic_iface **dynamic_iface;
 };
 
+enum hostapd_chan_status {
+	HOSTAPD_CHAN_VALID = 0, /* channel is ready */
+	HOSTAPD_CHAN_INVALID = 1, /* no usable channel found */
+	HOSTAPD_CHAN_ACS = 2, /* ACS work being performed */
+};
 
 struct hostapd_probereq_cb {
 	int (*cb)(void *ctx, const u8 *sa, const u8 *da, const u8 *bssid,
@@ -62,6 +70,25 @@ struct hostapd_frame_info {
 	u32 channel;
 	u32 datarate;
 	int ssi_signal; /* dBm */
+};
+
+enum wps_status {
+	WPS_STATUS_SUCCESS = 1,
+	WPS_STATUS_FAILURE
+};
+
+enum pbc_status {
+	WPS_PBC_STATUS_DISABLE,
+	WPS_PBC_STATUS_ACTIVE,
+	WPS_PBC_STATUS_TIMEOUT,
+	WPS_PBC_STATUS_OVERLAP
+};
+
+struct wps_stat {
+	enum wps_status status;
+	enum wps_error_indication failure_reason;
+	enum pbc_status pbc_status;
+	u8 peer_addr[ETH_ALEN];
 };
 
 
@@ -144,6 +171,8 @@ struct hostapd_data {
 	unsigned int ap_pin_failures_consecutive;
 	struct upnp_wps_device_sm *wps_upnp;
 	unsigned int ap_pin_lockout_time;
+
+	struct wps_stat wps_stats;
 #endif /* CONFIG_WPS */
 
 	struct hostapd_probereq_cb *probereq_cb;
@@ -174,6 +203,11 @@ struct hostapd_data {
 
 	void (*setup_complete_cb)(void *ctx);
 	void *setup_complete_cb_ctx;
+
+	void (*new_psk_cb)(void *ctx, const u8 *mac_addr,
+			   const u8 *p2p_dev_addr, const u8 *psk,
+			   size_t psk_len);
+	void *new_psk_cb_ctx;
 
 #ifdef CONFIG_P2P
 	struct p2p_data *p2p;
@@ -233,6 +267,8 @@ struct hostapd_iface {
 	const u8 *extended_capa, *extended_capa_mask;
 	unsigned int extended_capa_len;
 
+	unsigned int drv_max_acl_mac_addrs;
+
 	struct hostapd_hw_modes *hw_features;
 	int num_hw_features;
 	struct hostapd_hw_modes *current_mode;
@@ -270,7 +306,30 @@ struct hostapd_iface {
 	int olbc_ht;
 
 	u16 ht_op_mode;
+
+	/* surveying helpers */
+
+	/* number of channels surveyed */
+	unsigned int chans_surveyed;
+
+	/* lowest observed noise floor in dBm */
+	s8 lowest_nf;
+
+#ifdef CONFIG_ACS
+	unsigned int acs_num_completed_scans;
+#endif /* CONFIG_ACS */
+
 	void (*scan_cb)(struct hostapd_iface *iface);
+};
+
+/**
+ * struct hostapd_dynamic_iface - hostapd per dynamically allocated
+ * or added interface data structure
+ */
+struct hostapd_dynamic_iface {
+	char parent[IFNAMSIZ + 1];
+	char iface[IFNAMSIZ + 1];
+	unsigned int usage;
 };
 
 /* hostapd.c */

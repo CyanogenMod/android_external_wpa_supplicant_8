@@ -14,6 +14,7 @@
 #include "utils/uuid.h"
 #include "common/ieee802_11_defs.h"
 #include "common/wpa_ctrl.h"
+#include "eapol_supp/eapol_supp_sm.h"
 #include "ap/hostapd.h"
 #include "ap/ap_config.h"
 #include "ap/ap_drv_ops.h"
@@ -51,22 +52,9 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 
 	os_strlcpy(bss->iface, wpa_s->ifname, sizeof(bss->iface));
 
-	if (ssid->frequency == 0) {
-		/* default channel 11 */
-		conf->hw_mode = HOSTAPD_MODE_IEEE80211G;
-		conf->channel = 11;
-	} else if (ssid->frequency >= 2412 && ssid->frequency <= 2472) {
-		conf->hw_mode = HOSTAPD_MODE_IEEE80211G;
-		conf->channel = (ssid->frequency - 2407) / 5;
-	} else if ((ssid->frequency >= 5180 && ssid->frequency <= 5240) ||
-		   (ssid->frequency >= 5745 && ssid->frequency <= 5825)) {
-		conf->hw_mode = HOSTAPD_MODE_IEEE80211A;
-		conf->channel = (ssid->frequency - 5000) / 5;
-	} else if (ssid->frequency >= 56160 + 2160 * 1 &&
-		   ssid->frequency <= 56160 + 2160 * 4) {
-		conf->hw_mode = HOSTAPD_MODE_IEEE80211AD;
-		conf->channel = (ssid->frequency - 56160) / 2160;
-	} else {
+	conf->hw_mode = ieee80211_freq_to_chan(ssid->frequency,
+					       &conf->channel);
+	if (conf->hw_mode == NUM_HOSTAPD_MODES) {
 		wpa_printf(MSG_ERROR, "Unsupported AP mode frequency: %d MHz",
 			   ssid->frequency);
 		return -1;
@@ -131,7 +119,9 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_IEEE80211N */
 
 #ifdef CONFIG_P2P
-	if (conf->hw_mode == HOSTAPD_MODE_IEEE80211G) {
+	if (conf->hw_mode == HOSTAPD_MODE_IEEE80211G &&
+	    (ssid->mode == WPAS_MODE_P2P_GO ||
+	     ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION)) {
 		/* Remove 802.11b rates from supported and basic rate sets */
 		int *list = os_malloc(4 * sizeof(int));
 		if (list) {
@@ -158,6 +148,7 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	}
 
 	bss->isolate = !wpa_s->conf->p2p_intra_bss;
+	bss->force_per_enrollee_psk = wpa_s->global->p2p_per_sta_psk;
 #endif /* CONFIG_P2P */
 
 	if (ssid->ssid_len == 0) {
@@ -249,6 +240,16 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		bss->wpa_group = WPA_CIPHER_NONE;
 		bss->wpa_pairwise = WPA_CIPHER_NONE;
 		bss->rsn_pairwise = WPA_CIPHER_NONE;
+	}
+
+	if (bss->wpa_group_rekey < 86400 && (bss->wpa & 2) &&
+	    (bss->wpa_group == WPA_CIPHER_CCMP ||
+	     bss->wpa_group == WPA_CIPHER_GCMP)) {
+		/*
+		 * Strong ciphers do not need frequent rekeying, so increase
+		 * the default GTK rekeying period to 24 hours.
+		 */
+		bss->wpa_group_rekey = 86400;
 	}
 
 #ifdef CONFIG_WPS
@@ -366,6 +367,19 @@ static void ap_sta_authorized_cb(void *ctx, const u8 *mac_addr,
 }
 
 
+#ifdef CONFIG_P2P
+static void ap_new_psk_cb(void *ctx, const u8 *mac_addr, const u8 *p2p_dev_addr,
+			  const u8 *psk, size_t psk_len)
+{
+
+	struct wpa_supplicant *wpa_s = ctx;
+	if (wpa_s->ap_iface == NULL || wpa_s->current_ssid == NULL)
+		return;
+	wpas_p2p_new_psk_cb(wpa_s, mac_addr, p2p_dev_addr, psk, psk_len);
+}
+#endif /* CONFIG_P2P */
+
+
 static int ap_vendor_action_rx(void *ctx, const u8 *buf, size_t len, int freq)
 {
 #ifdef CONFIG_P2P
@@ -456,6 +470,8 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		params.mode = IEEE80211_MODE_AP;
 		break;
 	}
+	if (ssid->frequency == 0)
+		ssid->frequency = 2462; /* default channel 11 */
 	params.freq = ssid->frequency;
 
 	params.wpa_proto = ssid->proto;
@@ -563,6 +579,8 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		hapd_iface->bss[i]->sta_authorized_cb = ap_sta_authorized_cb;
 		hapd_iface->bss[i]->sta_authorized_cb_ctx = wpa_s;
 #ifdef CONFIG_P2P
+		hapd_iface->bss[i]->new_psk_cb = ap_new_psk_cb;
+		hapd_iface->bss[i]->new_psk_cb_ctx = wpa_s;
 		hapd_iface->bss[i]->p2p = wpa_s->global->p2p;
 		hapd_iface->bss[i]->p2p_group = wpas_p2p_group_init(wpa_s,
 								    ssid);
@@ -576,6 +594,7 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 	hapd_iface->bss[0]->drv_priv = wpa_s->drv_priv;
 
 	wpa_s->current_ssid = ssid;
+	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 	os_memcpy(wpa_s->bssid, wpa_s->own_addr, ETH_ALEN);
 	wpa_s->assoc_freq = ssid->frequency;
 
@@ -599,6 +618,7 @@ void wpa_supplicant_ap_deinit(struct wpa_supplicant *wpa_s)
 		return;
 
 	wpa_s->current_ssid = NULL;
+	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 	wpa_s->assoc_freq = 0;
 #ifdef CONFIG_P2P
 	if (wpa_s->ap_iface->bss)

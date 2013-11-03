@@ -246,14 +246,15 @@ struct wps_registrar_config {
 	 * new_psk_cb - Callback for new PSK
 	 * @ctx: Higher layer context data (cb_ctx)
 	 * @mac_addr: MAC address of the Enrollee
+	 * @p2p_dev_addr: P2P Device Address of the Enrollee or all zeros if not
 	 * @psk: The new PSK
 	 * @psk_len: The length of psk in octets
 	 * Returns: 0 on success, -1 on failure
 	 *
 	 * This callback is called when a new per-device PSK is provisioned.
 	 */
-	int (*new_psk_cb)(void *ctx, const u8 *mac_addr, const u8 *psk,
-			  size_t psk_len);
+	int (*new_psk_cb)(void *ctx, const u8 *mac_addr, const u8 *p2p_dev_addr,
+			  const u8 *psk, size_t psk_len);
 
 	/**
 	 * set_ie_cb - Callback for WPS IE changes
@@ -382,6 +383,14 @@ struct wps_registrar_config {
 	 * dualband - Whether this is a concurrent dualband AP
 	 */
 	int dualband;
+
+	/**
+	 * force_per_enrollee_psk - Force per-Enrollee random PSK
+	 *
+	 * This forces per-Enrollee random PSK to be generated even if a default
+	 * PSK is set for a network.
+	 */
+	int force_per_enrollee_psk;
 };
 
 
@@ -418,6 +427,16 @@ enum wps_event {
 	 * WPS_EV_PBC_TIMEOUT - PBC walktime expired before protocol run start
 	 */
 	WPS_EV_PBC_TIMEOUT,
+
+	/**
+	 * WPS_EV_PBC_ACTIVE - PBC mode was activated
+	 */
+	WPS_EV_PBC_ACTIVE,
+
+	/**
+	 * WPS_EV_PBC_DISABLE - PBC mode was disabled
+	 */
+	WPS_EV_PBC_DISABLE,
 
 	/**
 	 * WPS_EV_ER_AP_ADD - ER: AP added
@@ -487,11 +506,17 @@ union wps_event_data {
 		int msg;
 		u16 config_error;
 		u16 error_indication;
+		u8 peer_macaddr[ETH_ALEN];
 	} fail;
+
+	struct wps_event_success {
+		u8 peer_macaddr[ETH_ALEN];
+	} success;
 
 	struct wps_event_pwd_auth_fail {
 		int enrollee;
 		int part;
+		u8 peer_macaddr[ETH_ALEN];
 	} pwd_auth_fail;
 
 	struct wps_event_er_ap {
@@ -730,6 +755,13 @@ struct wps_context {
 			 union wps_event_data *data);
 
 	/**
+	 * rf_band_cb - Fetch currently used RF band
+	 * @ctx: Higher layer context data (cb_ctx)
+	 * Return: Current used RF band or 0 if not known
+	 */
+	int (*rf_band_cb)(void *ctx);
+
+	/**
 	 * cb_ctx: Higher layer context data for callbacks
 	 */
 	void *cb_ctx;
@@ -786,6 +818,7 @@ void wps_free_pending_msgs(struct upnp_pending_message *msgs);
 struct wpabuf * wps_get_oob_cred(struct wps_context *wps);
 int wps_oob_use_cred(struct wps_context *wps, struct wps_parse_attr *attr);
 int wps_attr_text(struct wpabuf *data, char *buf, char *end);
+const char * wps_ei_str(enum wps_error_indication ei);
 
 struct wps_er * wps_er_init(struct wps_context *wps, const char *ifname,
 			    const char *filter);

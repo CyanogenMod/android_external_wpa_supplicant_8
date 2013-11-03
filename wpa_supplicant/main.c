@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant / main() function for UNIX like OSes and MinGW
- * Copyright (c) 2003-2007, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -14,6 +14,7 @@
 #include "common.h"
 #include "wpa_supplicant_i.h"
 #include "driver_i.h"
+#include "p2p_supplicant.h"
 
 extern struct wpa_driver_ops *wpa_drivers[];
 
@@ -25,6 +26,7 @@ static void usage(void)
 	       "usage:\n"
 	       "  wpa_supplicant [-BddhKLqqstuvW] [-P<pid file>] "
 	       "[-g<global ctrl>] \\\n"
+	       "        [-G<group>] \\\n"
 	       "        -i<ifname> -c<config file> [-C<ctrl>] [-D<driver>] "
 	       "[-p<driver_param>] \\\n"
 	       "        [-b<br_ifname>] [-f<debug file>] [-e<entropy file>] "
@@ -59,6 +61,7 @@ static void usage(void)
 	printf("  -f = log output to debug file instead of stdout\n");
 #endif /* CONFIG_DEBUG_FILE */
 	printf("  -g = global ctrl_interface\n"
+	       "  -G = global ctrl_interface group\n"
 	       "  -K = include keys (passwords, etc.) in debug output\n");
 #ifdef CONFIG_DEBUG_SYSLOG
 	printf("  -s = log output to syslog instead of stdout\n");
@@ -84,7 +87,7 @@ static void usage(void)
 
 	printf("example:\n"
 	       "  wpa_supplicant -D%s -iwlan0 -c/etc/wpa_supplicant.conf\n",
-	       wpa_drivers[i] ? wpa_drivers[i]->name : "wext");
+	       wpa_drivers[0] ? wpa_drivers[0]->name : "nl80211");
 #endif /* CONFIG_NO_STDOUT_DEBUG */
 }
 
@@ -157,7 +160,7 @@ int main(int argc, char *argv[])
 
 	for (;;) {
 		c = getopt(argc, argv,
-			   "b:Bc:C:D:de:f:g:hi:I:KLNo:O:p:P:qsTtuvW");
+			   "b:Bc:C:D:de:f:g:G:hi:I:KLNo:O:p:P:qsTtuvW");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -196,6 +199,9 @@ int main(int argc, char *argv[])
 #endif /* CONFIG_DEBUG_FILE */
 		case 'g':
 			params.ctrl_interface = optarg;
+			break;
+		case 'G':
+			params.ctrl_interface_group = optarg;
 			break;
 		case 'h':
 			usage();
@@ -284,6 +290,8 @@ int main(int argc, char *argv[])
 	}
 
 	for (i = 0; exitcode == 0 && i < iface_count; i++) {
+		struct wpa_supplicant *wpa_s;
+
 		if ((ifaces[i].confname == NULL &&
 		     ifaces[i].ctrl_interface == NULL) ||
 		    ifaces[i].ifname == NULL) {
@@ -294,8 +302,18 @@ int main(int argc, char *argv[])
 			exitcode = -1;
 			break;
 		}
-		if (wpa_supplicant_add_iface(global, &ifaces[i]) == NULL)
+		wpa_s = wpa_supplicant_add_iface(global, &ifaces[i]);
+		if (wpa_s == NULL) {
 			exitcode = -1;
+			break;
+		}
+#ifdef CONFIG_P2P
+		if (wpa_s->global->p2p == NULL &&
+		    (wpa_s->drv_flags &
+		     WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
+		    wpas_p2p_add_p2pdev_interface(wpa_s) < 0)
+			exitcode = -1;
+#endif /* CONFIG_P2P */
 	}
 
 	if (exitcode == 0)

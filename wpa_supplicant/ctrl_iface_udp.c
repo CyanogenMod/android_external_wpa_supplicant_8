@@ -80,14 +80,14 @@ static int wpa_supplicant_ctrl_iface_detach(struct ctrl_iface_priv *priv,
 	while (dst) {
 		if (from->sin_addr.s_addr == dst->addr.sin_addr.s_addr &&
 		    from->sin_port == dst->addr.sin_port) {
+			wpa_printf(MSG_DEBUG, "CTRL_IFACE monitor detached "
+				   "%s:%d", inet_ntoa(from->sin_addr),
+				   ntohs(from->sin_port));
 			if (prev == NULL)
 				priv->ctrl_dst = dst->next;
 			else
 				prev->next = dst->next;
 			os_free(dst);
-			wpa_printf(MSG_DEBUG, "CTRL_IFACE monitor detached "
-				   "%s:%d", inet_ntoa(from->sin_addr),
-				   ntohs(from->sin_port));
 			return 0;
 		}
 		prev = dst;
@@ -255,7 +255,7 @@ static void wpa_supplicant_ctrl_iface_receive(int sock, void *eloop_ctx,
 }
 
 
-static void wpa_supplicant_ctrl_iface_msg_cb(void *ctx, int level,
+static void wpa_supplicant_ctrl_iface_msg_cb(void *ctx, int level, int global,
 					     const char *txt, size_t len)
 {
 	struct wpa_supplicant *wpa_s = ctx;
@@ -331,13 +331,13 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 		eloop_unregister_read_sock(priv->sock);
 		if (priv->ctrl_dst) {
 			/*
-			 * Wait a second before closing the control socket if
+			 * Wait before closing the control socket if
 			 * there are any attached monitors in order to allow
 			 * them to receive any pending messages.
 			 */
 			wpa_printf(MSG_DEBUG, "CTRL_IFACE wait for attached "
 				   "monitors to receive messages");
-			os_sleep(1, 0);
+			os_sleep(0, 100000);
 		}
 		close(priv->sock);
 		priv->sock = -1;
