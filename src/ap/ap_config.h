@@ -53,6 +53,8 @@ struct hostapd_ssid {
 	size_t ssid_len;
 	unsigned int ssid_set:1;
 	unsigned int utf8_ssid:1;
+	unsigned int wpa_passphrase_set:1;
+	unsigned int wpa_psk_set:1;
 
 	char vlan[IFNAMSIZ + 1];
 	secpolicy security_policy;
@@ -479,7 +481,7 @@ struct hostapd_bss_config {
  * struct hostapd_config - Per-radio interface configuration
  */
 struct hostapd_config {
-	struct hostapd_bss_config *bss, *last_bss;
+	struct hostapd_bss_config **bss, *last_bss;
 	size_t num_bss;
 
 	u16 beacon_int;
@@ -553,6 +555,7 @@ int hostapd_mac_comp(const void *a, const void *b);
 int hostapd_mac_comp_empty(const void *a);
 struct hostapd_config * hostapd_config_defaults(void);
 void hostapd_config_defaults_bss(struct hostapd_bss_config *bss);
+void hostapd_config_free_bss(struct hostapd_bss_config *conf);
 void hostapd_config_free(struct hostapd_config *conf);
 int hostapd_maclist_found(struct mac_acl_entry *list, int num_entries,
 			  const u8 *addr, int *vlan_id);
@@ -568,5 +571,7 @@ const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 					int vlan_id);
 struct hostapd_radius_attr *
 hostapd_config_get_radius_attr(struct hostapd_radius_attr *attr, u8 type);
+int hostapd_config_check(struct hostapd_config *conf);
+void hostapd_set_security_params(struct hostapd_bss_config *bss);
 
 #endif /* HOSTAPD_CONFIG_H */

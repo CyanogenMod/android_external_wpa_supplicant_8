@@ -20,6 +20,7 @@
 #include "utils/eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
+#include "common/wpa_ctrl.h"
 #include "drivers/driver.h"
 #include "hostapd.h"
 #include "ap_config.h"
@@ -531,6 +532,47 @@ static void ieee80211n_scan_channels_2g4(struct hostapd_iface *iface,
 }
 
 
+static void ieee80211n_scan_channels_5g(struct hostapd_iface *iface,
+					struct wpa_driver_scan_params *params)
+{
+	/* Scan only the affected frequency range */
+	int pri_freq;
+	int affected_start, affected_end;
+	int i, pos;
+	struct hostapd_hw_modes *mode;
+
+	if (iface->current_mode == NULL)
+		return;
+
+	pri_freq = hostapd_hw_get_freq(iface->bss[0], iface->conf->channel);
+	if (iface->conf->secondary_channel > 0) {
+		affected_start = pri_freq - 10;
+		affected_end = pri_freq + 30;
+	} else {
+		affected_start = pri_freq - 30;
+		affected_end = pri_freq + 10;
+	}
+	wpa_printf(MSG_DEBUG, "40 MHz affected channel range: [%d,%d] MHz",
+		   affected_start, affected_end);
+
+	mode = iface->current_mode;
+	params->freqs = os_calloc(mode->num_channels + 1, sizeof(int));
+	if (params->freqs == NULL)
+		return;
+	pos = 0;
+
+	for (i = 0; i < mode->num_channels; i++) {
+		struct hostapd_channel_data *chan = &mode->channels[i];
+		if (chan->flag & HOSTAPD_CHAN_DISABLED)
+			continue;
+		if (chan->freq < affected_start ||
+		    chan->freq > affected_end)
+			continue;
+		params->freqs[pos++] = chan->freq;
+	}
+}
+
+
 static int ieee80211n_check_40mhz(struct hostapd_iface *iface)
 {
 	struct wpa_driver_scan_params params;
@@ -538,11 +580,14 @@ static int ieee80211n_check_40mhz(struct hostapd_iface *iface)
 	if (!iface->conf->secondary_channel)
 		return 0; /* HT40 not used */
 
+	hostapd_set_state(iface, HAPD_IFACE_HT_SCAN);
 	wpa_printf(MSG_DEBUG, "Scan for neighboring BSSes prior to enabling "
 		   "40 MHz channel");
 	os_memset(&params, 0, sizeof(params));
 	if (iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G)
 		ieee80211n_scan_channels_2g4(iface, &params);
+	else
+		ieee80211n_scan_channels_5g(iface, &params);
 	if (hostapd_driver_scan(iface->bss[0], &params) < 0) {
 		wpa_printf(MSG_ERROR, "Failed to request a scan of "
 			   "neighboring BSSes");
@@ -857,14 +902,21 @@ int hostapd_acs_completed(struct hostapd_iface *iface, int err)
 
 	switch (hostapd_check_chans(iface)) {
 	case HOSTAPD_CHAN_VALID:
+		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO,
+			ACS_EVENT_COMPLETED "freq=%d channel=%d",
+			hostapd_hw_get_freq(iface->bss[0],
+					    iface->conf->channel),
+			iface->conf->channel);
 		break;
 	case HOSTAPD_CHAN_ACS:
 		wpa_printf(MSG_ERROR, "ACS error - reported complete, but no result available");
+		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO, ACS_EVENT_FAILED);
 		hostapd_notify_bad_chans(iface);
 		goto out;
 	case HOSTAPD_CHAN_INVALID:
 	default:
 		wpa_printf(MSG_ERROR, "ACS picked unusable channels");
+		wpa_msg(iface->bss[0]->msg_ctx, MSG_INFO, ACS_EVENT_FAILED);
 		hostapd_notify_bad_chans(iface);
 		goto out;
 	}

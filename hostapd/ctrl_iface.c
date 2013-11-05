@@ -1,6 +1,6 @@
 /*
  * hostapd / UNIX domain socket -based control interface
- * Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -1050,6 +1050,67 @@ static int hostapd_ctrl_iface_disable(struct hostapd_iface *iface)
 }
 
 
+#ifdef CONFIG_TESTING_OPTIONS
+static int hostapd_ctrl_iface_radar(struct hostapd_data *hapd, char *cmd)
+{
+	union wpa_event_data data;
+	char *pos, *param;
+	enum wpa_event_type event;
+
+	wpa_printf(MSG_DEBUG, "RADAR TEST: %s", cmd);
+
+	os_memset(&data, 0, sizeof(data));
+
+	param = os_strchr(cmd, ' ');
+	if (param == NULL)
+		return -1;
+	*param++ = '\0';
+
+	if (os_strcmp(cmd, "DETECTED") == 0)
+		event = EVENT_DFS_RADAR_DETECTED;
+	else if (os_strcmp(cmd, "CAC-FINISHED") == 0)
+		event = EVENT_DFS_CAC_FINISHED;
+	else if (os_strcmp(cmd, "CAC-ABORTED") == 0)
+		event = EVENT_DFS_CAC_ABORTED;
+	else if (os_strcmp(cmd, "NOP-FINISHED") == 0)
+		event = EVENT_DFS_NOP_FINISHED;
+	else {
+		wpa_printf(MSG_DEBUG, "Unsupported RADAR test command: %s",
+			   cmd);
+		return -1;
+	}
+
+	pos = os_strstr(param, "freq=");
+	if (pos)
+		data.dfs_event.freq = atoi(pos + 5);
+
+	pos = os_strstr(param, "ht_enabled=1");
+	if (pos)
+		data.dfs_event.ht_enabled = 1;
+
+	pos = os_strstr(param, "chan_offset=");
+	if (pos)
+		data.dfs_event.chan_offset = atoi(pos + 12);
+
+	pos = os_strstr(param, "chan_width=");
+	if (pos)
+		data.dfs_event.chan_width = atoi(pos + 11);
+
+	pos = os_strstr(param, "cf1=");
+	if (pos)
+		data.dfs_event.cf1 = atoi(pos + 4);
+
+	pos = os_strstr(param, "cf2=");
+	if (pos)
+		data.dfs_event.cf2 = atoi(pos + 4);
+
+	wpa_supplicant_event(hapd, event, &data);
+
+	return 0;
+}
+#endif /* CONFIG_TESTING_OPTIONS */
+
+
 static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 				       void *sock_ctx)
 {
@@ -1090,6 +1151,9 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "RELOG", 5) == 0) {
 		if (wpa_debug_reopen_file() < 0)
 			reply_len = -1;
+	} else if (os_strcmp(buf, "STATUS") == 0) {
+		reply_len = hostapd_ctrl_iface_status(hapd, reply,
+						      reply_size);
 	} else if (os_strcmp(buf, "MIB") == 0) {
 		reply_len = ieee802_11_get_mib(hapd, reply, reply_size);
 		if (reply_len >= 0) {
@@ -1228,6 +1292,11 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "DISABLE", 7) == 0) {
 		if (hostapd_ctrl_iface_disable(hapd->iface))
 			reply_len = -1;
+#ifdef CONFIG_TESTING_OPTIONS
+	} else if (os_strncmp(buf, "RADAR ", 6) == 0) {
+		if (hostapd_ctrl_iface_radar(hapd, buf + 6))
+			reply_len = -1;
+#endif /* CONFIG_TESTING_OPTIONS */
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;
@@ -1494,6 +1563,7 @@ static void hostapd_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 		return;
 	}
 	buf[res] = '\0';
+	wpa_printf(MSG_DEBUG, "Global ctrl_iface command: %s", buf);
 
 	os_memcpy(reply, "OK\n", 3);
 	reply_len = 3;
@@ -1501,6 +1571,9 @@ static void hostapd_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 	if (os_strcmp(buf, "PING") == 0) {
 		os_memcpy(reply, "PONG\n", 5);
 		reply_len = 5;
+	} else if (os_strncmp(buf, "RELOG", 5) == 0) {
+		if (wpa_debug_reopen_file() < 0)
+			reply_len = -1;
 	} else if (os_strncmp(buf, "ADD ", 4) == 0) {
 		if (hostapd_ctrl_iface_add(interfaces, buf + 4) < 0)
 			reply_len = -1;
