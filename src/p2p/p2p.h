@@ -1814,22 +1814,6 @@ int p2p_set_no_go_freq(struct p2p_data *p2p,
  */
 int p2p_in_progress(struct p2p_data *p2p);
 
-#ifdef ANDROID_P2P
-/**
- * p2p_search_in_progress - Check whether a P2P SEARCH is in progress
- * @p2p: P2P module context from p2p_init()
- * Returns: 0 if P2P module is idle or 1 if an operation is in progress
- */
-int p2p_search_in_progress(struct p2p_data *p2p);
-
-/**
- * p2p_search_pending - Check whether there is a deferred P2P SEARCH
- * @p2p: P2P module context from p2p_init()
- * Returns: 0 if there is no deferred P2P search or 1 if there is one
- */
-int p2p_search_pending(struct p2p_data *p2p);
-#endif
-
 /**
  * p2p_other_scan_completed - Notify completion of non-P2P scan
  * @p2p: P2P module context from p2p_init()
