@@ -272,9 +272,8 @@ wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
 	ret = wpa_drv_sched_scan(wpa_s, params, interval * 1000);
 	if (ret)
 		wpa_supplicant_notify_scanning(wpa_s, 0);
-	else {
+	else
 		wpa_s->sched_scanning = 1;
-	}
 
 	return ret;
 }
