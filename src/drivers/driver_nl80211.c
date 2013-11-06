@@ -631,10 +631,7 @@ static int send_and_recv_msgs_global(struct nl80211_global *global,
 }
 
 
-#ifndef ANDROID
-static
-#endif
-int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
+static int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
 			      struct nl_msg *msg,
 			      int (*valid_handler)(struct nl_msg *, void *),
 			      void *valid_data)
@@ -3458,20 +3455,11 @@ static int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	drv->poll_command_supported = info.poll_command_supported;
 	drv->data_tx_status = info.data_tx_status;
 
-#ifdef ANDROID_P2P
-	if(drv->capa.flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX) {
-		/* Driver is new enough to support monitorless mode*/
-		wpa_printf(MSG_DEBUG, "nl80211: Driver is new "
-			  "enough to support monitor-less mode");
-		drv->use_monitor = 0;
-	}
-#else
 	/*
 	 * If poll command and tx status are supported, mac80211 is new enough
 	 * to have everything we need to not need monitor interfaces.
 	 */
 	drv->use_monitor = !info.poll_command_supported || !info.data_tx_status;
-#endif
 
 	if (drv->device_ap_sme && drv->use_monitor) {
 		/*
@@ -7601,16 +7589,6 @@ static int nl80211_setup_ap(struct i802_bss *bss)
 	    !drv->device_ap_sme)
 		return -1;
 
-#ifdef ANDROID_P2P
-	if (drv->device_ap_sme && drv->use_monitor)
-		if (nl80211_mgmt_subscribe_ap_dev_sme(bss))
-			return -1;
-
-	if (drv->use_monitor &&
-	    nl80211_create_monitor_interface(drv))
-		return -1;
-#endif
-
 	if (drv->device_ap_sme &&
 	    wpa_driver_nl80211_probe_req_report(bss, 1) < 0) {
 		wpa_printf(MSG_DEBUG, "nl80211: Failed to enable "
@@ -7682,11 +7660,8 @@ static int wpa_driver_nl80211_hapd_send_eapol(
 	u8 *pos;
 	int res;
 	int qos = flags & WPA_STA_WMM;
-#ifndef ANDROID_P2P
+
 	if (drv->device_ap_sme || !drv->use_monitor)
-#else
-	if (drv->device_ap_sme && !drv->use_monitor)
-#endif
 		return nl80211_send_eapol_data(bss, addr, data, data_len);
 
 	len = sizeof(*hdr) + (qos ? 2 : 0) + sizeof(rfc1042_header) + 2 +
@@ -10141,11 +10116,7 @@ static int wpa_driver_nl80211_shared_freq(void *priv)
 			 struct wpa_driver_nl80211_data, list) {
 		if (drv == driver ||
 		    os_strcmp(drv->phyname, driver->phyname) != 0 ||
-#ifdef ANDROID_P2P
-		    (!driver->associated && !is_ap_interface(driver->nlmode)))
-#else
 		    !driver->associated)
-#endif
 			continue;
 
 		wpa_printf(MSG_DEBUG, "nl80211: Found a match for PHY %s - %s "
