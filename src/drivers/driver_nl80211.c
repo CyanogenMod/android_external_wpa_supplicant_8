@@ -10199,16 +10199,6 @@ static int nl80211_set_param(void *priv, const char *param)
 		struct wpa_driver_nl80211_data *drv = bss->drv;
 		drv->allow_p2p_device = 1;
 	}
-
-#ifdef ANDROID_P2P
-	if(os_strstr(param, "use_multi_chan_concurrent=1")) {
-		struct i802_bss *bss = priv;
-		struct wpa_driver_nl80211_data *drv = bss->drv;
-		wpa_printf(MSG_DEBUG, "nl80211: Use Multi channel "
-			   "concurrency");
-		drv->capa.num_multichan_concurrent = 2;
-	}
-#endif
 #endif /* CONFIG_P2P */
 
 	return 0;
