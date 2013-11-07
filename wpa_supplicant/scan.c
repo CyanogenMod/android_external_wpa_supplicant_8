@@ -689,14 +689,12 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		wpa_s->prev_scan_wildcard = 0;
 		wpa_supplicant_assoc_try(wpa_s, ssid);
 		return;
-#ifndef ANDROID
 	} else if (wpa_s->conf->ap_scan == 2) {
 		/*
 		 * User-initiated scan request in ap_scan == 2; scan with
 		 * wildcard SSID.
 		 */
 		ssid = NULL;
-#endif
 	} else {
 		struct wpa_ssid *start = ssid, *tssid;
 		int freqs_set = 0;
