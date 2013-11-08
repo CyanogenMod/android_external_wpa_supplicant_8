@@ -243,6 +243,7 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 
 static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 {
+	wpa_printf(MSG_DEBUG, "%s(%s)", __func__, hapd->conf->iface);
 	iapp_deinit(hapd->iapp);
 	hapd->iapp = NULL;
 	accounting_deinit(hapd);
@@ -260,7 +261,8 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 
 	authsrv_deinit(hapd);
 
-	if (hostapd_if_remove(hapd, WPA_IF_AP_BSS, hapd->conf->iface)) {
+	if (hapd->interface_added &&
+	    hostapd_if_remove(hapd, WPA_IF_AP_BSS, hapd->conf->iface)) {
 		wpa_printf(MSG_WARNING, "Failed to remove BSS interface %s",
 			   hapd->conf->iface);
 	}
@@ -293,34 +295,24 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
  * @hapd: Pointer to BSS data
  *
  * This function is used to free all per-BSS data structures and resources.
- * This gets called in a loop for each BSS between calls to
- * hostapd_cleanup_iface_pre() and hostapd_cleanup_iface() when an interface
- * is deinitialized. Most of the modules that are initialized in
- * hostapd_setup_bss() are deinitialized here.
+ * Most of the modules that are initialized in hostapd_setup_bss() are
+ * deinitialized here.
  */
 static void hostapd_cleanup(struct hostapd_data *hapd)
 {
+	wpa_printf(MSG_DEBUG, "%s(hapd=%p (%s))", __func__, hapd,
+		   hapd->conf->iface);
 	if (hapd->iface->interfaces &&
 	    hapd->iface->interfaces->ctrl_iface_deinit)
 		hapd->iface->interfaces->ctrl_iface_deinit(hapd);
 	hostapd_free_hapd_data(hapd);
-}
-
-
-/**
- * hostapd_cleanup_iface_pre - Preliminary per-interface cleanup
- * @iface: Pointer to interface data
- *
- * This function is called before per-BSS data structures are deinitialized
- * with hostapd_cleanup().
- */
-static void hostapd_cleanup_iface_pre(struct hostapd_iface *iface)
-{
+	hapd->started = 0;
 }
 
 
 static void hostapd_cleanup_iface_partial(struct hostapd_iface *iface)
 {
+	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
 	hostapd_free_hw_features(iface->hw_features, iface->num_hw_features);
 	iface->hw_features = NULL;
 	os_free(iface->current_rates);
@@ -340,6 +332,7 @@ static void hostapd_cleanup_iface_partial(struct hostapd_iface *iface)
  */
 static void hostapd_cleanup_iface(struct hostapd_iface *iface)
 {
+	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
 	eloop_cancel_timeout(channel_list_update_timeout, iface, NULL);
 
 	hostapd_cleanup_iface_partial(iface);
@@ -348,6 +341,7 @@ static void hostapd_cleanup_iface(struct hostapd_iface *iface)
 
 	os_free(iface->config_fname);
 	os_free(iface->bss);
+	wpa_printf(MSG_DEBUG, "%s: free iface=%p", __func__, iface);
 	os_free(iface);
 }
 
@@ -629,6 +623,16 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	char force_ifname[IFNAMSIZ];
 	u8 if_addr[ETH_ALEN];
 
+	wpa_printf(MSG_DEBUG, "%s(hapd=%p (%s), first=%d)",
+		   __func__, hapd, hapd->conf->iface, first);
+
+	if (hapd->started) {
+		wpa_printf(MSG_ERROR, "%s: Interface %s was already started",
+			   __func__, hapd->conf->iface);
+		return -1;
+	}
+	hapd->started = 1;
+
 	if (!first || first == -1) {
 		if (hostapd_mac_comp_empty(hapd->conf->bssid) == 0) {
 			/* Allocate the next available BSSID. */
@@ -649,6 +653,7 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 			}
 		}
 
+		hapd->interface_added = 1;
 		if (hostapd_if_add(hapd->iface->bss[0], WPA_IF_AP_BSS,
 				   hapd->conf->iface, hapd->own_addr, hapd,
 				   &hapd->drv_priv, force_ifname, if_addr,
@@ -1259,32 +1264,42 @@ hostapd_alloc_bss_data(struct hostapd_iface *hapd_iface,
 }
 
 
+static void hostapd_bss_deinit(struct hostapd_data *hapd)
+{
+	wpa_printf(MSG_DEBUG, "%s: deinit bss %s", __func__,
+		   hapd->conf->iface);
+	hostapd_free_stas(hapd);
+	hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
+	hostapd_clear_wep(hapd);
+	hostapd_cleanup(hapd);
+}
+
+
 void hostapd_interface_deinit(struct hostapd_iface *iface)
 {
 	int j;
 
+	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
 	if (iface == NULL)
 		return;
 
 	eloop_cancel_timeout(channel_list_update_timeout, iface, NULL);
 	iface->wait_channel_update = 0;
 
-	hostapd_cleanup_iface_pre(iface);
-	for (j = iface->num_bss - 1; j >= 0; j--) {
-		struct hostapd_data *hapd = iface->bss[j];
-		hostapd_free_stas(hapd);
-		hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
-		hostapd_clear_wep(hapd);
-		hostapd_cleanup(hapd);
-	}
+	for (j = iface->num_bss - 1; j >= 0; j--)
+		hostapd_bss_deinit(iface->bss[j]);
 }
 
 
 void hostapd_interface_free(struct hostapd_iface *iface)
 {
 	size_t j;
-	for (j = 0; j < iface->num_bss; j++)
+	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
+	for (j = 0; j < iface->num_bss; j++) {
+		wpa_printf(MSG_DEBUG, "%s: free hapd %p",
+			   __func__, iface->bss[j]);
 		os_free(iface->bss[j]);
+	}
 	hostapd_cleanup_iface(iface);
 }
 
@@ -1344,6 +1359,8 @@ fail:
 	if (hapd_iface) {
 		os_free(hapd_iface->config_fname);
 		os_free(hapd_iface->bss);
+		wpa_printf(MSG_DEBUG, "%s: free iface %p",
+			   __func__, hapd_iface);
 		os_free(hapd_iface);
 	}
 	return NULL;
@@ -1488,11 +1505,18 @@ void hostapd_interface_deinit_free(struct hostapd_iface *iface)
 {
 	const struct wpa_driver_ops *driver;
 	void *drv_priv;
+
+	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
 	if (iface == NULL)
 		return;
+	wpa_printf(MSG_DEBUG, "%s: num_bss=%u conf->num_bss=%u",
+		   __func__, (unsigned int) iface->num_bss,
+		   (unsigned int) iface->conf->num_bss);
 	driver = iface->bss[0]->driver;
 	drv_priv = iface->bss[0]->drv_priv;
 	hostapd_interface_deinit(iface);
+	wpa_printf(MSG_DEBUG, "%s: driver=%p drv_priv=%p -> hapd_deinit",
+		   __func__, driver, drv_priv);
 	if (driver && driver->hapd_deinit && drv_priv)
 		driver->hapd_deinit(drv_priv);
 	hostapd_interface_free(iface);
@@ -1521,6 +1545,8 @@ int hostapd_enable_iface(struct hostapd_iface *hapd_iface)
 
 		driver = hapd_iface->bss[0]->driver;
 		drv_priv = hapd_iface->bss[0]->drv_priv;
+		wpa_printf(MSG_DEBUG, "%s: driver=%p drv_priv=%p -> hapd_deinit",
+			   __func__, driver, drv_priv);
 		if (driver && driver->hapd_deinit && drv_priv) {
 			driver->hapd_deinit(drv_priv);
 			hapd_iface->bss[0]->drv_priv = NULL;
@@ -1573,6 +1599,8 @@ int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 		hostapd_free_hapd_data(hapd);
 	}
 
+	wpa_printf(MSG_DEBUG, "%s: driver=%p drv_priv=%p -> hapd_deinit",
+		   __func__, driver, drv_priv);
 	if (driver && driver->hapd_deinit && drv_priv) {
 		driver->hapd_deinit(drv_priv);
 		hapd_iface->bss[0]->drv_priv = NULL;
@@ -1740,9 +1768,12 @@ int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
 				  ETH_ALEN);
 
 			if (start_ctrl_iface_bss(hapd) < 0 ||
-			    hostapd_setup_bss(hapd, -1)) {
+			    (hapd_iface->state == HAPD_IFACE_ENABLED &&
+			     hostapd_setup_bss(hapd, -1))) {
 				hapd_iface->conf->num_bss--;
 				hapd_iface->num_bss--;
+				wpa_printf(MSG_DEBUG, "%s: free hapd %p %s",
+					   __func__, hapd, hapd->conf->iface);
 				os_free(hapd);
 				return -1;
 			}
@@ -1806,10 +1837,21 @@ fail:
 		hostapd_config_free(conf);
 	if (hapd_iface) {
 		if (hapd_iface->bss) {
-			for (i = 0; i < hapd_iface->num_bss; i++)
+			for (i = 0; i < hapd_iface->num_bss; i++) {
+				hapd = hapd_iface->bss[i];
+				if (hapd && hapd_iface->interfaces &&
+				    hapd_iface->interfaces->ctrl_iface_deinit)
+					hapd_iface->interfaces->
+						ctrl_iface_deinit(hapd);
+				wpa_printf(MSG_DEBUG, "%s: free hapd %p (%s)",
+					   __func__, hapd_iface->bss[i],
+					hapd_iface->bss[i]->conf->iface);
 				os_free(hapd_iface->bss[i]);
+			}
 			os_free(hapd_iface->bss);
 		}
+		wpa_printf(MSG_DEBUG, "%s: free iface %p",
+			   __func__, hapd_iface);
 		os_free(hapd_iface);
 	}
 	return -1;
@@ -1818,27 +1860,31 @@ fail:
 
 static int hostapd_remove_bss(struct hostapd_iface *iface, unsigned int idx)
 {
-	struct hostapd_data *hapd;
 	size_t i;
 
-	if (idx > iface->num_bss || idx > iface->conf->num_bss)
-		return -1;
-	hapd = iface->bss[idx];
-	wpa_printf(MSG_INFO, "Remove BSS '%s'", hapd->conf->iface);
+	wpa_printf(MSG_INFO, "Remove BSS '%s'", iface->conf->bss[idx]->iface);
 
-	hostapd_free_stas(hapd);
-	hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
-	hostapd_clear_wep(hapd);
-	hostapd_cleanup(hapd);
-	hostapd_config_free_bss(hapd->conf);
-	os_free(hapd);
+	/* Remove hostapd_data only if it has already been initialized */
+	if (idx < iface->num_bss) {
+		struct hostapd_data *hapd = iface->bss[idx];
 
-	iface->num_bss--;
-	for (i = idx; i < iface->num_bss; i++)
-		iface->bss[i] = iface->bss[i + 1];
+		hostapd_bss_deinit(hapd);
+		wpa_printf(MSG_DEBUG, "%s: free hapd %p (%s)",
+			   __func__, hapd, hapd->conf->iface);
+		hostapd_config_free_bss(hapd->conf);
+		os_free(hapd);
+
+		iface->num_bss--;
+
+		for (i = idx; i < iface->num_bss; i++)
+			iface->bss[i] = iface->bss[i + 1];
+	} else {
+		hostapd_config_free_bss(iface->conf->bss[idx]);
+		iface->conf->bss[idx] = NULL;
+	}
 
 	iface->conf->num_bss--;
-	for (i = idx; i < iface->num_bss; i++)
+	for (i = idx; i < iface->conf->num_bss; i++)
 		iface->conf->bss[i] = iface->conf->bss[i + 1];
 
 	return 0;
@@ -1854,8 +1900,7 @@ int hostapd_remove_iface(struct hapd_interfaces *interfaces, char *buf)
 		hapd_iface = interfaces->iface[i];
 		if (hapd_iface == NULL)
 			return -1;
-		if (hapd_iface->conf->num_bss == 1 &&
-		    !os_strcmp(hapd_iface->conf->bss[0]->iface, buf)) {
+		if (!os_strcmp(hapd_iface->conf->bss[0]->iface, buf)) {
 			wpa_printf(MSG_INFO, "Remove interface '%s'", buf);
 			hostapd_interface_deinit_free(hapd_iface);
 			k = i;

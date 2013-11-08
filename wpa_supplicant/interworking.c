@@ -1,6 +1,6 @@
 /*
  * Interworking (IEEE 802.11u)
- * Copyright (c) 2011-2012, Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2013, Qualcomm Atheros, Inc.
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -19,6 +19,7 @@
 #include "eap_peer/eap.h"
 #include "eap_peer/eap_methods.h"
 #include "eapol_supp/eapol_supp_sm.h"
+#include "rsn_supp/wpa.h"
 #include "wpa_supplicant_i.h"
 #include "config.h"
 #include "config_ssid.h"
@@ -750,6 +751,59 @@ static int set_root_nai(struct wpa_ssid *ssid, const char *imsi, char prefix)
 #endif /* INTERWORKING_3GPP */
 
 
+static int already_connected(struct wpa_supplicant *wpa_s,
+			     struct wpa_cred *cred, struct wpa_bss *bss)
+{
+	struct wpa_ssid *ssid;
+
+	if (wpa_s->wpa_state < WPA_ASSOCIATED || wpa_s->current_ssid == NULL)
+		return 0;
+
+	ssid = wpa_s->current_ssid;
+	if (ssid->parent_cred != cred)
+		return 0;
+
+	if (ssid->ssid_len != bss->ssid_len ||
+	    os_memcmp(ssid->ssid, bss->ssid, bss->ssid_len) != 0)
+		return 0;
+
+	return 1;
+}
+
+
+static void remove_duplicate_network(struct wpa_supplicant *wpa_s,
+				     struct wpa_cred *cred,
+				     struct wpa_bss *bss)
+{
+	struct wpa_ssid *ssid;
+
+	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+		if (ssid->parent_cred != cred)
+			continue;
+		if (ssid->ssid_len != bss->ssid_len ||
+		    os_memcmp(ssid->ssid, bss->ssid, bss->ssid_len) != 0)
+			continue;
+
+		break;
+	}
+
+	if (ssid == NULL)
+		return;
+
+	wpa_printf(MSG_DEBUG, "Interworking: Remove duplicate network entry for the same credential");
+
+	if (ssid == wpa_s->current_ssid) {
+		wpa_sm_set_config(wpa_s->wpa, NULL);
+		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+		wpa_supplicant_deauthenticate(wpa_s,
+					      WLAN_REASON_DEAUTH_LEAVING);
+	}
+
+	wpas_notify_network_removed(wpa_s, ssid);
+	wpa_config_remove_network(wpa_s->conf, ssid->id);
+}
+
+
 static int interworking_set_hs20_params(struct wpa_supplicant *wpa_s,
 					struct wpa_ssid *ssid)
 {
@@ -771,7 +825,6 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 {
 #ifdef INTERWORKING_3GPP
 	struct wpa_ssid *ssid;
-	const u8 *ie;
 	int eap_type;
 	int res;
 	char prefix;
@@ -779,11 +832,16 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 	if (bss->anqp == NULL || bss->anqp->anqp_3gpp == NULL)
 		return -1;
 
-	ie = wpa_bss_get_ie(bss, WLAN_EID_SSID);
-	if (ie == NULL)
-		return -1;
 	wpa_printf(MSG_DEBUG, "Interworking: Connect with " MACSTR " (3GPP)",
 		   MAC2STR(bss->bssid));
+
+	if (already_connected(wpa_s, cred, bss)) {
+		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_ALREADY_CONNECTED MACSTR,
+			MAC2STR(bss->bssid));
+		return 0;
+	}
+
+	remove_duplicate_network(wpa_s, cred, bss);
 
 	ssid = wpa_config_add_network(wpa_s->conf);
 	if (ssid == NULL)
@@ -794,11 +852,11 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 	wpa_config_set_network_defaults(ssid);
 	ssid->priority = cred->priority;
 	ssid->temporary = 1;
-	ssid->ssid = os_zalloc(ie[1] + 1);
+	ssid->ssid = os_zalloc(bss->ssid_len + 1);
 	if (ssid->ssid == NULL)
 		goto fail;
-	os_memcpy(ssid->ssid, ie + 2, ie[1]);
-	ssid->ssid_len = ie[1];
+	os_memcpy(ssid->ssid, bss->ssid, bss->ssid_len);
+	ssid->ssid_len = bss->ssid_len;
 
 	if (interworking_set_hs20_params(wpa_s, ssid) < 0)
 		goto fail;
@@ -1137,12 +1195,20 @@ static int interworking_set_eap_params(struct wpa_ssid *ssid,
 
 static int interworking_connect_roaming_consortium(
 	struct wpa_supplicant *wpa_s, struct wpa_cred *cred,
-	struct wpa_bss *bss, const u8 *ssid_ie)
+	struct wpa_bss *bss)
 {
 	struct wpa_ssid *ssid;
 
 	wpa_printf(MSG_DEBUG, "Interworking: Connect with " MACSTR " based on "
 		   "roaming consortium match", MAC2STR(bss->bssid));
+
+	if (already_connected(wpa_s, cred, bss)) {
+		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_ALREADY_CONNECTED MACSTR,
+			MAC2STR(bss->bssid));
+		return 0;
+	}
+
+	remove_duplicate_network(wpa_s, cred, bss);
 
 	ssid = wpa_config_add_network(wpa_s->conf);
 	if (ssid == NULL)
@@ -1152,11 +1218,11 @@ static int interworking_connect_roaming_consortium(
 	wpa_config_set_network_defaults(ssid);
 	ssid->priority = cred->priority;
 	ssid->temporary = 1;
-	ssid->ssid = os_zalloc(ssid_ie[1] + 1);
+	ssid->ssid = os_zalloc(bss->ssid_len + 1);
 	if (ssid->ssid == NULL)
 		goto fail;
-	os_memcpy(ssid->ssid, ssid_ie + 2, ssid_ie[1]);
-	ssid->ssid_len = ssid_ie[1];
+	os_memcpy(ssid->ssid, bss->ssid, bss->ssid_len);
+	ssid->ssid_len = bss->ssid_len;
 
 	if (interworking_set_hs20_params(wpa_s, ssid) < 0)
 		goto fail;
@@ -1193,13 +1259,12 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	struct nai_realm_eap *eap = NULL;
 	u16 count, i;
 	char buf[100];
-	const u8 *ie;
 
 	if (wpa_s->conf->cred == NULL || bss == NULL)
 		return -1;
-	ie = wpa_bss_get_ie(bss, WLAN_EID_SSID);
-	if (ie == NULL || ie[1] == 0) {
-		wpa_printf(MSG_DEBUG, "Interworking: No SSID known for "
+	if (disallowed_bssid(wpa_s, bss->bssid) ||
+	    disallowed_ssid(wpa_s, bss->ssid, bss->ssid_len)) {
+		wpa_printf(MSG_DEBUG, "Interworking: Reject connection to disallowed BSS "
 			   MACSTR, MAC2STR(bss->bssid));
 		return -1;
 	}
@@ -1239,7 +1304,7 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	    (cred == NULL || cred_rc->priority >= cred->priority) &&
 	    (cred_3gpp == NULL || cred_rc->priority >= cred_3gpp->priority))
 		return interworking_connect_roaming_consortium(wpa_s, cred_rc,
-							       bss, ie);
+							       bss);
 
 	if (cred_3gpp &&
 	    (cred == NULL || cred_3gpp->priority >= cred->priority)) {
@@ -1279,6 +1344,15 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	wpa_printf(MSG_DEBUG, "Interworking: Connect with " MACSTR,
 		   MAC2STR(bss->bssid));
 
+	if (already_connected(wpa_s, cred, bss)) {
+		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_ALREADY_CONNECTED MACSTR,
+			MAC2STR(bss->bssid));
+		nai_realm_free(realm, count);
+		return 0;
+	}
+
+	remove_duplicate_network(wpa_s, cred, bss);
+
 	ssid = wpa_config_add_network(wpa_s->conf);
 	if (ssid == NULL) {
 		nai_realm_free(realm, count);
@@ -1289,11 +1363,11 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	wpa_config_set_network_defaults(ssid);
 	ssid->priority = cred->priority;
 	ssid->temporary = 1;
-	ssid->ssid = os_zalloc(ie[1] + 1);
+	ssid->ssid = os_zalloc(bss->ssid_len + 1);
 	if (ssid->ssid == NULL)
 		goto fail;
-	os_memcpy(ssid->ssid, ie + 2, ie[1]);
-	ssid->ssid_len = ie[1];
+	os_memcpy(ssid->ssid, bss->ssid, bss->ssid_len);
+	ssid->ssid_len = bss->ssid_len;
 
 	if (interworking_set_hs20_params(wpa_s, ssid) < 0)
 		goto fail;
@@ -1517,6 +1591,13 @@ static struct wpa_cred * interworking_credentials_available(
 	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
 	struct wpa_cred *cred, *cred2;
+
+	if (disallowed_bssid(wpa_s, bss->bssid) ||
+	    disallowed_ssid(wpa_s, bss->ssid, bss->ssid_len)) {
+		wpa_printf(MSG_DEBUG, "Interworking: Ignore disallowed BSS "
+			   MACSTR, MAC2STR(bss->bssid));
+		return NULL;
+	}
 
 	cred = interworking_credentials_available_realm(wpa_s, bss);
 	cred2 = interworking_credentials_available_3gpp(wpa_s, bss);
@@ -1804,6 +1885,9 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 		ie = wpa_bss_get_ie(bss, WLAN_EID_EXT_CAPAB);
 		if (ie == NULL || ie[1] < 4 || !(ie[5] & 0x80))
 			continue; /* AP does not support Interworking */
+		if (disallowed_bssid(wpa_s, bss->bssid) ||
+		    disallowed_ssid(wpa_s, bss->ssid, bss->ssid_len))
+			continue; /* Disallowed BSS */
 
 		if (!(bss->flags & WPA_BSS_ANQP_FETCH_TRIED)) {
 			if (bss->anqp == NULL) {

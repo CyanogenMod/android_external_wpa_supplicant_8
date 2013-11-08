@@ -105,7 +105,6 @@ NEED_RC4=y
 NEED_AES=y
 NEED_MD5=y
 NEED_SHA1=y
-NEED_SHA256=y
 
 OBJS += src/drivers/drivers.c
 L_CFLAGS += -DHOSTAPD
@@ -528,10 +527,6 @@ ifeq ($(CONFIG_TLS), gnutls)
 ifdef TLS_FUNCS
 OBJS += src/crypto/tls_gnutls.c
 LIBS += -lgnutls -lgpg-error
-ifdef CONFIG_GNUTLS_EXTRA
-L_CFLAGS += -DCONFIG_GNUTLS_EXTRA
-LIBS += -lgnutls-extra
-endif
 endif
 OBJS += src/crypto/crypto_gnutls.c
 HOBJS += src/crypto/crypto_gnutls.c
@@ -858,8 +853,18 @@ endif
 
 OBJS += src/drivers/driver_common.c
 
+ifdef CONFIG_ACS
+L_CFLAGS += -DCONFIG_ACS
+OBJS += src/ap/acs.c
+LIBS += -lm
+endif
+
 ifdef CONFIG_NO_STDOUT_DEBUG
 L_CFLAGS += -DCONFIG_NO_STDOUT_DEBUG
+endif
+
+ifdef CONFIG_DEBUG_LINUX_TRACING
+L_CFLAGS += -DCONFIG_DEBUG_LINUX_TRACING
 endif
 
 ifdef CONFIG_DEBUG_FILE
@@ -880,12 +885,6 @@ ifdef CONFIG_WPA_CLI_EDIT
 OBJS_c += src/utils/edit.c
 else
 OBJS_c += src/utils/edit_simple.c
-endif
-
-ifdef CONFIG_ACS
-L_CFLAGS += -DCONFIG_ACS
-OBJS += src/ap/acs.c
-LIBS += -lm
 endif
 
 ########################
