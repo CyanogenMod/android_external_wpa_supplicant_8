@@ -48,29 +48,28 @@
 #endif
 #endif
 
-#ifdef ANDROID
-#include <openssl/pem.h>
-#include <keystore/keystore_get.h>
-
-static BIO * BIO_from_keystore(const char *key)
-{
-    BIO *bio = NULL;
-    uint8_t *value = NULL;
-    int length = keystore_get(key, strlen(key), &value);
-    if (length != -1 && (bio = BIO_new(BIO_s_mem())) != NULL) {
-        BIO_write(bio, value, length);
-    }
-    free(value);
-    return bio;
-}
-#endif /* ANDROID */
-
 #ifdef SSL_set_tlsext_status_type
 #ifndef OPENSSL_NO_TLSEXT
 #define HAVE_OCSP
 #include <openssl/ocsp.h>
 #endif /* OPENSSL_NO_TLSEXT */
 #endif /* SSL_set_tlsext_status_type */
+
+#ifdef ANDROID
+#include <openssl/pem.h>
+#include <keystore/keystore_get.h>
+
+static BIO * BIO_from_keystore(const char *key)
+{
+	BIO *bio = NULL;
+	uint8_t *value = NULL;
+	int length = keystore_get(key, strlen(key), &value);
+	if (length != -1 && (bio = BIO_new(BIO_s_mem())) != NULL)
+		BIO_write(bio, value, length);
+	free(value);
+	return bio;
+}
+#endif /* ANDROID */
 
 static int tls_openssl_ref_count = 0;
 

@@ -48,11 +48,7 @@
  * How many seconds to try to reconnect to the GO when connection in P2P client
  * role has been lost.
  */
-#ifdef ANDROID_P2P
-#define P2P_MAX_CLIENT_IDLE 20
-#else
 #define P2P_MAX_CLIENT_IDLE 10
-#endif /* ANDROID_P2P */
 #endif /* P2P_MAX_CLIENT_IDLE */
 
 #ifndef P2P_MAX_INITIAL_CONN_WAIT
