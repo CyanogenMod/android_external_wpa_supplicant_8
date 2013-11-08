@@ -572,6 +572,7 @@ static int wpa_supplicant_ctrl_iface_tdls_teardown(
 	struct wpa_supplicant *wpa_s, char *addr)
 {
 	u8 peer[ETH_ALEN];
+	int ret;
 
 	if (hwaddr_aton(addr, peer)) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN: invalid "
@@ -582,8 +583,14 @@ static int wpa_supplicant_ctrl_iface_tdls_teardown(
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN " MACSTR,
 		   MAC2STR(peer));
 
-	return wpa_tdls_teardown_link(wpa_s->wpa, peer,
-				      WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
+	if (wpa_tdls_is_external_setup(wpa_s->wpa))
+		ret = wpa_tdls_teardown_link(
+			wpa_s->wpa, peer,
+			WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
+	else
+		ret = wpa_drv_tdls_oper(wpa_s, TDLS_TEARDOWN, peer);
+
+	return ret;
 }
 
 #endif /* CONFIG_TDLS */
@@ -2015,6 +2022,8 @@ static int wpa_supplicant_ctrl_iface_scan_result(
 	const u8 *ie, *ie2, *p2p;
 
 	p2p = wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE);
+	if (!p2p)
+		p2p = wpa_bss_get_vendor_ie_beacon(bss, P2P_IE_VENDOR_TYPE);
 	if (p2p && bss->ssid_len == P2P_WILDCARD_SSID_LEN &&
 	    os_memcmp(bss->ssid, P2P_WILDCARD_SSID, P2P_WILDCARD_SSID_LEN) ==
 	    0)
@@ -3259,7 +3268,8 @@ static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 				return 0;
 			pos += ret;
 		}
-		if (wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE)) {
+		if (wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) ||
+		    wpa_bss_get_vendor_ie_beacon(bss, P2P_IE_VENDOR_TYPE)) {
 			ret = os_snprintf(pos, end - pos, "[P2P]");
 			if (ret < 0 || ret >= end - pos)
 				return 0;
@@ -4202,7 +4212,8 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL,
+					     0);
 }
 
 
