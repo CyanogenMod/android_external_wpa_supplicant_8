@@ -1552,6 +1552,12 @@ include $(BUILD_EXECUTABLE)
 
 ########################
 include $(CLEAR_VARS)
+
+
+ifeq ($(BOARD_NEEDS_WIFI_DELAY),true)
+L_CFLAGS += -DNEED_WIFI_DELAY
+endif
+
 LOCAL_MODULE := wpa_supplicant
 ifdef CONFIG_DRIVER_CUSTOM
 LOCAL_STATIC_LIBRARIES := libCustomWifi
