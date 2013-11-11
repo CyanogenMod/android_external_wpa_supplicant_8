@@ -1145,16 +1145,6 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 		}
 	}
 
-#ifdef ANDROID_P2P
-	if (msg.operating_channel) {
-		dev->oper_freq = p2p_channel_to_freq(msg.operating_channel[3],
-						     msg.operating_channel[4]);
-		p2p_dbg(p2p, "P2P: Peer operating channel preference: %d MHz",
-			dev->oper_freq);
-	} else
-		dev->oper_freq = 0;
-#endif
-
 	if (!msg.channel_list) {
 		p2p_dbg(p2p, "Mandatory Operating Channel attribute missing from GO Negotiation Confirmation");
 #ifdef CONFIG_P2P_STRICT
