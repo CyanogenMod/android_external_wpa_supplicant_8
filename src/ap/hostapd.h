@@ -355,7 +355,7 @@ int hostapd_reload_iface(struct hostapd_iface *hapd_iface);
 int hostapd_disable_iface(struct hostapd_iface *hapd_iface);
 int hostapd_add_iface(struct hapd_interfaces *ifaces, char *buf);
 int hostapd_remove_iface(struct hapd_interfaces *ifaces, char *buf);
-void hostapd_channel_list_updated(struct hostapd_iface *iface);
+void hostapd_channel_list_updated(struct hostapd_iface *iface, int initiator);
 
 /* utils.c */
 int hostapd_register_probereq_cb(struct hostapd_data *hapd,
