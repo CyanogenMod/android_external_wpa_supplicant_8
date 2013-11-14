@@ -2126,12 +2126,7 @@ static void ieee802_1x_finished(struct hostapd_data *hapd,
 		 * driver reorder operations.
 		 */
 		os_sleep(0, 10000);
-#ifndef ANDROID_P2P
-		/* We need not do this for driver. For AP-SME flags if we send this disassoc,
-		  * the p2p_client is gettig disassoc after it has completed the assoc
-		  */
 		ap_sta_disconnect(hapd, sta, sta->addr,
 				  WLAN_REASON_IEEE_802_1X_AUTH_FAILED);
-#endif
 	}
 }
