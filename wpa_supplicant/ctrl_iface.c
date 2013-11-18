@@ -117,7 +117,7 @@ static int pno_start(struct wpa_supplicant *wpa_s)
 	interval = wpa_s->conf->sched_scan_interval ?
 		wpa_s->conf->sched_scan_interval : 10;
 
-	ret = wpa_drv_sched_scan(wpa_s, &params, interval * 1000);
+	ret = wpa_supplicant_start_sched_scan(wpa_s, &params, interval);
 	os_free(params.filter_ssids);
 	if (ret == 0)
 		wpa_s->pno = 1;
@@ -131,7 +131,7 @@ static int pno_stop(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->pno) {
 		wpa_s->pno = 0;
-		ret = wpa_drv_stop_sched_scan(wpa_s);
+		ret = wpa_supplicant_stop_sched_scan(wpa_s);
 	}
 
 	if (wpa_s->wpa_state == WPA_SCANNING)
@@ -571,6 +571,10 @@ static int wpa_supplicant_ctrl_iface_tdls_setup(
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_SETUP " MACSTR,
 		   MAC2STR(peer));
 
+	if ((wpa_s->conf->tdls_external_control) &&
+	    wpa_tdls_is_external_setup(wpa_s->wpa))
+		return wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, peer);
+
 	wpa_tdls_remove(wpa_s->wpa, peer);
 
 	if (wpa_tdls_is_external_setup(wpa_s->wpa))
@@ -596,6 +600,10 @@ static int wpa_supplicant_ctrl_iface_tdls_teardown(
 
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN " MACSTR,
 		   MAC2STR(peer));
+
+	if ((wpa_s->conf->tdls_external_control) &&
+	    wpa_tdls_is_external_setup(wpa_s->wpa))
+		return wpa_drv_tdls_oper(wpa_s, TDLS_TEARDOWN, peer);
 
 	if (wpa_tdls_is_external_setup(wpa_s->wpa))
 		ret = wpa_tdls_teardown_link(
@@ -1629,14 +1637,15 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		     MAC2STR(wpa_s->bssid),
 		     wpa_s->current_ssid && wpa_s->current_ssid->ssid ?
 		     wpa_ssid_txt(wpa_s->current_ssid->ssid,
-		     wpa_s->current_ssid->ssid_len) : "");
+				  wpa_s->current_ssid->ssid_len) : "");
 	if (wpa_s->wpa_state == WPA_COMPLETED) {
 		struct wpa_ssid *ssid = wpa_s->current_ssid;
-		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED "- connection to "
-			MACSTR " completed %s [id=%d id_str=%s]",
-			MAC2STR(wpa_s->bssid), "(auth)",
-			ssid ? ssid->id : -1,
-			ssid && ssid->id_str ? ssid->id_str : "");
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_CONNECTED
+			     "- connection to " MACSTR
+			     " completed %s [id=%d id_str=%s]",
+			     MAC2STR(wpa_s->bssid), "(auth)",
+			     ssid ? ssid->id : -1,
+			     ssid && ssid->id_str ? ssid->id_str : "");
 	}
 #endif /* ANDROID */
 
@@ -5716,6 +5725,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 			reply_len = -1;
 	} else if (os_strncmp(buf, "DISASSOCIATE ", 13) == 0) {
 		if (ap_ctrl_iface_sta_disassociate(wpa_s, buf + 13))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {
+		if (ap_ctrl_iface_chanswitch(wpa_s, buf + 12))
 			reply_len = -1;
 #endif /* CONFIG_AP */
 	} else if (os_strcmp(buf, "SUSPEND") == 0) {

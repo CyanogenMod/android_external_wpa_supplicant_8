@@ -42,6 +42,13 @@
 #define HOSTAPD_CHAN_VHT_50_30 0x00002000
 #define HOSTAPD_CHAN_VHT_70_10 0x00004000
 
+enum reg_change_initiator {
+	REGDOM_SET_BY_CORE,
+	REGDOM_SET_BY_USER,
+	REGDOM_SET_BY_DRIVER,
+	REGDOM_SET_BY_COUNTRY_IE,
+};
+
 /**
  * struct hostapd_channel_data - Channel information
  */
@@ -627,7 +634,7 @@ struct wpa_driver_ap_params {
 	/**
 	 * head - Beacon head from IEEE 802.11 header to IEs before TIM IE
 	 */
-	const u8 *head;
+	u8 *head;
 
 	/**
 	 * head_len - Length of the head buffer in octets
@@ -637,7 +644,7 @@ struct wpa_driver_ap_params {
 	/**
 	 * tail - Beacon tail following TIM IE
 	 */
-	const u8 *tail;
+	u8 *tail;
 
 	/**
 	 * tail_len - Length of the tail buffer in octets
@@ -668,7 +675,7 @@ struct wpa_driver_ap_params {
 	 * This is used by drivers that reply to Probe Requests internally in
 	 * AP mode and require the full Probe Response template.
 	 */
-	const u8 *proberesp;
+	u8 *proberesp;
 
 	/**
 	 * proberesp_len - Length of the proberesp buffer in octets
@@ -1154,6 +1161,59 @@ struct wpa_signal_info {
 	enum chan_width chanwidth;
 	int center_frq1;
 	int center_frq2;
+};
+
+/**
+ * struct beacon_data - Beacon data
+ * @head: Head portion of Beacon frame (before TIM IE)
+ * @tail: Tail portion of Beacon frame (after TIM IE)
+ * @beacon_ies: Extra information element(s) to add into Beacon frames or %NULL
+ * @proberesp_ies: Extra information element(s) to add into Probe Response
+ *	frames or %NULL
+ * @assocresp_ies: Extra information element(s) to add into (Re)Association
+ *	Response frames or %NULL
+ * @probe_resp: Probe Response frame template
+ * @head_len: Length of @head
+ * @tail_len: Length of @tail
+ * @beacon_ies_len: Length of beacon_ies in octets
+ * @proberesp_ies_len: Length of proberesp_ies in octets
+ * @proberesp_ies_len: Length of proberesp_ies in octets
+ * @probe_resp_len: Length of probe response template (@probe_resp)
+ */
+struct beacon_data {
+	u8 *head, *tail;
+	u8 *beacon_ies;
+	u8 *proberesp_ies;
+	u8 *assocresp_ies;
+	u8 *probe_resp;
+
+	size_t head_len, tail_len;
+	size_t beacon_ies_len;
+	size_t proberesp_ies_len;
+	size_t assocresp_ies_len;
+	size_t probe_resp_len;
+};
+
+/**
+ * struct csa_settings - Settings for channel switch command
+ * @cs_count: Count in Beacon frames (TBTT) to perform the switch
+ * @block_tx: 1 - block transmission for CSA period
+ * @freq_params: Next channel frequency parameter
+ * @beacon_csa: Beacon/probe resp/asooc resp info for CSA period
+ * @beacon_after: Next beacon/probe resp/asooc resp info
+ * @counter_offset_beacon: Offset to the count field in beacon's tail
+ * @counter_offset_presp: Offset to the count field in probe resp.
+ */
+struct csa_settings {
+	u8 cs_count;
+	u8 block_tx;
+
+	struct hostapd_freq_params freq_params;
+	struct beacon_data beacon_csa;
+	struct beacon_data beacon_after;
+
+	u16 counter_offset_beacon;
+	u16 counter_offset_presp;
 };
 
 /**
@@ -2758,13 +2818,13 @@ struct wpa_driver_ops {
 	 * switch_channel - Announce channel switch and migrate the GO to the
 	 * given frequency
 	 * @priv: Private driver interface data
-	 * @freq: Frequency in MHz
+	 * @settings: Settings for CSA period and new channel
 	 * Returns: 0 on success, -1 on failure
 	 *
 	 * This function is used to move the GO to the legacy STA channel to
 	 * avoid frequency conflict in single channel concurrency.
 	 */
-	int (*switch_channel)(void *priv, unsigned int freq);
+	int (*switch_channel)(void *priv, struct csa_settings *settings);
 
 	/**
 	 * start_dfs_cac - Listen for radar interference on the channel
@@ -4010,6 +4070,14 @@ union wpa_event_data {
 		unsigned int freq_filter;
 		struct dl_list survey_list; /* struct freq_survey */
 	} survey_results;
+
+	/**
+	 * channel_list_changed - Data for EVENT_CHANNEL_LIST_CHANGED
+	 * @initiator: Initiator of the regulatory change
+	 */
+	struct channel_list_changed {
+		enum reg_change_initiator initiator;
+	} channel_list_changed;
 };
 
 /**

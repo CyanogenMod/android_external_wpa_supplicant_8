@@ -203,13 +203,34 @@ static u8 * hostapd_eid_wpa(struct hostapd_data *hapd, u8 *eid, size_t len)
 }
 
 
+static u8 * hostapd_eid_csa(struct hostapd_data *hapd, u8 *eid)
+{
+	u8 chan;
+
+	if (!hapd->iface->cs_freq)
+		return eid;
+
+	if (ieee80211_freq_to_chan(hapd->iface->cs_freq, &chan) ==
+	    NUM_HOSTAPD_MODES)
+		return eid;
+
+	*eid++ = WLAN_EID_CHANNEL_SWITCH;
+	*eid++ = 3;
+	*eid++ = hapd->iface->cs_block_tx;
+	*eid++ = chan;
+	*eid++ = hapd->iface->cs_count;
+
+	return eid;
+}
+
+
 static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 				   struct sta_info *sta,
 				   const struct ieee80211_mgmt *req,
 				   int is_p2p, size_t *resp_len)
 {
 	struct ieee80211_mgmt *resp;
-	u8 *pos, *epos;
+	u8 *pos, *epos, *old_pos;
 	size_t buflen;
 
 #define MAX_PROBERESP_LEN 768
@@ -282,6 +303,13 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 	pos = hostapd_eid_interworking(hapd, pos);
 	pos = hostapd_eid_adv_proto(hapd, pos);
 	pos = hostapd_eid_roaming_consortium(hapd, pos);
+
+	old_pos = pos;
+	pos = hostapd_eid_csa(hapd, pos);
+
+	/* save an offset to the counter - should be last byte */
+	hapd->iface->cs_c_off_proberesp = (pos != old_pos) ?
+		pos - (u8 *) resp - 1 : 0;
 
 #ifdef CONFIG_IEEE80211AC
 	pos = hostapd_eid_vht_capabilities(hapd, pos);
@@ -588,23 +616,17 @@ static u8 * hostapd_probe_resp_offloads(struct hostapd_data *hapd,
 #endif /* NEED_AP_MLME */
 
 
-void ieee802_11_set_beacon(struct hostapd_data *hapd)
+int ieee802_11_build_ap_params(struct hostapd_data *hapd,
+			       struct wpa_driver_ap_params *params)
 {
 	struct ieee80211_mgmt *head = NULL;
 	u8 *tail = NULL;
 	size_t head_len = 0, tail_len = 0;
 	u8 *resp = NULL;
 	size_t resp_len = 0;
-	struct wpa_driver_ap_params params;
-	struct wpabuf *beacon, *proberesp, *assocresp;
 #ifdef NEED_AP_MLME
 	u16 capab_info;
-	u8 *pos, *tailpos;
-#endif /* NEED_AP_MLME */
-
-	hapd->beacon_set_done = 1;
-
-#ifdef NEED_AP_MLME
+	u8 *pos, *tailpos, *old_pos;
 
 #define BEACON_HEAD_BUF_SIZE 256
 #define BEACON_TAIL_BUF_SIZE 512
@@ -625,7 +647,7 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 		wpa_printf(MSG_ERROR, "Failed to set beacon data");
 		os_free(head);
 		os_free(tail);
-		return;
+		return -1;
 	}
 
 	head->frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT,
@@ -699,6 +721,10 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 	tailpos = hostapd_eid_interworking(hapd, tailpos);
 	tailpos = hostapd_eid_adv_proto(hapd, tailpos);
 	tailpos = hostapd_eid_roaming_consortium(hapd, tailpos);
+	old_pos = tailpos;
+	tailpos = hostapd_eid_csa(hapd, tailpos);
+	hapd->iface->cs_c_off_beacon = (old_pos != tailpos) ?
+		tailpos - tail - 1 : 0;
 
 #ifdef CONFIG_IEEE80211AC
 	tailpos = hostapd_eid_vht_capabilities(hapd, tailpos);
@@ -744,76 +770,108 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 	resp = hostapd_probe_resp_offloads(hapd, &resp_len);
 #endif /* NEED_AP_MLME */
 
-	os_memset(&params, 0, sizeof(params));
-	params.head = (u8 *) head;
-	params.head_len = head_len;
-	params.tail = tail;
-	params.tail_len = tail_len;
-	params.proberesp = resp;
-	params.proberesp_len = resp_len;
-	params.dtim_period = hapd->conf->dtim_period;
-	params.beacon_int = hapd->iconf->beacon_int;
-	params.basic_rates = hapd->iface->basic_rates;
-	params.ssid = hapd->conf->ssid.ssid;
-	params.ssid_len = hapd->conf->ssid.ssid_len;
-	params.pairwise_ciphers = hapd->conf->rsn_pairwise ?
+	os_memset(params, 0, sizeof(*params));
+	params->head = (u8 *) head;
+	params->head_len = head_len;
+	params->tail = tail;
+	params->tail_len = tail_len;
+	params->proberesp = resp;
+	params->proberesp_len = resp_len;
+	params->dtim_period = hapd->conf->dtim_period;
+	params->beacon_int = hapd->iconf->beacon_int;
+	params->basic_rates = hapd->iface->basic_rates;
+	params->ssid = hapd->conf->ssid.ssid;
+	params->ssid_len = hapd->conf->ssid.ssid_len;
+	params->pairwise_ciphers = hapd->conf->rsn_pairwise ?
 		hapd->conf->rsn_pairwise : hapd->conf->wpa_pairwise;
-	params.group_cipher = hapd->conf->wpa_group;
-	params.key_mgmt_suites = hapd->conf->wpa_key_mgmt;
-	params.auth_algs = hapd->conf->auth_algs;
-	params.wpa_version = hapd->conf->wpa;
-	params.privacy = hapd->conf->ssid.wep.keys_set || hapd->conf->wpa ||
+	params->group_cipher = hapd->conf->wpa_group;
+	params->key_mgmt_suites = hapd->conf->wpa_key_mgmt;
+	params->auth_algs = hapd->conf->auth_algs;
+	params->wpa_version = hapd->conf->wpa;
+	params->privacy = hapd->conf->ssid.wep.keys_set || hapd->conf->wpa ||
 		(hapd->conf->ieee802_1x &&
 		 (hapd->conf->default_wep_key_len ||
 		  hapd->conf->individual_wep_key_len));
 	switch (hapd->conf->ignore_broadcast_ssid) {
 	case 0:
-		params.hide_ssid = NO_SSID_HIDING;
+		params->hide_ssid = NO_SSID_HIDING;
 		break;
 	case 1:
-		params.hide_ssid = HIDDEN_SSID_ZERO_LEN;
+		params->hide_ssid = HIDDEN_SSID_ZERO_LEN;
 		break;
 	case 2:
-		params.hide_ssid = HIDDEN_SSID_ZERO_CONTENTS;
+		params->hide_ssid = HIDDEN_SSID_ZERO_CONTENTS;
 		break;
 	}
-	hostapd_build_ap_extra_ies(hapd, &beacon, &proberesp, &assocresp);
-	params.beacon_ies = beacon;
-	params.proberesp_ies = proberesp;
-	params.assocresp_ies = assocresp;
-	params.isolate = hapd->conf->isolate;
+	params->isolate = hapd->conf->isolate;
 #ifdef NEED_AP_MLME
-	params.cts_protect = !!(ieee802_11_erp_info(hapd) &
+	params->cts_protect = !!(ieee802_11_erp_info(hapd) &
 				ERP_INFO_USE_PROTECTION);
-	params.preamble = hapd->iface->num_sta_no_short_preamble == 0 &&
+	params->preamble = hapd->iface->num_sta_no_short_preamble == 0 &&
 		hapd->iconf->preamble == SHORT_PREAMBLE;
 	if (hapd->iface->current_mode &&
 	    hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G)
-		params.short_slot_time =
+		params->short_slot_time =
 			hapd->iface->num_sta_no_short_slot_time > 0 ? 0 : 1;
 	else
-		params.short_slot_time = -1;
+		params->short_slot_time = -1;
 	if (!hapd->iconf->ieee80211n || hapd->conf->disable_11n)
-		params.ht_opmode = -1;
+		params->ht_opmode = -1;
 	else
-		params.ht_opmode = hapd->iface->ht_op_mode;
+		params->ht_opmode = hapd->iface->ht_op_mode;
 #endif /* NEED_AP_MLME */
-	params.interworking = hapd->conf->interworking;
+	params->interworking = hapd->conf->interworking;
 	if (hapd->conf->interworking &&
 	    !is_zero_ether_addr(hapd->conf->hessid))
-		params.hessid = hapd->conf->hessid;
-	params.access_network_type = hapd->conf->access_network_type;
-	params.ap_max_inactivity = hapd->conf->ap_max_inactivity;
+		params->hessid = hapd->conf->hessid;
+	params->access_network_type = hapd->conf->access_network_type;
+	params->ap_max_inactivity = hapd->conf->ap_max_inactivity;
 #ifdef CONFIG_HS20
-	params.disable_dgaf = hapd->conf->disable_dgaf;
+	params->disable_dgaf = hapd->conf->disable_dgaf;
 #endif /* CONFIG_HS20 */
+	return 0;
+}
+
+
+void ieee802_11_free_ap_params(struct wpa_driver_ap_params *params)
+{
+	os_free(params->tail);
+	params->tail = NULL;
+	os_free(params->head);
+	params->head = NULL;
+	os_free(params->proberesp);
+	params->proberesp = NULL;
+}
+
+
+void ieee802_11_set_beacon(struct hostapd_data *hapd)
+{
+	struct wpa_driver_ap_params params;
+	struct wpabuf *beacon, *proberesp, *assocresp;
+
+	if (hapd->iface->csa_in_progress) {
+		wpa_printf(MSG_ERROR, "Cannot set beacons during CSA period");
+		return;
+	}
+
+	hapd->beacon_set_done = 1;
+
+	if (ieee802_11_build_ap_params(hapd, &params) < 0)
+		return;
+
+	if (hostapd_build_ap_extra_ies(hapd, &beacon, &proberesp, &assocresp) <
+	    0)
+		goto fail;
+
+	params.beacon_ies = beacon;
+	params.proberesp_ies = proberesp;
+	params.assocresp_ies = assocresp;
+
 	if (hostapd_drv_set_ap(hapd, &params))
 		wpa_printf(MSG_ERROR, "Failed to set beacon parameters");
 	hostapd_free_ap_extra_ies(hapd, beacon, proberesp, assocresp);
-
-	os_free(tail);
-	os_free(head);
-	os_free(resp);
+fail:
+	ieee802_11_free_ap_params(&params);
 }
 
 

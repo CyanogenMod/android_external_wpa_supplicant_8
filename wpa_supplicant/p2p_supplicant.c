@@ -2877,10 +2877,11 @@ static void wpas_remove_persistent_client(struct wpa_supplicant *wpa_s,
 
 static void wpas_invitation_result(void *ctx, int status, const u8 *bssid,
 				   const struct p2p_channels *channels,
-				   const u8 *peer)
+				   const u8 *peer, int neg_freq)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	struct wpa_ssid *ssid;
+	int freq;
 
 	if (bssid) {
 		wpa_msg_global(wpa_s, MSG_INFO, P2P_EVENT_INVITATION_RESULT
@@ -2942,9 +2943,17 @@ static void wpas_invitation_result(void *ctx, int status, const u8 *bssid,
 	os_sleep(0, 100000);
 #endif
 
+	freq = wpa_s->p2p_persistent_go_freq;
+	if (neg_freq > 0 && ssid->mode == WPAS_MODE_P2P_GO &&
+	    freq_included(channels, neg_freq)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Use frequence %d MHz from invitation for GO mode",
+			neg_freq);
+		freq = neg_freq;
+	}
+
 	wpas_p2p_group_add_persistent(wpa_s, ssid,
 				      ssid->mode == WPAS_MODE_P2P_GO,
-				      wpa_s->p2p_persistent_go_freq,
+				      freq,
 				      wpa_s->p2p_go_ht40, wpa_s->p2p_go_vht,
 				      channels,
 				      ssid->mode == WPAS_MODE_P2P_GO ?
@@ -4203,28 +4212,24 @@ static int wpas_p2p_setup_freqs(struct wpa_supplicant *wpa_s, int freq,
 		if (!p2p_supported_freq(wpa_s->global->p2p, freqs[i]))
 			continue;
 
-#ifndef ANDROID_P2P
-		wpa_printf(MSG_DEBUG, "P2P: Try to force us to use frequency (%u MHz) which is already in use",
-			   *force_freq);
-		*force_freq = freqs[i];
-#endif
-
 		if (*pref_freq == 0 && num < wpa_s->num_multichan_concurrent) {
-			wpa_printf(MSG_DEBUG, "P2P: Try to prefer a frequency we are already using");
+			wpa_printf(MSG_DEBUG, "P2P: Try to prefer a frequency (%u MHz) we are already using",
+				   freqs[i]);
 			*pref_freq = freqs[i];
-#ifdef ANDROID_P2P
 		} else {
 			wpa_printf(MSG_DEBUG, "P2P: Try to force us to use frequency (%u MHz) which is already in use",
-				   *force_freq);
+				   freqs[i]);
 			*force_freq = freqs[i];
-#endif
 		}
 		break;
 	}
 
 	if (i == num) {
-		if (num < wpa_s->num_multichan_concurrent) {
+		if (num < wpa_s->num_multichan_concurrent && num > 0) {
 			wpa_printf(MSG_DEBUG, "P2P: Current operating channels are not available for P2P. Try to use another channel");
+			*force_freq = 0;
+		} else if (num < wpa_s->num_multichan_concurrent) {
+			wpa_printf(MSG_DEBUG, "P2P: No current operating channels - try to use a new channel");
 			*force_freq = 0;
 		} else {
 			wpa_printf(MSG_DEBUG, "P2P: All channels are in use and none of them are P2P enabled. Cannot start P2P group");
@@ -4656,41 +4661,32 @@ static int wpas_p2p_init_go_params(struct wpa_supplicant *wpa_s,
 	}
 	num = res;
 
-	if (!freq) {
-		for (i = 0; i < num; i++) {
-			if (freq_included(channels, freqs[i])) {
-				wpa_printf(MSG_DEBUG, "P2P: Force GO on a channel we are already using (%u MHz)",
-					   freqs[i]);
-				params->freq = freqs[i];
-				break;
-			}
-		}
-
-		if (i == num) {
-			if (wpas_p2p_num_unused_channels(wpa_s) <= 0) {
-				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on any of the channels we are already using");
-				os_free(freqs);
-				return -1;
-			} else {
-				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on any of the channels we are already using. Use one of the free channels");
-			}
-		}
-	} else {
-		for (i = 0; i < num; i++) {
-			if (freqs[i] == freq)
-				break;
-		}
-
-		if (i == num) {
-			if (wpas_p2p_num_unused_channels(wpa_s) <= 0) {
-				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on freq (%u MHz) as all the channels are in use", freq);
-				os_free(freqs);
-				return -1;
-			} else {
-				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on any of the channels we are already using. Use one of the free channels");
-			}
+	for (i = 0; i < num; i++) {
+		if (freq && freqs[i] == freq)
+			break;
+		if (!freq && freq_included(channels, freqs[i])) {
+			wpa_printf(MSG_DEBUG, "P2P: Force GO on a channel we are already using (%u MHz)",
+				   freqs[i]);
+			params->freq = freqs[i];
+			break;
 		}
 	}
+
+	if (i == num) {
+		if (wpas_p2p_num_unused_channels(wpa_s) <= 0) {
+			if (freq)
+				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on freq (%u MHz) as all the channels are in use", freq);
+			else
+				wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on any of the channels we are already using");
+			os_free(freqs);
+			return -1;
+		} else if (num == 0) {
+			wpa_printf(MSG_DEBUG, "P2P: Use one of the free channels");
+		} else {
+			wpa_printf(MSG_DEBUG, "P2P: Cannot force GO on any of the channels we are already using. Use one of the free channels");
+		}
+	}
+
 	os_free(freqs);
 	return 0;
 }

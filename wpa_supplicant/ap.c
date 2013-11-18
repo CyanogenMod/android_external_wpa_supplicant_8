@@ -1058,6 +1058,32 @@ int wpa_supplicant_ap_update_beacon(struct wpa_supplicant *wpa_s)
 }
 
 
+int ap_switch_channel(struct wpa_supplicant *wpa_s,
+		      struct csa_settings *settings)
+{
+#ifdef NEED_AP_MLME
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return -1;
+
+	return hostapd_switch_channel(wpa_s->ap_iface->bss[0], settings);
+#else /* NEED_AP_MLME */
+	return -1;
+#endif /* NEED_AP_MLME */
+}
+
+
+int ap_ctrl_iface_chanswitch(struct wpa_supplicant *wpa_s, const char *pos)
+{
+	struct csa_settings settings;
+	int ret = hostapd_parse_csa_settings(pos, &settings);
+
+	if (ret)
+		return ret;
+
+	return ap_switch_channel(wpa_s, &settings);
+}
+
+
 void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
 		       int offset)
 {

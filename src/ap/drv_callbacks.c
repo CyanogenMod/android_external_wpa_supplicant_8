@@ -403,6 +403,13 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	hapd->iconf->channel = channel;
 	hapd->iconf->ieee80211n = ht;
 	hapd->iconf->secondary_channel = offset;
+
+	if (hapd->iface->csa_in_progress && freq == hapd->iface->cs_freq) {
+		hostapd_cleanup_cs_params(hapd);
+
+		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED "freq=%d",
+			freq);
+	}
 #endif /* NEED_AP_MLME */
 }
 
@@ -1007,7 +1014,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		/* TODO: check this. hostapd_get_hw_features() initializes
 		 * too much stuff. */
 		/* hostapd_get_hw_features(hapd->iface); */
-		hostapd_channel_list_updated(hapd->iface);
+		hostapd_channel_list_updated(
+			hapd->iface, data->channel_list_changed.initiator);
 		break;
 #endif /* NEED_AP_MLME */
 	default:

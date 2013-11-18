@@ -261,10 +261,9 @@ wpa_supplicant_sched_scan_timeout(void *eloop_ctx, void *timeout_ctx)
 }
 
 
-static int
-wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
-				struct wpa_driver_scan_params *params,
-				int interval)
+int wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
+				    struct wpa_driver_scan_params *params,
+				    int interval)
 {
 	int ret;
 
@@ -279,7 +278,7 @@ wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
 }
 
 
-static int wpa_supplicant_stop_sched_scan(struct wpa_supplicant *wpa_s)
+int wpa_supplicant_stop_sched_scan(struct wpa_supplicant *wpa_s)
 {
 	int ret;
 
@@ -566,13 +565,17 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
-#ifdef ANDROID
+
 	if (wpa_s->scanning) {
-		/* If we are already in scanning state, we shall ignore this new scan request*/
-		wpa_dbg(wpa_s, MSG_DEBUG, "Skip scan - already scanning");
+		/*
+		 * If we are already in scanning state, we shall reschedule the
+		 * the incoming scan request.
+		 */
+		wpa_dbg(wpa_s, MSG_DEBUG, "Already scanning - Reschedule the incoming scan req");
+		wpa_supplicant_req_scan(wpa_s, 1, 0);
 		return;
 	}
-#endif
+
 	if (!wpa_supplicant_enabled_networks(wpa_s) &&
 	    wpa_s->scan_req == NORMAL_SCAN_REQ) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks - do not scan");
@@ -913,27 +916,11 @@ void wpa_supplicant_update_scan_int(struct wpa_supplicant *wpa_s, int sec)
  */
 void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 {
-	/* If there's at least one network that should be specifically scanned
-	 * then don't cancel the scan and reschedule.  Some drivers do
-	 * background scanning which generates frequent scan results, and that
-	 * causes the specific SSID scan to get continually pushed back and
-	 * never happen, which causes hidden APs to never get probe-scanned.
-	 */
-	if (eloop_is_timeout_registered(wpa_supplicant_scan, wpa_s, NULL) &&
-	    wpa_s->conf->ap_scan == 1) {
-		struct wpa_ssid *ssid = wpa_s->conf->ssid;
-
-		while (ssid) {
-			if (!wpas_network_disabled(wpa_s, ssid) &&
-			    ssid->scan_ssid)
-				break;
-			ssid = ssid->next;
-		}
-		if (ssid) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Not rescheduling scan to "
-			        "ensure that specific SSID scans occur");
-			return;
-		}
+	if (eloop_deplete_timeout(sec, usec, wpa_supplicant_scan, wpa_s, NULL))
+	{
+		wpa_dbg(wpa_s, MSG_DEBUG, "Rescheduling scan request: %d sec %d usec",
+			sec, usec);
+		return;
 	}
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Setting scan request: %d sec %d usec",
