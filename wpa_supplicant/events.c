@@ -160,9 +160,6 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 		return;
 
 	wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
-#ifdef ANDROID
-	wpa_s->conf->ap_scan = DEFAULT_AP_SCAN;
-#endif
 	bssid_changed = !is_zero_ether_addr(wpa_s->bssid);
 	os_memset(wpa_s->bssid, 0, ETH_ALEN);
 	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
