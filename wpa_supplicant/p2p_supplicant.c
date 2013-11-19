@@ -4231,7 +4231,8 @@ int wpas_p2p_connect(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 	res = wpas_p2p_setup_freqs(wpa_s, freq, &force_freq, &pref_freq);
 	if (res)
 		return res;
-	wpas_p2p_set_own_freq_preference(wpa_s, force_freq);
+	wpas_p2p_set_own_freq_preference(wpa_s,
+					 force_freq ? force_freq : pref_freq);
 
 	wpa_s->create_p2p_iface = wpas_p2p_create_iface(wpa_s);
 
