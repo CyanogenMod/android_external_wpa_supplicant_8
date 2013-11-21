@@ -1353,10 +1353,12 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 			if (wpas_p2p_scan_no_go_seen(wpa_s) == 1)
 				return 0;
 
-			if (wpa_s->p2p_in_provisioning) {
+			if (wpa_s->p2p_in_provisioning ||
+			    wpa_s->show_group_started) {
 				/*
 				 * Use shorter wait during P2P Provisioning
-				 * state to speed up group formation.
+				 * state and during P2P join-a-group operation
+				 * to speed up group formation.
 				 */
 				timeout_sec = 0;
 				timeout_usec = 250000;
@@ -3077,12 +3079,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		if (data->rx_action.category == WLAN_ACTION_QOS &&
 		    data->rx_action.len >= 1 &&
 		    data->rx_action.data[0] == QOS_QOS_MAP_CONFIG) {
+			const u8 *pos = data->rx_action.data + 1;
+			size_t len = data->rx_action.len - 1;
 			wpa_dbg(wpa_s, MSG_DEBUG, "Interworking: Received QoS Map Configure frame from "
 				MACSTR, MAC2STR(data->rx_action.sa));
-			if (os_memcmp(data->rx_action.sa, wpa_s->bssid, ETH_ALEN)
-			    == 0)
-				wpas_qos_map_set(wpa_s, data->rx_action.data + 1,
-						 data->rx_action.len - 1);
+			if (os_memcmp(data->rx_action.sa, wpa_s->bssid,
+				      ETH_ALEN) == 0 &&
+			    len > 2 && pos[0] == WLAN_EID_QOS_MAP_SET &&
+			    pos[1] <= len - 2 && pos[1] >= 16)
+				wpas_qos_map_set(wpa_s, pos + 2, pos[1]);
 			break;
 		}
 #endif /* CONFIG_INTERWORKING */

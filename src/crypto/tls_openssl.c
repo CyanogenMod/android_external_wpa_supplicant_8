@@ -1141,6 +1141,7 @@ static int tls_match_altsubject(X509 *cert, const char *match)
 }
 
 
+#ifndef CONFIG_NATIVE_WINDOWS
 static int domain_suffix_match(const u8 *val, size_t len, const char *match)
 {
 	size_t i, match_len;
@@ -1170,10 +1171,15 @@ static int domain_suffix_match(const u8 *val, size_t len, const char *match)
 	wpa_printf(MSG_DEBUG, "TLS: Reject due to incomplete label match");
 	return 0;
 }
+#endif /* CONFIG_NATIVE_WINDOWS */
 
 
 static int tls_match_suffix(X509 *cert, const char *match)
 {
+#ifdef CONFIG_NATIVE_WINDOWS
+	/* wincrypt.h has conflicting X509_NAME definition */
+	return -1;
+#else /* CONFIG_NATIVE_WINDOWS */
 	GENERAL_NAME *gen;
 	void *ext;
 	int i;
@@ -1229,6 +1235,7 @@ static int tls_match_suffix(X509 *cert, const char *match)
 
 	wpa_printf(MSG_DEBUG, "TLS: No CommonName suffix match found");
 	return 0;
+#endif /* CONFIG_NATIVE_WINDOWS */
 }
 
 
@@ -3065,7 +3072,6 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 {
 	int ret;
 	unsigned long err;
-	SSL_CTX *ssl_ctx = tls_ctx;
 
 	if (conn == NULL)
 		return -1;
@@ -3138,6 +3144,7 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 
 #ifdef HAVE_OCSP
 	if (params->flags & TLS_CONN_REQUEST_OCSP) {
+		SSL_CTX *ssl_ctx = tls_ctx;
 		SSL_set_tlsext_status_type(conn->ssl, TLSEXT_STATUSTYPE_ocsp);
 		SSL_CTX_set_tlsext_status_cb(ssl_ctx, ocsp_resp_cb);
 		SSL_CTX_set_tlsext_status_arg(ssl_ctx, conn);
