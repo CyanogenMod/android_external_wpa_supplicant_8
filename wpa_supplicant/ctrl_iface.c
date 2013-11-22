@@ -5176,11 +5176,11 @@ static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 				p2p_set_country(p2p, country);
 			}
 		}
-		ret = sprintf(buf, "%s\n", "OK");
+		ret = os_snprintf(buf, buflen, "%s\n", "OK");
 	}
 	return ret;
 }
-#endif
+#endif /* ANDROID */
 
 
 static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
@@ -5778,7 +5778,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "DRIVER ", 7) == 0) {
 		reply_len = wpa_supplicant_driver_cmd(wpa_s, buf + 7, reply,
 						      reply_size);
-#endif
+#endif /* ANDROID */
 	} else if (os_strcmp(buf, "REAUTHENTICATE") == 0) {
 		pmksa_cache_clear_current(wpa_s->wpa);
 		eapol_sm_request_reauth(wpa_s->eapol);

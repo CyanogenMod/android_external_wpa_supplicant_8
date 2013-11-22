@@ -673,7 +673,7 @@ static inline int wpa_drv_driver_cmd(struct wpa_supplicant *wpa_s,
 		return -1;
 	return wpa_s->driver->driver_cmd(wpa_s->drv_priv, cmd, buf, buf_len);
 }
-#endif
+#endif /* ANDROID */
 
 static inline void wpa_drv_set_rekey_info(struct wpa_supplicant *wpa_s,
 					  const u8 *kek, const u8 *kck,
