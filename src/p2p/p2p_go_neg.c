@@ -418,13 +418,7 @@ void p2p_reselect_channel(struct p2p_data *p2p,
 
 	/* Prefer a 5 GHz channel */
 	for (i = 0; i < intersection->reg_classes; i++) {
-#ifdef ANDROID_P2P
-		struct p2p_reg_class prc;
-		struct p2p_reg_class *c = &prc;
-		p2p_copy_reg_class(c, &intersection->reg_class[i]);
-#else
 		struct p2p_reg_class *c = &intersection->reg_class[i];
-#endif
 		if ((c->reg_class == 115 || c->reg_class == 124) &&
 		    c->channels) {
 			unsigned int r;
