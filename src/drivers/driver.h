@@ -37,6 +37,13 @@
 #define HOSTAPD_CHAN_DFS_AVAILABLE 0x00000300
 #define HOSTAPD_CHAN_DFS_MASK 0x00000300
 
+enum reg_change_initiator {
+	REGDOM_SET_BY_CORE,
+	REGDOM_SET_BY_USER,
+	REGDOM_SET_BY_DRIVER,
+	REGDOM_SET_BY_COUNTRY_IE,
+};
+
 /**
  * struct hostapd_channel_data - Channel information
  */
@@ -3981,6 +3988,14 @@ union wpa_event_data {
 		unsigned int freq_filter;
 		struct dl_list survey_list; /* struct freq_survey */
 	} survey_results;
+
+	/**
+	 * channel_list_changed - Data for EVENT_CHANNEL_LIST_CHANGED
+	 * @initiator: Initiator of the regulatory change
+	 */
+	struct channel_list_changed {
+		enum reg_change_initiator initiator;
+	} channel_list_changed;
 };
 
 /**
