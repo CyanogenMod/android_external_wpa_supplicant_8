@@ -196,13 +196,28 @@ static void wpas_p2p_scan_res_handler(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < scan_res->num; i++) {
 		struct wpa_scan_res *bss = scan_res->res[i];
 		struct os_time time_tmp_age, entry_ts;
+		const u8 *ies;
+		size_t ies_len;
+
 		time_tmp_age.sec = bss->age / 1000;
 		time_tmp_age.usec = (bss->age % 1000) * 1000;
 		os_time_sub(&scan_res->fetch_time, &time_tmp_age, &entry_ts);
+
+		ies = (const u8 *) (bss + 1);
+		ies_len = bss->ie_len;
+		if (bss->beacon_ie_len > 0 &&
+		    !wpa_scan_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) &&
+		    wpa_scan_get_vendor_ie_beacon(bss, P2P_IE_VENDOR_TYPE)) {
+			wpa_printf(MSG_DEBUG, "P2P: Use P2P IE(s) from Beacon frame since no P2P IE(s) in Probe Response frames received for "
+				   MACSTR, MAC2STR(bss->bssid));
+			ies = ies + ies_len;
+			ies_len = bss->beacon_ie_len;
+		}
+
+
 		if (p2p_scan_res_handler(wpa_s->global->p2p, bss->bssid,
 					 bss->freq, &entry_ts, bss->level,
-					 (const u8 *) (bss + 1),
-					 bss->ie_len) > 0)
+					 ies, ies_len) > 0)
 			break;
 	}
 
@@ -452,6 +467,11 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 		return 1;
 	}
 
+	if (!wpa_s->p2p_go_group_formation_completed) {
+		wpa_s->global->p2p_group_formation = NULL;
+		wpa_s->p2p_in_provisioning = 0;
+	}
+
 	wpa_printf(MSG_DEBUG, "P2P: Remove temporary group network");
 	if (ssid && (ssid->p2p_group ||
 		     ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION ||
@@ -518,6 +538,9 @@ static int wpas_p2p_persistent_group(struct wpa_supplicant *wpa_s,
 	}
 
 	p2p = wpa_bss_get_vendor_ie_multi(bss, P2P_IE_VENDOR_TYPE);
+	if (p2p == NULL)
+		p2p = wpa_bss_get_vendor_ie_multi_beacon(bss,
+							 P2P_IE_VENDOR_TYPE);
 	if (p2p == NULL) {
 		wpa_printf(MSG_DEBUG, "P2P: Could not figure out whether "
 			   "group is persistent - BSS " MACSTR
@@ -728,8 +751,10 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 	 */
 	if (wpa_s->global->p2p_group_formation)
 		wpa_s = wpa_s->global->p2p_group_formation;
-	wpa_s->global->p2p_group_formation = NULL;
-	wpa_s->p2p_in_provisioning = 0;
+	if (wpa_s->p2p_go_group_formation_completed) {
+		wpa_s->global->p2p_group_formation = NULL;
+		wpa_s->p2p_in_provisioning = 0;
+	}
 
 	if (!success) {
 		wpa_msg_global(wpa_s->parent, MSG_INFO,
@@ -996,6 +1021,7 @@ static void p2p_go_configured(void *ctx, void *data)
 				       " [PERSISTENT]" : "");
 		}
 
+		os_get_time(&wpa_s->global->p2p_go_wait_client);
 		if (params->persistent_group) {
 			network_id = wpas_p2p_store_persistent_group(
 				wpa_s->parent, ssid,
@@ -4801,6 +4827,7 @@ void wpas_p2p_wps_success(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 
 	eloop_cancel_timeout(wpas_p2p_group_formation_timeout, wpa_s->parent,
 			     NULL);
+	wpa_s->p2p_go_group_formation_completed = 1;
 	if (ssid && ssid->mode == WPAS_MODE_INFRA) {
 		/*
 		 * Use a separate timeout for initial data connection to
@@ -4808,9 +4835,28 @@ void wpas_p2p_wps_success(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		 * something goes wrong in this step before the P2P group idle
 		 * timeout mechanism is taken into use.
 		 */
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"P2P: Re-start group formation timeout (%d seconds) as client for initial connection",
+			P2P_MAX_INITIAL_CONN_WAIT);
 		eloop_register_timeout(P2P_MAX_INITIAL_CONN_WAIT, 0,
 				       wpas_p2p_group_formation_timeout,
 				       wpa_s->parent, NULL);
+	} else if (ssid) {
+		/*
+		 * Use a separate timeout for initial data connection to
+		 * complete to allow the group to be removed automatically if
+		 * the client does not complete data connection successfully.
+		 */
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"P2P: Re-start group formation timeout (%d seconds) as GO for initial connection",
+			P2P_MAX_INITIAL_CONN_WAIT_GO);
+		eloop_register_timeout(P2P_MAX_INITIAL_CONN_WAIT_GO, 0,
+				       wpas_p2p_group_formation_timeout,
+				       wpa_s->parent, NULL);
+		/*
+		 * Complete group formation on first successful data connection
+		 */
+		wpa_s->p2p_go_group_formation_completed = 0;
 	}
 	if (wpa_s->global->p2p)
 		p2p_wps_success_cb(wpa_s->global->p2p, peer_addr);
@@ -6007,6 +6053,25 @@ struct wpa_ssid * wpas_p2p_get_persistent(struct wpa_supplicant *wpa_s,
 void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 				       const u8 *addr)
 {
+	if (eloop_cancel_timeout(wpas_p2p_group_formation_timeout,
+				 wpa_s->parent, NULL) > 0) {
+		/*
+		 * This can happen if WPS provisioning step is not terminated
+		 * cleanly (e.g., P2P Client does not send WSC_Done). Since the
+		 * peer was able to connect, there is no need to time out group
+		 * formation after this, though. In addition, this is used with
+		 * the initial connection wait on the GO as a separate formation
+		 * timeout and as such, expected to be hit after the initial WPS
+		 * provisioning step.
+		 */
+		wpa_printf(MSG_DEBUG, "P2P: Canceled P2P group formation timeout on data connection");
+	}
+	if (!wpa_s->p2p_go_group_formation_completed) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Marking group formation completed on GO on first data connection");
+		wpa_s->p2p_go_group_formation_completed = 1;
+		wpa_s->global->p2p_group_formation = NULL;
+		wpa_s->p2p_in_provisioning = 0;
+	}
 	wpa_s->global->p2p_go_wait_client.sec = 0;
 	if (addr == NULL)
 		return;

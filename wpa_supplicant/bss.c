@@ -502,6 +502,22 @@ wpa_bss_update(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 	wpa_bss_copy_res(bss, res, fetch_time);
 	/* Move the entry to the end of the list */
 	dl_list_del(&bss->list);
+#ifdef CONFIG_P2P
+	if (wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE) &&
+	    !wpa_scan_get_vendor_ie(res, P2P_IE_VENDOR_TYPE)) {
+		/*
+		 * This can happen when non-P2P station interface runs a scan
+		 * without P2P IE in the Probe Request frame. P2P GO would reply
+		 * to that with a Probe Response that does not include P2P IE.
+		 * Do not update the IEs in this BSS entry to avoid such loss of
+		 * information that may be needed for P2P operations to
+		 * determine group information.
+		 */
+		wpa_dbg(wpa_s, MSG_DEBUG, "BSS: Do not update scan IEs for "
+			MACSTR " since that would remove P2P IE information",
+			MAC2STR(bss->bssid));
+	} else
+#endif /* CONFIG_P2P */
 	if (bss->ie_len + bss->beacon_ie_len >=
 	    res->ie_len + res->beacon_ie_len) {
 		os_memcpy(bss + 1, res + 1, res->ie_len + res->beacon_ie_len);
@@ -987,6 +1003,43 @@ const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type)
 
 	pos = (const u8 *) (bss + 1);
 	end = pos + bss->ie_len;
+
+	while (pos + 1 < end) {
+		if (pos + 2 + pos[1] > end)
+			break;
+		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
+		    vendor_type == WPA_GET_BE32(&pos[2]))
+			return pos;
+		pos += 2 + pos[1];
+	}
+
+	return NULL;
+}
+
+
+/**
+ * wpa_bss_get_vendor_ie_beacon - Fetch a vendor information from a BSS entry
+ * @bss: BSS table entry
+ * @vendor_type: Vendor type (four octets starting the IE payload)
+ * Returns: Pointer to the information element (id field) or %NULL if not found
+ *
+ * This function returns the first matching information element in the BSS
+ * entry.
+ *
+ * This function is like wpa_bss_get_vendor_ie(), but uses IE buffer only
+ * from Beacon frames instead of either Beacon or Probe Response frames.
+ */
+const u8 * wpa_bss_get_vendor_ie_beacon(const struct wpa_bss *bss,
+					u32 vendor_type)
+{
+	const u8 *end, *pos;
+
+	if (bss->beacon_ie_len == 0)
+		return NULL;
+
+	pos = (const u8 *) (bss + 1);
+	pos += bss->ie_len;
+	end = pos + bss->beacon_ie_len;
 
 	while (pos + 1 < end) {
 		if (pos + 2 + pos[1] > end)
