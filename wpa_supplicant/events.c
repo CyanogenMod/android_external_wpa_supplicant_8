@@ -2132,11 +2132,7 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 			fast_reconnect_ssid = wpa_s->current_ssid;
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 		} else if (wpa_s->wpa_state >= WPA_ASSOCIATING)
-#ifdef ANDROID
-			wpa_supplicant_req_scan(wpa_s, 0, 500000);
-#else
 			wpa_supplicant_req_scan(wpa_s, 0, 100000);
-#endif
 		else
 			wpa_dbg(wpa_s, MSG_DEBUG, "Do not request new "
 				"immediate scan");
