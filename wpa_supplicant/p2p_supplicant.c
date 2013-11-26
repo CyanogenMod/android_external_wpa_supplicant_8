@@ -824,13 +824,6 @@ static void wpas_group_formation_completed(struct wpa_supplicant *wpa_s,
 		 * packets.
 		 */
 		wpa_s->show_group_started = 1;
-#ifdef ANDROID_P2P
-		/* For client Second phase of Group formation (4-way handshake) can be still pending
-		 * So we need to restore wpa_s->global->p2p_group_formation */
-		wpa_printf(MSG_INFO, "Restoring back wpa_s->global->p2p_group_formation to wpa_s %p\n", wpa_s);
-		wpa_s->global->p2p_group_formation = wpa_s;
-#endif
-
 	} else if (ssid && ssid->passphrase == NULL && ssid->psk_set) {
 		char psk[65];
 		wpa_snprintf_hex(psk, sizeof(psk), ssid->psk, 32);
