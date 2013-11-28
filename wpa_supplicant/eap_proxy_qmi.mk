@@ -1,0 +1,24 @@
+
+LOCAL_PATH := $(call my-dir)
+
+ifeq ($(BOARD_HAS_QCOM_WLAN), true)
+L_CFLAGS += -DSIM_AKA_IDENTITY_IMSI
+L_CFLAGS += -DSIM_AKA_IMSI_RAW_ENABLED
+
+LIB_SHARED_EAP_PROXY := libqmi libqmiservices libidl libqcci_legacy
+
+INCLUDES += $(TARGET_OUT_HEADERS)/qmi/inc
+INCLUDES += $(TARGET_OUT_HEADERS)/qmi/platform
+INCLUDES += $(TARGET_OUT_HEADERS)/qmi/src
+INCLUDES += $(TARGET_OUT_HEADERS)/qmi/services
+INCLUDES += $(TARGET_OUT_HEADERS)/qmi/core/lib/inc
+
+# EAP-AKA' (enable CONFIG_PCSC, if EAP-AKA' is used).
+# This requires CONFIG_EAP_AKA to be enabled, too.
+# This is supported only in B Family devices.
+CONFIG_EAP_AKA_PRIME=y
+
+#ANDROID_SETGROUPS_OVERRIDE := AID_RADIO AID_WIFI AID_KEYSTORE AID_DIAG AID_INET AID_QCOM_DIAG
+L_CFLAGS += -DANDROID_SETGROUPS_OVERRIDE=1001,1010,1017,2002,1003,3009
+endif
+
