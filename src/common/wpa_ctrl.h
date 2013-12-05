@@ -62,10 +62,6 @@ extern "C" {
 #define WPA_EVENT_BSS_ADDED "CTRL-EVENT-BSS-ADDED "
 /** A BSS entry was removed (followed by BSS entry id and BSSID) */
 #define WPA_EVENT_BSS_REMOVED "CTRL-EVENT-BSS-REMOVED "
-#ifdef ANDROID_P2P
-/** Notify the Userspace about the freq conflict */
-#define WPA_EVENT_FREQ_CONFLICT "CTRL-EVENT-FREQ-CONFLICT "
-#endif
 
 /** RSN IBSS 4-way handshakes completed with specified peer */
 #define IBSS_RSN_COMPLETED "IBSS-RSN-COMPLETED "

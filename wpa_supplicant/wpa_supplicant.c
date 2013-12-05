@@ -1299,9 +1299,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	ibss_rsn_deinit(wpa_s->ibss_rsn);
 	wpa_s->ibss_rsn = NULL;
 #endif /* CONFIG_IBSS_RSN */
-#ifdef ANDROID_P2P
-	int freq = 0;
-#endif
 
 	if (ssid->mode == WPAS_MODE_AP || ssid->mode == WPAS_MODE_P2P_GO ||
 	    ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION) {
@@ -1650,18 +1647,6 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_apply_ht_overrides(wpa_s, ssid, &params);
 #endif /* CONFIG_HT_OVERRIDES */
 
-#ifdef ANDROID_P2P
-	/* If multichannel concurrency is not supported, check for any frequency
-	 * conflict and take appropriate action.
-	 */
-	if ((wpa_s->num_multichan_concurrent < 2) &&
-		((freq = wpa_drv_shared_freq(wpa_s)) > 0) && (freq != params.freq)) {
-		wpa_printf(MSG_DEBUG, "Shared interface with conflicting frequency found (%d != %d)"
-																, freq, params.freq);
-		if (wpas_p2p_handle_frequency_conflicts(wpa_s, params.freq, ssid) < 0) 
-			return;
-	}
-#endif
 	ret = wpa_drv_associate(wpa_s, &params);
 	if (ret < 0) {
 		wpa_msg(wpa_s, MSG_INFO, "Association request to the driver "
