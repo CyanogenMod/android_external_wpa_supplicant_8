@@ -1973,6 +1973,59 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 
 
 /**
+ * wpas_set_pkcs11_engine_and_module_path - Set PKCS #11 engine and module path
+ * @wpa_s: wpa_supplicant structure for a network interface
+ * @pkcs11_engine_path: PKCS #11 engine path or NULL
+ * @pkcs11_module_path: PKCS #11 module path or NULL
+ * Returns: 0 on success; -1 on failure
+ *
+ * Sets the PKCS #11 engine and module path. Both have to be NULL or a valid
+ * path. If resetting the EAPOL state machine with the new PKCS #11 engine and
+ * module path fails the paths will be reset to the default value (NULL).
+ */
+int wpas_set_pkcs11_engine_and_module_path(struct wpa_supplicant *wpa_s,
+					   const char *pkcs11_engine_path,
+					   const char *pkcs11_module_path)
+{
+	char *pkcs11_engine_path_copy = NULL;
+	char *pkcs11_module_path_copy = NULL;
+
+	if (pkcs11_engine_path != NULL) {
+		pkcs11_engine_path_copy = os_strdup(pkcs11_engine_path);
+		if (pkcs11_engine_path_copy == NULL)
+			return -1;
+	}
+	if (pkcs11_module_path != NULL) {
+		pkcs11_module_path_copy = os_strdup(pkcs11_module_path);
+		if (pkcs11_engine_path_copy == NULL) {
+			os_free(pkcs11_engine_path_copy);
+			return -1;
+		}
+	}
+
+	os_free(wpa_s->conf->pkcs11_engine_path);
+	os_free(wpa_s->conf->pkcs11_module_path);
+	wpa_s->conf->pkcs11_engine_path = pkcs11_engine_path_copy;
+	wpa_s->conf->pkcs11_module_path = pkcs11_module_path_copy;
+
+	wpa_sm_set_eapol(wpa_s->wpa, NULL);
+	eapol_sm_deinit(wpa_s->eapol);
+	wpa_s->eapol = NULL;
+	if (wpa_supplicant_init_eapol(wpa_s)) {
+		/* Error -> Reset paths to the default value (NULL) once. */
+		if (pkcs11_engine_path != NULL && pkcs11_module_path != NULL)
+			wpas_set_pkcs11_engine_and_module_path(wpa_s, NULL,
+							       NULL);
+
+		return -1;
+	}
+	wpa_sm_set_eapol(wpa_s->wpa, wpa_s->eapol);
+
+	return 0;
+}
+
+
+/**
  * wpa_supplicant_set_ap_scan - Set AP scan mode for interface
  * @wpa_s: wpa_supplicant structure for a network interface
  * @ap_scan: AP scan mode
@@ -2834,10 +2887,112 @@ int wpas_init_ext_pw(struct wpa_supplicant *wpa_s)
 }
 
 
+static struct wpa_radio * radio_add_interface(struct wpa_supplicant *wpa_s,
+					      const char *rn)
+{
+	struct wpa_supplicant *iface = wpa_s->global->ifaces;
+	struct wpa_radio *radio;
+
+	while (rn && iface) {
+		radio = iface->radio;
+		if (radio && os_strcmp(rn, radio->name) == 0) {
+			wpa_printf(MSG_DEBUG, "Add interface %s to existing radio %s",
+				   wpa_s->ifname, rn);
+			dl_list_add(&radio->ifaces, &wpa_s->radio_list);
+			return radio;
+		}
+	}
+
+	wpa_printf(MSG_DEBUG, "Add interface %s to a new radio %s",
+		   wpa_s->ifname, rn ? rn : "N/A");
+	radio = os_zalloc(sizeof(*radio));
+	if (radio == NULL)
+		return NULL;
+
+	if (rn)
+		os_strlcpy(radio->name, rn, sizeof(radio->name));
+	dl_list_init(&radio->ifaces);
+	dl_list_add(&radio->ifaces, &wpa_s->radio_list);
+
+	return radio;
+}
+
+
+static void radio_remove_interface(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_radio *radio = wpa_s->radio;
+
+	if (!radio)
+		return;
+
+	wpa_printf(MSG_DEBUG, "Remove interface %s from radio %s",
+		   wpa_s->ifname, radio->name);
+	dl_list_del(&wpa_s->radio_list);
+	wpa_s->radio = NULL;
+
+	if (!dl_list_empty(&radio->ifaces))
+		return; /* Interfaces remain for this radio */
+
+	wpa_printf(MSG_DEBUG, "Remove radio %s", radio->name);
+	os_free(radio);
+}
+
+
+static int wpas_init_driver(struct wpa_supplicant *wpa_s,
+			    struct wpa_interface *iface)
+{
+	const char *ifname, *driver, *rn;
+
+	driver = iface->driver;
+next_driver:
+	if (wpa_supplicant_set_driver(wpa_s, driver) < 0)
+		return -1;
+
+	wpa_s->drv_priv = wpa_drv_init(wpa_s, wpa_s->ifname);
+	if (wpa_s->drv_priv == NULL) {
+		const char *pos;
+		pos = driver ? os_strchr(driver, ',') : NULL;
+		if (pos) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Failed to initialize "
+				"driver interface - try next driver wrapper");
+			driver = pos + 1;
+			goto next_driver;
+		}
+		wpa_msg(wpa_s, MSG_ERROR, "Failed to initialize driver "
+			"interface");
+		return -1;
+	}
+	if (wpa_drv_set_param(wpa_s, wpa_s->conf->driver_param) < 0) {
+		wpa_msg(wpa_s, MSG_ERROR, "Driver interface rejected "
+			"driver_param '%s'", wpa_s->conf->driver_param);
+		return -1;
+	}
+
+	ifname = wpa_drv_get_ifname(wpa_s);
+	if (ifname && os_strcmp(ifname, wpa_s->ifname) != 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Driver interface replaced "
+			"interface name with '%s'", ifname);
+		os_strlcpy(wpa_s->ifname, ifname, sizeof(wpa_s->ifname));
+	}
+
+	if (wpa_s->driver->get_radio_name)
+		rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
+	else
+		rn = NULL;
+	if (rn && rn[0] == '\0')
+		rn = NULL;
+
+	wpa_s->radio = radio_add_interface(wpa_s, rn);
+	if (wpa_s->radio == NULL)
+		return -1;
+
+	return 0;
+}
+
+
 static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 				     struct wpa_interface *iface)
 {
-	const char *ifname, *driver;
 	struct wpa_driver_capa capa;
 
 	wpa_printf(MSG_DEBUG, "Initializing interface '%s' conf '%s' driver "
@@ -2929,37 +3084,8 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	 * L2 receive handler so that association events are processed before
 	 * EAPOL-Key packets if both become available for the same select()
 	 * call. */
-	driver = iface->driver;
-next_driver:
-	if (wpa_supplicant_set_driver(wpa_s, driver) < 0)
+	if (wpas_init_driver(wpa_s, iface) < 0)
 		return -1;
-
-	wpa_s->drv_priv = wpa_drv_init(wpa_s, wpa_s->ifname);
-	if (wpa_s->drv_priv == NULL) {
-		const char *pos;
-		pos = driver ? os_strchr(driver, ',') : NULL;
-		if (pos) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Failed to initialize "
-				"driver interface - try next driver wrapper");
-			driver = pos + 1;
-			goto next_driver;
-		}
-		wpa_msg(wpa_s, MSG_ERROR, "Failed to initialize driver "
-			"interface");
-		return -1;
-	}
-	if (wpa_drv_set_param(wpa_s, wpa_s->conf->driver_param) < 0) {
-		wpa_msg(wpa_s, MSG_ERROR, "Driver interface rejected "
-			"driver_param '%s'", wpa_s->conf->driver_param);
-		return -1;
-	}
-
-	ifname = wpa_drv_get_ifname(wpa_s);
-	if (ifname && os_strcmp(ifname, wpa_s->ifname) != 0) {
-		wpa_dbg(wpa_s, MSG_DEBUG, "Driver interface replaced "
-			"interface name with '%s'", ifname);
-		os_strlcpy(wpa_s->ifname, ifname, sizeof(wpa_s->ifname));
-	}
 
 	if (wpa_supplicant_init_wpa(wpa_s) < 0)
 		return -1;
@@ -3130,6 +3256,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 		wpas_p2p_deinit_global(wpa_s->global);
 	}
 #endif /* CONFIG_P2P */
+
+	radio_remove_interface(wpa_s);
 
 	if (wpa_s->drv_priv)
 		wpa_drv_deinit(wpa_s);
@@ -3987,32 +4115,13 @@ static int wpas_conn_in_progress(struct wpa_supplicant *wpa_s)
  */
 int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s, int include_current)
 {
-	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
 
-	if (!wpa_s->driver->get_radio_name) {
-		if (include_current && wpas_conn_in_progress(wpa_s)) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Connection is in progress on interface %s - defer",
-				wpa_s->ifname);
-			return 1;
-		}
-
-                return 0;
-	}
-
-	rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
-	if (rn == NULL || rn[0] == '\0')
-		return 0;
-
-	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+	dl_list_for_each(ifs, &wpa_s->radio->ifaces, struct wpa_supplicant,
+			 radio_list) {
 		if (!include_current && ifs == wpa_s)
 			continue;
-		if (!ifs->driver->get_radio_name)
-			continue;
 
-		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
-		if (!rn2 || os_strcmp(rn, rn2) != 0)
-			continue;
 		if (wpas_conn_in_progress(ifs)) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "Connection is in progress "
 				"on interface %s - defer", ifs->ifname);
@@ -4043,7 +4152,6 @@ void dump_freq_array(struct wpa_supplicant *wpa_s, const char *title,
 int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 			   int *freq_array, unsigned int len)
 {
-	const char *rn, *rn2;
 	struct wpa_supplicant *ifs;
 	u8 bssid[ETH_ALEN];
 	int freq;
@@ -4072,20 +4180,9 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 		return idx;
 	}
 
-	rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
-	if (rn == NULL || rn[0] == '\0') {
-		dump_freq_array(wpa_s, "get_radio_name failed",
-				freq_array, idx);
-		return idx;
-	}
-
-	for (ifs = wpa_s->global->ifaces; ifs && idx < len;
-	     ifs = ifs->next) {
-		if (wpa_s == ifs || !ifs->driver->get_radio_name)
-			continue;
-
-		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
-		if (!rn2 || os_strcmp(rn, rn2) != 0)
+	dl_list_for_each(ifs, &wpa_s->radio->ifaces, struct wpa_supplicant,
+			 radio_list) {
+		if (wpa_s == ifs)
 			continue;
 
 		if (ifs->current_ssid == NULL || ifs->assoc_freq == 0)

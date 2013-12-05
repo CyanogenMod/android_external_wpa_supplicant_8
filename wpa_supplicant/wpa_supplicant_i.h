@@ -271,6 +271,19 @@ struct wpa_global {
 
 
 /**
+ * struct wpa_radio - Internal data for per-radio information
+ *
+ * This structure is used to share data about configured interfaces
+ * (struct wpa_supplicant) that share the same physical radio, e.g., to allow
+ * better coordination of offchannel operations.
+ */
+struct wpa_radio {
+	char name[16]; /* from driver_ops get_radio_name() or empty if not
+			* available */
+	struct dl_list ifaces; /* struct wpa_supplicant::radio_list entries */
+};
+
+/**
  * offchannel_send_action_result - Result of offchannel send Action frame
  */
 enum offchannel_send_action_result {
@@ -307,6 +320,8 @@ struct wpa_ssid_value {
  */
 struct wpa_supplicant {
 	struct wpa_global *global;
+	struct wpa_radio *radio; /* shared radio context */
+	struct dl_list radio_list; /* list head: struct wpa_radio::ifaces */
 	struct wpa_supplicant *parent;
 	struct wpa_supplicant *next;
 	struct l2_packet_data *l2;
@@ -463,7 +478,7 @@ struct wpa_supplicant {
 		 * to be run.
 		 */
 		MANUAL_SCAN_REQ
-	} scan_req;
+	} scan_req, last_scan_req;
 	struct os_time scan_trigger_time;
 	int scan_runs; /* number of scan runs since WPS was started */
 	int *next_scan_freqs;
@@ -772,6 +787,9 @@ void wpa_supplicant_disable_network(struct wpa_supplicant *wpa_s,
 				    struct wpa_ssid *ssid);
 void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 				   struct wpa_ssid *ssid);
+int wpas_set_pkcs11_engine_and_module_path(struct wpa_supplicant *wpa_s,
+					   const char *pkcs11_engine_path,
+					   const char *pkcs11_module_path);
 int wpa_supplicant_set_ap_scan(struct wpa_supplicant *wpa_s,
 			       int ap_scan);
 int wpa_supplicant_set_bss_expiration_age(struct wpa_supplicant *wpa_s,
