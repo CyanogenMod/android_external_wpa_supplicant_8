@@ -1980,13 +1980,15 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	} else
 		wpa_auth_sta_associated(hapd->wpa_auth, sta->wpa_sm);
 
-	wpa_printf(MSG_DEBUG, "%s: reschedule ap_handle_timer timeout "
-		   "for " MACSTR " (%d seconds - ap_max_inactivity)",
-		   __func__, MAC2STR(sta->addr),
-		   hapd->conf->ap_max_inactivity);
-	eloop_cancel_timeout(ap_handle_timer, hapd, sta);
-	eloop_register_timeout(hapd->conf->ap_max_inactivity, 0,
-			       ap_handle_timer, hapd, sta);
+	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_INACTIVITY_TIMER)) {
+		wpa_printf(MSG_DEBUG, "%s: reschedule ap_handle_timer timeout "
+			   "for " MACSTR " (%d seconds - ap_max_inactivity)",
+			   __func__, MAC2STR(sta->addr),
+			   hapd->conf->ap_max_inactivity);
+		eloop_cancel_timeout(ap_handle_timer, hapd, sta);
+		eloop_register_timeout(hapd->conf->ap_max_inactivity, 0,
+				       ap_handle_timer, hapd, sta);
+	}
 }
 
 
@@ -2049,6 +2051,7 @@ static int hostapd_build_beacon_data(struct hostapd_iface *iface,
 	int ret;
 	struct hostapd_data *hapd = iface->bss[0];
 
+	os_memset(beacon, 0, sizeof(*beacon));
 	ret = ieee802_11_build_ap_params(hapd, &params);
 	if (ret < 0)
 		return ret;
