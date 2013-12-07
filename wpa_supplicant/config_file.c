@@ -1048,6 +1048,10 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->sched_scan_interval)
 		fprintf(f, "sched_scan_interval=%u\n",
 			config->sched_scan_interval);
+
+	if (config->tdls_external_control)
+		fprintf(f, "tdls_external_control=%u\n",
+			config->tdls_external_control);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */
