@@ -113,7 +113,7 @@ struct sta_info {
 	u8 *sa_query_trans_id; /* buffer of WLAN_SA_QUERY_TR_ID_LEN *
 				* sa_query_count octets of pending SA Query
 				* transaction identifiers */
-	struct os_time sa_query_start;
+	struct os_reltime sa_query_start;
 #endif /* CONFIG_IEEE80211W */
 
 #ifdef CONFIG_INTERWORKING
@@ -126,7 +126,7 @@ struct sta_info {
 	struct wpabuf *p2p_ie; /* P2P IE from (Re)Association Request */
 	struct wpabuf *hs20_ie; /* HS 2.0 IE from (Re)Association Request */
 
-	struct os_time connected_time;
+	struct os_reltime connected_time;
 
 #ifdef CONFIG_SAE
 	struct sae_data *sae;

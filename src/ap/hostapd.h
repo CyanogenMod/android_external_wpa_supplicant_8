@@ -241,7 +241,7 @@ struct hostapd_data {
 #ifdef CONFIG_SAE
 	/** Key used for generating SAE anti-clogging tokens */
 	u8 sae_token_key[8];
-	os_time_t last_sae_token_key_update;
+	struct os_reltime last_sae_token_key_update;
 #endif /* CONFIG_SAE */
 };
 
@@ -414,7 +414,7 @@ int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
 			 const u8 *bssid, const u8 *ie, size_t ie_len,
 			 int ssi_signal);
 void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
-			     int offset);
+			     int offset, int width, int cf1, int cf2);
 
 const struct hostapd_eap_user *
 hostapd_get_eap_user(struct hostapd_data *hapd, const u8 *identity,

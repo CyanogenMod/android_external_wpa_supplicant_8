@@ -86,6 +86,34 @@ static inline void os_reltime_sub(struct os_reltime *a, struct os_reltime *b,
 }
 
 
+static inline void os_reltime_age(struct os_reltime *start,
+				  struct os_reltime *age)
+{
+	struct os_reltime now;
+
+	os_get_reltime(&now);
+	os_reltime_sub(&now, start, age);
+}
+
+
+static inline int os_reltime_expired(struct os_reltime *now,
+				     struct os_reltime *ts,
+				     os_time_t timeout_secs)
+{
+	struct os_reltime age;
+
+	os_reltime_sub(now, ts, &age);
+	return (age.sec > timeout_secs) ||
+	       (age.sec == timeout_secs && age.usec > 0);
+}
+
+
+static inline int os_reltime_initialized(struct os_reltime *t)
+{
+	return t->sec != 0 || t->usec != 0;
+}
+
+
 /**
  * os_mktime - Convert broken-down time into seconds since 1970-01-01
  * @year: Four digit year
