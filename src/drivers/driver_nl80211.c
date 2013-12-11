@@ -328,13 +328,36 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				  enum wpa_event_type type,
 				  const u8 *frame, size_t len);
 #endif /* LEGACY_STA_EVENTS */
+#ifdef USES_TI_MAC80211
+int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration)
+{
+	return -1;
+}
+
+int wpa_driver_get_p2p_noa(void *priv, u8 *buf, size_t len)
+{
+	return -1;
+}
+
+int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow)
+{
+	return -1;
+}
+
+int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
+				 const struct wpabuf *proberesp,
+				 const struct wpabuf *assocresp)
+{
+	return 0;
+}
+#else
 int wpa_driver_set_p2p_noa(void *priv, u8 count, int start, int duration);
 int wpa_driver_get_p2p_noa(void *priv, u8 *buf, size_t len);
 int wpa_driver_set_p2p_ps(void *priv, int legacy_ps, int opp_ps, int ctwindow);
 int wpa_driver_set_ap_wps_p2p_ie(void *priv, const struct wpabuf *beacon,
 				  const struct wpabuf *proberesp,
 				  const struct wpabuf *assocresp);
-
+#endif /* USES_TI_MAC80211 */
 #endif
 #ifdef HOSTAPD
 static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx);
