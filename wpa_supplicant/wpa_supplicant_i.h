@@ -113,6 +113,10 @@ struct wpa_interface {
 	 * interface that is not a network interface.
 	 */
 	int p2p_mgmt;
+	/**
+	 * p2p_confname stores the p2p configuration file path
+	 */
+	const char *p2p_confname;
 };
 
 /**
@@ -733,6 +737,7 @@ struct wpa_supplicant {
 #endif /* CONFIG_TESTING_GET_GTK */
 
 	unsigned int num_multichan_concurrent;
+	char *p2p_confname;
 };
 
 
