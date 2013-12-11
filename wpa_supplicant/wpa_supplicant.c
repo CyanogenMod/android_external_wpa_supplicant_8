@@ -404,6 +404,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->confanother);
 	wpa_s->confanother = NULL;
 
+	os_free(wpa_s->p2p_confname);
+	wpa_s->p2p_confname = NULL;
+
 	wpa_sm_set_eapol(wpa_s->wpa, NULL);
 	eapol_sm_deinit(wpa_s->eapol);
 	wpa_s->eapol = NULL;
@@ -2844,6 +2847,14 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		}
 		wpa_printf(MSG_DEBUG, "Configuration file '%s' -> '%s'",
 			   iface->confname, wpa_s->confname);
+
+		wpa_s->p2p_confname = os_rel2abs_path(iface->p2p_confname);
+		if (wpa_s->p2p_confname == NULL) {
+			wpa_printf(MSG_DEBUG, "Couldn't find absolute path "
+				   "for p2p configuration file '%s'.",
+				   iface->p2p_confname);
+		}
+
 #else /* CONFIG_BACKEND_FILE */
 		wpa_s->confname = os_strdup(iface->confname);
 #endif /* CONFIG_BACKEND_FILE */

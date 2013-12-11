@@ -83,6 +83,7 @@ static void usage(void)
 #endif /* CONFIG_DBUS */
 	printf("  -v = show version\n"
 	       "  -W = wait for a control interface monitor before starting\n"
+	       "  -z = p2p configuration file\n"
 	       "  -N = start describing new interface\n");
 
 	printf("example:\n"
@@ -160,7 +161,7 @@ int main(int argc, char *argv[])
 
 	for (;;) {
 		c = getopt(argc, argv,
-			   "b:Bc:C:D:de:f:g:G:hi:I:KLNo:O:p:P:qsTtuvW");
+			   "b:Bc:C:D:de:f:g:G:hi:I:z:KLNo:O:p:P:qsTtuvW");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -212,6 +213,10 @@ int main(int argc, char *argv[])
 			break;
 		case 'I':
 			iface->confanother = optarg;
+			break;
+		/* Added extra argument to parse p2p_config file */
+		case 'z':
+			iface->p2p_confname = optarg;
 			break;
 		case 'K':
 			params.wpa_debug_show_keys++;
