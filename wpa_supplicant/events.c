@@ -1325,10 +1325,12 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 			if (wpas_p2p_scan_no_go_seen(wpa_s) == 1)
 				return 0;
 
-			if (wpa_s->p2p_in_provisioning) {
+			if (wpa_s->p2p_in_provisioning ||
+			    wpa_s->show_group_started) {
 				/*
 				 * Use shorter wait during P2P Provisioning
-				 * state to speed up group formation.
+				 * state and during P2P join-a-group operation
+				 * to speed up group formation.
 				 */
 				timeout_sec = 0;
 				timeout_usec = 250000;
@@ -2469,6 +2471,51 @@ static void wpa_supplicant_event_unprot_disassoc(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_IEEE80211W */
 }
 
+static void wpa_supplicant_update_channel_list(struct wpa_supplicant *wpa_s)
+{
+	const char *rn, *rn2;
+	struct wpa_supplicant *ifs;
+
+	if (wpa_s->drv_priv == NULL)
+		return; /* Ignore event during drv initialization */
+
+	free_hw_features(wpa_s);
+	wpa_s->hw.modes = wpa_drv_get_hw_feature_data(
+		wpa_s, &wpa_s->hw.num_modes, &wpa_s->hw.flags);
+
+#ifdef CONFIG_P2P
+	wpas_p2p_update_channel_list(wpa_s);
+#endif /* CONFIG_P2P */
+
+	/*
+	 * Check other interfaces to see if they have the same radio-name. If
+	 * so, they get updated with this same hw mode info.
+	 */
+	if (!wpa_s->driver->get_radio_name)
+		return;
+
+	rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
+	if (rn == NULL || rn[0] == '\0')
+		return;
+
+	wpa_dbg(wpa_s, MSG_DEBUG, "Checking for other virtual interfaces "
+		"sharing same radio (%s) in event_channel_list_change", rn);
+
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		if (ifs == wpa_s || !ifs->driver->get_radio_name)
+			continue;
+
+		rn2 = ifs->driver->get_radio_name(ifs->drv_priv);
+		if (rn2 && os_strcmp(rn, rn2) == 0) {
+			wpa_printf(MSG_DEBUG, "%s: Updating hw mode",
+				   ifs->ifname);
+			free_hw_features(ifs);
+			ifs->hw.modes = wpa_drv_get_hw_feature_data(
+				ifs, &ifs->hw.num_modes, &ifs->hw.flags);
+		}
+	}
+}
+
 
 static void wpas_event_disconnect(struct wpa_supplicant *wpa_s, const u8 *addr,
 				  u16 reason_code, int locally_generated,
@@ -3074,16 +3121,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		wpa_supplicant_set_state(wpa_s, WPA_INTERFACE_DISABLED);
 		break;
 	case EVENT_CHANNEL_LIST_CHANGED:
-		if (wpa_s->drv_priv == NULL)
-			break; /* Ignore event during drv initialization */
-
-		free_hw_features(wpa_s);
-		wpa_s->hw.modes = wpa_drv_get_hw_feature_data(
-			wpa_s, &wpa_s->hw.num_modes, &wpa_s->hw.flags);
-
-#ifdef CONFIG_P2P
-		wpas_p2p_update_channel_list(wpa_s);
-#endif /* CONFIG_P2P */
+		wpa_supplicant_update_channel_list(wpa_s);
 		break;
 	case EVENT_INTERFACE_UNAVAILABLE:
 #ifdef CONFIG_P2P

@@ -572,9 +572,6 @@ void p2p_channels_intersect(const struct p2p_channels *a,
 			    struct p2p_channels *res);
 int p2p_channels_includes(const struct p2p_channels *channels, u8 reg_class,
 			  u8 channel);
-#ifdef ANDROID_P2P
-size_t p2p_copy_reg_class(struct p2p_reg_class *dc, struct p2p_reg_class *sc);
-#endif
 
 /* p2p_parse.c */
 int p2p_parse_p2p_ie(const struct wpabuf *buf, struct p2p_message *msg);

@@ -1579,16 +1579,19 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		char *type;
 
 		for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+			size_t i;
+
 			if (wpa_s->current_ssid->parent_cred != cred)
 				continue;
-			if (!cred->domain)
-				continue;
 
-			ret = os_snprintf(pos, end - pos, "home_sp=%s\n",
-					  cred->domain);
-			if (ret < 0 || ret >= end - pos)
-				return pos - buf;
-			pos += ret;
+			for (i = 0; cred->domain && i < cred->num_domain; i++) {
+				ret = os_snprintf(pos, end - pos,
+						  "home_sp=%s\n",
+						  cred->domain[i]);
+				if (ret < 0 || ret >= end - pos)
+					return pos - buf;
+				pos += ret;
+			}
 
 			if (wpa_s->current_bss == NULL ||
 			    wpa_s->current_bss->anqp == NULL)
@@ -2481,7 +2484,7 @@ static int wpa_supplicant_ctrl_iface_list_creds(struct wpa_supplicant *wpa_s,
 		ret = os_snprintf(pos, end - pos, "%d\t%s\t%s\t%s\t%s\n",
 				  cred->id, cred->realm ? cred->realm : "",
 				  cred->username ? cred->username : "",
-				  cred->domain ? cred->domain : "",
+				  cred->domain ? cred->domain[0] : "",
 				  cred->imsi ? cred->imsi : "");
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
@@ -2566,9 +2569,16 @@ static int wpa_supplicant_ctrl_iface_remove_cred(struct wpa_supplicant *wpa_s,
 		while (cred) {
 			prev = cred;
 			cred = cred->next;
-			if (prev->domain &&
-			    os_strcmp(prev->domain, cmd + 8) == 0)
-				wpas_ctrl_remove_cred(wpa_s, prev);
+			if (prev->domain) {
+				size_t i;
+				for (i = 0; i < prev->num_domain; i++) {
+					if (os_strcmp(prev->domain[i], cmd + 8)
+					    != 0)
+						continue;
+					wpas_ctrl_remove_cred(wpa_s, prev);
+					break;
+				}
+			}
 		}
 		return 0;
 	}
@@ -4244,7 +4254,8 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL,
+					     0);
 }
 
 
@@ -5171,7 +5182,27 @@ static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 {
 	int ret;
 
-	ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
+	if (os_strncasecmp(cmd, "SETBAND ", 8) == 0) {
+		int val = atoi(cmd + 8);
+		/*
+		 * Use driver_cmd for drivers that support it, but ignore the
+		 * return value since scan requests from wpa_supplicant will
+		 * provide a list of channels to scan for based on the SETBAND
+		 * setting.
+		 */
+		wpa_printf(MSG_DEBUG, "SETBAND: %d", val);
+		wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
+		ret = 0;
+		if (val == 0)
+			wpa_s->setband = WPA_SETBAND_AUTO;
+		else if (val == 1)
+			wpa_s->setband = WPA_SETBAND_5G;
+		else if (val == 2)
+			wpa_s->setband = WPA_SETBAND_2G;
+		else
+			ret = -1;
+	} else
+		ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
 	if (ret == 0) {
 		if (os_strncasecmp(cmd, "COUNTRY", 7) == 0) {
 			struct p2p_data *p2p = wpa_s->global->p2p;
