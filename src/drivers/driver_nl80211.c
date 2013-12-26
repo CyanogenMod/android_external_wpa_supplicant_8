@@ -2624,6 +2624,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 	switch (cmd) {
 	case NL80211_CMD_TRIGGER_SCAN:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Scan trigger");
+		wpa_supplicant_event(drv->ctx, EVENT_SCAN_STARTED, NULL);
 		break;
 	case NL80211_CMD_START_SCHED_SCAN:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Sched scan started");
