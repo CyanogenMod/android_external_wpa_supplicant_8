@@ -2608,6 +2608,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 				 struct nlattr **tb)
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
+	union wpa_event_data data;
 
 	wpa_printf(MSG_DEBUG, "nl80211: Drv Event %d (%s) received for %s",
 		   cmd, nl80211_command_to_string(cmd), bss->ifname);
@@ -2701,8 +2702,33 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 		break;
 	case NL80211_CMD_REG_CHANGE:
 		wpa_printf(MSG_DEBUG, "nl80211: Regulatory domain change");
+		if (tb[NL80211_ATTR_REG_INITIATOR] == NULL)
+			break;
+		os_memset(&data, 0, sizeof(data));
+		switch (nla_get_u8(tb[NL80211_ATTR_REG_INITIATOR])) {
+		case NL80211_REGDOM_SET_BY_CORE:
+			data.channel_list_changed.initiator =
+				REGDOM_SET_BY_CORE;
+			break;
+		case NL80211_REGDOM_SET_BY_USER:
+			data.channel_list_changed.initiator =
+				REGDOM_SET_BY_USER;
+			break;
+		case NL80211_REGDOM_SET_BY_DRIVER:
+			data.channel_list_changed.initiator =
+				REGDOM_SET_BY_DRIVER;
+			break;
+		case NL80211_REGDOM_SET_BY_COUNTRY_IE:
+			data.channel_list_changed.initiator =
+				REGDOM_SET_BY_COUNTRY_IE;
+			break;
+		default:
+			wpa_printf(MSG_DEBUG, "nl80211: Unknown reg change initiator %d received",
+				   nla_get_u8(tb[NL80211_ATTR_REG_INITIATOR]));
+			break;
+		}
 		wpa_supplicant_event(drv->ctx, EVENT_CHANNEL_LIST_CHANGED,
-				     NULL);
+				     &data);
 		break;
 	case NL80211_CMD_REG_BEACON_HINT:
 		wpa_printf(MSG_DEBUG, "nl80211: Regulatory beacon hint");
@@ -2907,6 +2933,44 @@ static int wpa_driver_nl80211_set_country(void *priv, const char *alpha2_arg)
 nla_put_failure:
 	nlmsg_free(msg);
 	return -EINVAL;
+}
+
+
+static int nl80211_get_country(struct nl_msg *msg, void *arg)
+{
+	char *alpha2 = arg;
+	struct nlattr *tb_msg[NL80211_ATTR_MAX + 1];
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+
+	nla_parse(tb_msg, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+	if (!tb_msg[NL80211_ATTR_REG_ALPHA2]) {
+		wpa_printf(MSG_DEBUG, "nl80211: No country information available");
+		return NL_SKIP;
+	}
+	os_strlcpy(alpha2, nla_data(tb_msg[NL80211_ATTR_REG_ALPHA2]), 3);
+	return NL_SKIP;
+}
+
+
+static int wpa_driver_nl80211_get_country(void *priv, char *alpha2)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct nl_msg *msg;
+	int ret;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOMEM;
+
+	nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_REG);
+	alpha2[0] = '\0';
+	ret = send_and_recv_msgs(drv, msg, nl80211_get_country, alpha2);
+	if (!alpha2[0])
+		ret = -1;
+
+	return ret;
 }
 
 
@@ -10889,6 +10953,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.set_operstate = wpa_driver_nl80211_set_operstate,
 	.set_supp_port = wpa_driver_nl80211_set_supp_port,
 	.set_country = wpa_driver_nl80211_set_country,
+	.get_country = wpa_driver_nl80211_get_country,
 	.set_ap = wpa_driver_nl80211_set_ap,
 	.set_acl = wpa_driver_nl80211_set_acl,
 	.if_add = wpa_driver_nl80211_if_add,

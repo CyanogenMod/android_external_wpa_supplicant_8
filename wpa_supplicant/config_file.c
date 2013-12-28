@@ -725,6 +725,8 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 
 static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 {
+	size_t i;
+
 	if (cred->priority)
 		fprintf(f, "\tpriority=%d\n", cred->priority);
 	if (cred->pcsc)
@@ -750,10 +752,9 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 		fprintf(f, "\timsi=\"%s\"\n", cred->imsi);
 	if (cred->milenage)
 		fprintf(f, "\tmilenage=\"%s\"\n", cred->milenage);
-	if (cred->domain)
-		fprintf(f, "\tdomain=\"%s\"\n", cred->domain);
+	for (i = 0; i < cred->num_domain; i++)
+		fprintf(f, "\tdomain=\"%s\"\n", cred->domain[i]);
 	if (cred->roaming_consortium_len) {
-		size_t i;
 		fprintf(f, "\troaming_consortium=");
 		for (i = 0; i < cred->roaming_consortium_len; i++)
 			fprintf(f, "%02x", cred->roaming_consortium[i]);
@@ -770,7 +771,7 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 	if (cred->phase2)
 		fprintf(f, "\tphase2=\"%s\"\n", cred->phase2);
 	if (cred->excluded_ssid) {
-		size_t i, j;
+		size_t j;
 		for (i = 0; i < cred->num_excluded_ssid; i++) {
 			struct excluded_ssid *e = &cred->excluded_ssid[i];
 			fprintf(f, "\texcluded_ssid=");
@@ -1048,6 +1049,10 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->sched_scan_interval)
 		fprintf(f, "sched_scan_interval=%u\n",
 			config->sched_scan_interval);
+
+	if (config->tdls_external_control)
+		fprintf(f, "tdls_external_control=%u\n",
+			config->tdls_external_control);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */

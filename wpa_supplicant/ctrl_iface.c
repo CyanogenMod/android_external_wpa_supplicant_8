@@ -58,6 +58,12 @@ static int pno_start(struct wpa_supplicant *wpa_s)
 	if (wpa_s->pno)
 		return 0;
 
+	if ((wpa_s->wpa_state > WPA_SCANNING) &&
+	    (wpa_s->wpa_state <= WPA_COMPLETED)) {
+		wpa_printf(MSG_ERROR, "PNO: In assoc process");
+		return -EAGAIN;
+	}
+
 	if (wpa_s->wpa_state == WPA_SCANNING) {
 		wpa_supplicant_cancel_sched_scan(wpa_s);
 		wpa_supplicant_cancel_scan(wpa_s);
@@ -565,6 +571,11 @@ static int wpa_supplicant_ctrl_iface_tdls_setup(
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_SETUP " MACSTR,
 		   MAC2STR(peer));
 
+	if ((wpa_s->conf->tdls_external_control) &&
+	     wpa_tdls_is_external_setup(wpa_s->wpa)) {
+		return wpa_drv_tdls_oper(wpa_s, TDLS_SETUP, peer);
+	}
+
 	wpa_tdls_remove(wpa_s->wpa, peer);
 
 	if (wpa_tdls_is_external_setup(wpa_s->wpa))
@@ -590,6 +601,11 @@ static int wpa_supplicant_ctrl_iface_tdls_teardown(
 
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN " MACSTR,
 		   MAC2STR(peer));
+
+	if ((wpa_s->conf->tdls_external_control) &&
+	     wpa_tdls_is_external_setup(wpa_s->wpa)) {
+		return wpa_drv_tdls_oper(wpa_s, TDLS_TEARDOWN, peer);
+	}
 
 	if (wpa_tdls_is_external_setup(wpa_s->wpa))
 		ret = wpa_tdls_teardown_link(
@@ -1563,16 +1579,19 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		char *type;
 
 		for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+			size_t i;
+
 			if (wpa_s->current_ssid->parent_cred != cred)
 				continue;
-			if (!cred->domain)
-				continue;
 
-			ret = os_snprintf(pos, end - pos, "home_sp=%s\n",
-					  cred->domain);
-			if (ret < 0 || ret >= end - pos)
-				return pos - buf;
-			pos += ret;
+			for (i = 0; cred->domain && i < cred->num_domain; i++) {
+				ret = os_snprintf(pos, end - pos,
+						  "home_sp=%s\n",
+						  cred->domain[i]);
+				if (ret < 0 || ret >= end - pos)
+					return pos - buf;
+				pos += ret;
+			}
 
 			if (wpa_s->current_bss == NULL ||
 			    wpa_s->current_bss->anqp == NULL)
@@ -2465,7 +2484,7 @@ static int wpa_supplicant_ctrl_iface_list_creds(struct wpa_supplicant *wpa_s,
 		ret = os_snprintf(pos, end - pos, "%d\t%s\t%s\t%s\t%s\n",
 				  cred->id, cred->realm ? cred->realm : "",
 				  cred->username ? cred->username : "",
-				  cred->domain ? cred->domain : "",
+				  cred->domain ? cred->domain[0] : "",
 				  cred->imsi ? cred->imsi : "");
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
@@ -2550,9 +2569,16 @@ static int wpa_supplicant_ctrl_iface_remove_cred(struct wpa_supplicant *wpa_s,
 		while (cred) {
 			prev = cred;
 			cred = cred->next;
-			if (prev->domain &&
-			    os_strcmp(prev->domain, cmd + 8) == 0)
-				wpas_ctrl_remove_cred(wpa_s, prev);
+			if (prev->domain) {
+				size_t i;
+				for (i = 0; i < prev->num_domain; i++) {
+					if (os_strcmp(prev->domain[i], cmd + 8)
+					    != 0)
+						continue;
+					wpas_ctrl_remove_cred(wpa_s, prev);
+					break;
+				}
+			}
 		}
 		return 0;
 	}
@@ -4228,7 +4254,8 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, ht40, NULL,
+					     0);
 }
 
 
@@ -5155,7 +5182,27 @@ static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 {
 	int ret;
 
-	ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
+	if (os_strncasecmp(cmd, "SETBAND ", 8) == 0) {
+		int val = atoi(cmd + 8);
+		/*
+		 * Use driver_cmd for drivers that support it, but ignore the
+		 * return value since scan requests from wpa_supplicant will
+		 * provide a list of channels to scan for based on the SETBAND
+		 * setting.
+		 */
+		wpa_printf(MSG_DEBUG, "SETBAND: %d", val);
+		wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
+		ret = 0;
+		if (val == 0)
+			wpa_s->setband = WPA_SETBAND_AUTO;
+		else if (val == 1)
+			wpa_s->setband = WPA_SETBAND_5G;
+		else if (val == 2)
+			wpa_s->setband = WPA_SETBAND_2G;
+		else
+			ret = -1;
+	} else
+		ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
 	if (ret == 0) {
 		if (os_strncasecmp(cmd, "COUNTRY", 7) == 0) {
 			struct p2p_data *p2p = wpa_s->global->p2p;

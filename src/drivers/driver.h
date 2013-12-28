@@ -37,6 +37,13 @@
 #define HOSTAPD_CHAN_DFS_AVAILABLE 0x00000300
 #define HOSTAPD_CHAN_DFS_MASK 0x00000300
 
+enum reg_change_initiator {
+	REGDOM_SET_BY_CORE,
+	REGDOM_SET_BY_USER,
+	REGDOM_SET_BY_DRIVER,
+	REGDOM_SET_BY_COUNTRY_IE,
+};
+
 /**
  * struct hostapd_channel_data - Channel information
  */
@@ -1563,6 +1570,14 @@ struct wpa_driver_ops {
 	 * of setting a regulatory domain.
 	 */
 	int (*set_country)(void *priv, const char *alpha2);
+
+	/**
+	 * get_country - Get country
+	 * @priv: Private driver interface data
+	 * @alpha2: Buffer for returning country code (at least 3 octets)
+	 * Returns: 0 on success, -1 on failure
+	 */
+	int (*get_country)(void *priv, char *alpha2);
 
 	/**
 	 * global_init - Global driver initialization
@@ -3973,6 +3988,14 @@ union wpa_event_data {
 		unsigned int freq_filter;
 		struct dl_list survey_list; /* struct freq_survey */
 	} survey_results;
+
+	/**
+	 * channel_list_changed - Data for EVENT_CHANNEL_LIST_CHANGED
+	 * @initiator: Initiator of the regulatory change
+	 */
+	struct channel_list_changed {
+		enum reg_change_initiator initiator;
+	} channel_list_changed;
 };
 
 /**

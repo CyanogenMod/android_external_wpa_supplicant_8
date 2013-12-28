@@ -929,6 +929,16 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 	case EVENT_SURVEY:
 		hostapd_event_get_survey(hapd, &data->survey_results);
 		break;
+#ifdef NEED_AP_MLME
+	case EVENT_CHANNEL_LIST_CHANGED:
+		/* channel list changed (regulatory?), update channel list */
+		/* TODO: check this. hostapd_get_hw_features() initializes
+		 * too much stuff. */
+		/* hostapd_get_hw_features(hapd->iface); */
+		hostapd_channel_list_updated(
+			hapd->iface, data->channel_list_changed.initiator);
+		break;
+#endif /* NEED_AP_MLME */
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown event %d", event);
 		break;
