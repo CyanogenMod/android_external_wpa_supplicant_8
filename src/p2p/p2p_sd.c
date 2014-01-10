@@ -430,15 +430,7 @@ void p2p_rx_gas_initial_resp(struct p2p_data *p2p, const u8 *sa,
 	u16 slen;
 	u16 update_indic;
 
-#ifdef ANDROID_P2P
-	if (p2p->state != P2P_SD_DURING_FIND) {
-		p2p_dbg(p2p, "P2P: #### Not ignoring unexpected GAS Initial Response from "
-			MACSTR " state %d", MAC2STR(sa), p2p->state);
-	}
-	if (p2p->sd_peer == NULL ||
-#else
 	if (p2p->state != P2P_SD_DURING_FIND || p2p->sd_peer == NULL ||
-#endif
 	    os_memcmp(sa, p2p->sd_peer->info.p2p_device_addr, ETH_ALEN) != 0) {
 		p2p_dbg(p2p, "Ignore unexpected GAS Initial Response from "
 			MACSTR, MAC2STR(sa));
@@ -653,15 +645,7 @@ void p2p_rx_gas_comeback_resp(struct p2p_data *p2p, const u8 *sa,
 
 	wpa_hexdump(MSG_DEBUG, "P2P: RX GAS Comeback Response", data, len);
 
-#ifdef ANDROID_P2P
-	if (p2p->state != P2P_SD_DURING_FIND) {
-		p2p_dbg(p2p, "P2P: #### Not ignoring unexpected GAS Comeback Response from "
-			MACSTR " state %d", MAC2STR(sa), p2p->state);
-	}
-	if (p2p->sd_peer == NULL ||
-#else
 	if (p2p->state != P2P_SD_DURING_FIND || p2p->sd_peer == NULL ||
-#endif
 	    os_memcmp(sa, p2p->sd_peer->info.p2p_device_addr, ETH_ALEN) != 0) {
 		p2p_dbg(p2p, "Ignore unexpected GAS Comeback Response from "
 			MACSTR, MAC2STR(sa));
@@ -901,9 +885,6 @@ int p2p_sd_cancel_request(struct p2p_data *p2p, void *req)
 {
 	if (p2p_unlink_sd_query(p2p, req)) {
 		p2p_dbg(p2p, "Cancel pending SD query %p", req);
-#ifdef ANDROID_P2P
-		p2p->sd_dev_list = NULL;
-#endif
 		p2p_free_sd_query(req);
 		return 0;
 	}
