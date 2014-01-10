@@ -552,8 +552,6 @@ static void wpa_priv_interface_deinit(struct wpa_priv_interface *iface)
 }
 
 
-extern struct wpa_driver_ops *wpa_drivers[];
-
 static struct wpa_priv_interface *
 wpa_priv_interface_init(const char *dir, const char *params)
 {
@@ -945,8 +943,6 @@ static void usage(void)
 	       "[driver:ifname ...]\n");
 }
 
-
-extern int wpa_debug_level;
 
 int main(int argc, char *argv[])
 {

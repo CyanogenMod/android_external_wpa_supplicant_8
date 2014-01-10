@@ -11,14 +11,13 @@
 
 #include "common/defs.h"
 #include "ap_config.h"
+#include "drivers/driver.h"
 
-struct wpa_driver_ops;
 struct wpa_ctrl_dst;
 struct radius_server_data;
 struct upnp_wps_device_sm;
 struct hostapd_data;
 struct sta_info;
-struct hostap_sta_driver_data;
 struct ieee80211_ht_capabilities;
 struct full_dynamic_vlan;
 enum wps_event;
@@ -26,8 +25,6 @@ union wps_event_data;
 
 struct hostapd_iface;
 struct hostapd_dynamic_iface;
-
-struct csa_settings;
 
 struct hapd_interfaces {
 	int (*reload_config)(struct hostapd_iface *iface);
@@ -146,7 +143,7 @@ struct hostapd_data {
 	struct eapol_authenticator *eapol_auth;
 
 	struct rsn_preauth_interface *preauth_iface;
-	time_t michael_mic_failure;
+	struct os_reltime michael_mic_failure;
 	int michael_mic_failures;
 	int tkip_countermeasures;
 
@@ -243,6 +240,10 @@ struct hostapd_data {
 	u8 sae_token_key[8];
 	struct os_reltime last_sae_token_key_update;
 #endif /* CONFIG_SAE */
+
+#ifdef CONFIG_TESTING_OPTIONS
+	int ext_mgmt_frame_handling;
+#endif /* CONFIG_TESTING_OPTIONS */
 };
 
 
@@ -337,7 +338,7 @@ struct hostapd_iface {
 	s8 lowest_nf;
 
 	/* channel switch parameters */
-	int cs_freq;
+	struct hostapd_freq_params cs_freq_params;
 	u8 cs_count;
 	int cs_block_tx;
 	unsigned int cs_c_off_beacon;

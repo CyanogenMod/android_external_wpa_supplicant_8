@@ -29,6 +29,7 @@
 #include "pmksa_cache_auth.h"
 #include "ap_config.h"
 #include "ap_drv_ops.h"
+#include "wps_hostapd.h"
 #include "ieee802_1x.h"
 
 
@@ -1951,7 +1952,7 @@ int ieee802_1x_get_mib_sta(struct hostapd_data *hapd, struct sta_info *sta,
 {
 	int len = 0, ret;
 	struct eapol_state_machine *sm = sta->eapol_sm;
-	struct os_time t;
+	struct os_reltime diff;
 
 	if (sm == NULL)
 		return 0;
@@ -2066,7 +2067,7 @@ int ieee802_1x_get_mib_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	len += ret;
 
 	/* dot1xAuthSessionStatsTable */
-	os_get_time(&t);
+	os_reltime_age(&sta->acct_session_start, &diff);
 	ret = os_snprintf(buf + len, buflen - len,
 			  /* TODO: dot1xAuthSessionOctetsRx */
 			  /* TODO: dot1xAuthSessionOctetsTx */
@@ -2081,8 +2082,19 @@ int ieee802_1x_get_mib_sta(struct hostapd_data *hapd, struct sta_info *sta,
 			  (wpa_key_mgmt_wpa_ieee8021x(
 				   wpa_auth_sta_key_mgmt(sta->wpa_sm))) ?
 			  1 : 2,
-			  (unsigned int) (t.sec - sta->acct_session_start),
+			  (unsigned int) diff.sec,
 			  sm->identity);
+	if (ret < 0 || (size_t) ret >= buflen - len)
+		return len;
+	len += ret;
+
+	ret = os_snprintf(buf + len, buflen - len,
+			  "last_eap_type_as=%d (%s)\n"
+			  "last_eap_type_sta=%d (%s)\n",
+			  sm->eap_type_authsrv,
+			  eap_server_get_name(0, sm->eap_type_authsrv),
+			  sm->eap_type_supp,
+			  eap_server_get_name(0, sm->eap_type_supp));
 	if (ret < 0 || (size_t) ret >= buflen - len)
 		return len;
 	len += ret;
@@ -2128,5 +2140,6 @@ static void ieee802_1x_finished(struct hostapd_data *hapd,
 		os_sleep(0, 10000);
 		ap_sta_disconnect(hapd, sta, sta->addr,
 				  WLAN_REASON_IEEE_802_1X_AUTH_FAILED);
+		hostapd_wps_eap_completed(hapd);
 	}
 }

@@ -3,21 +3,14 @@
  * Copyright (c) 2002-2009, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2007-2008, Intel Corporation
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
 
 #include "utils/common.h"
 #include "common/ieee802_11_defs.h"
-#include "drivers/driver.h"
 #include "hostapd.h"
 #include "ap_config.h"
 #include "sta_info.h"

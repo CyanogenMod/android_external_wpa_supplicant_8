@@ -701,6 +701,11 @@ static u16 sae_group_allowed(struct sae_data *sae, int *allowed_groups,
 		return WLAN_STATUS_FINITE_CYCLIC_GROUP_NOT_SUPPORTED;
 	}
 
+	if (sae->tmp == NULL) {
+		wpa_printf(MSG_DEBUG, "SAE: Group information not yet initialized");
+		return WLAN_STATUS_UNSPECIFIED_FAILURE;
+	}
+
 	if (sae->tmp->dh && !allowed_groups) {
 		wpa_printf(MSG_DEBUG, "SAE: Do not allow FFC group %u without "
 			   "explicit configuration enabling it", group);
@@ -797,7 +802,7 @@ static u16 sae_parse_commit_element_ecc(struct sae_data *sae, const u8 *pos,
 
 	/* element x and y coordinates < p */
 	if (os_memcmp(pos, prime, sae->tmp->prime_len) >= 0 ||
-	    os_memcmp(pos + sae->tmp->prime_len + sae->tmp->prime_len, prime,
+	    os_memcmp(pos + sae->tmp->prime_len, prime,
 		      sae->tmp->prime_len) >= 0) {
 		wpa_printf(MSG_DEBUG, "SAE: Invalid coordinates in peer "
 			   "element");

@@ -54,6 +54,8 @@ extern "C" {
 #define WPA_EVENT_TEMP_DISABLED "CTRL-EVENT-SSID-TEMP-DISABLED "
 /** Temporarily disabled network block re-enabled */
 #define WPA_EVENT_REENABLED "CTRL-EVENT-SSID-REENABLED "
+/** New scan started */
+#define WPA_EVENT_SCAN_STARTED "CTRL-EVENT-SCAN-STARTED "
 /** New scan results available */
 #define WPA_EVENT_SCAN_RESULTS "CTRL-EVENT-SCAN-RESULTS "
 /** wpa_supplicant state change */
@@ -145,6 +147,7 @@ extern "C" {
 #define P2P_EVENT_INVITATION_RESULT "P2P-INVITATION-RESULT "
 #define P2P_EVENT_FIND_STOPPED "P2P-FIND-STOPPED "
 #define P2P_EVENT_PERSISTENT_PSK_FAIL "P2P-PERSISTENT-PSK-FAIL id="
+#define P2P_EVENT_PRESENCE_RESPONSE "P2P-PRESENCE-RESPONSE "
 
 /* parameters: <PMF enabled> <timeout in ms> <Session Information URL> */
 #define ESS_DISASSOC_IMMINENT "ESS-DISASSOC-IMMINENT "
@@ -154,6 +157,13 @@ extern "C" {
 #define INTERWORKING_ALREADY_CONNECTED "INTERWORKING-ALREADY-CONNECTED "
 
 #define GAS_RESPONSE_INFO "GAS-RESPONSE-INFO "
+/* parameters: <addr> <dialog_token> <freq> */
+#define GAS_QUERY_START "GAS-QUERY-START "
+/* parameters: <addr> <dialog_token> <freq> <status_code> <result> */
+#define GAS_QUERY_DONE "GAS-QUERY-DONE "
+
+#define EXT_RADIO_WORK_START "EXT-RADIO-WORK-START "
+#define EXT_RADIO_WORK_TIMEOUT "EXT-RADIO-WORK-TIMEOUT "
 
 /* hostapd control interface - fixed message prefixes */
 #define WPS_EVENT_PIN_NEEDED "WPS-PIN-NEEDED "

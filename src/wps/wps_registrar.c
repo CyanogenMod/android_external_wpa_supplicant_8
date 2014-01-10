@@ -82,7 +82,7 @@ struct wps_uuid_pin {
 #define PIN_LOCKED BIT(0)
 #define PIN_EXPIRES BIT(1)
 	int flags;
-	struct os_time expiration;
+	struct os_reltime expiration;
 	u8 enrollee_addr[ETH_ALEN];
 };
 
@@ -113,7 +113,7 @@ struct wps_pbc_session {
 	struct wps_pbc_session *next;
 	u8 addr[ETH_ALEN];
 	u8 uuid_e[WPS_UUID_LEN];
-	struct os_time timestamp;
+	struct os_reltime timestamp;
 };
 
 
@@ -183,7 +183,9 @@ struct wps_registrar {
 	u8 p2p_dev_addr[ETH_ALEN];
 
 	u8 pbc_ignore_uuid[WPS_UUID_LEN];
-	struct os_time pbc_ignore_start;
+#ifdef WPS_WORKAROUNDS
+	struct os_reltime pbc_ignore_start;
+#endif /* WPS_WORKAROUNDS */
 };
 
 
@@ -311,9 +313,9 @@ static void wps_registrar_add_pbc_session(struct wps_registrar *reg,
 					  const u8 *addr, const u8 *uuid_e)
 {
 	struct wps_pbc_session *pbc, *prev = NULL;
-	struct os_time now;
+	struct os_reltime now;
 
-	os_get_time(&now);
+	os_get_reltime(&now);
 
 	pbc = reg->pbc_sessions;
 	while (pbc) {
@@ -347,7 +349,8 @@ static void wps_registrar_add_pbc_session(struct wps_registrar *reg,
 	pbc = pbc->next;
 
 	while (pbc) {
-		if (now.sec > pbc->timestamp.sec + WPS_PBC_WALK_TIME) {
+		if (os_reltime_expired(&now, &pbc->timestamp,
+				       WPS_PBC_WALK_TIME)) {
 			prev->next = NULL;
 			wps_free_pbc_sessions(pbc);
 			break;
@@ -395,9 +398,9 @@ int wps_registrar_pbc_overlap(struct wps_registrar *reg,
 	int count = 0;
 	struct wps_pbc_session *pbc;
 	struct wps_pbc_session *first = NULL;
-	struct os_time now;
+	struct os_reltime now;
 
-	os_get_time(&now);
+	os_get_reltime(&now);
 
 	wpa_printf(MSG_DEBUG, "WPS: Checking active PBC sessions for overlap");
 
@@ -413,9 +416,9 @@ int wps_registrar_pbc_overlap(struct wps_registrar *reg,
 			   MAC2STR(pbc->addr));
 		wpa_hexdump(MSG_DEBUG, "WPS: UUID-E",
 			    pbc->uuid_e, WPS_UUID_LEN);
-		if (now.sec > pbc->timestamp.sec + WPS_PBC_WALK_TIME) {
-			wpa_printf(MSG_DEBUG, "WPS: PBC walk time has "
-				   "expired");
+		if (os_reltime_expired(&now, &pbc->timestamp,
+				       WPS_PBC_WALK_TIME)) {
+			wpa_printf(MSG_DEBUG, "WPS: PBC walk time has expired");
 			break;
 		}
 		if (first &&
@@ -748,7 +751,7 @@ int wps_registrar_add_pin(struct wps_registrar *reg, const u8 *addr,
 
 	if (timeout) {
 		p->flags |= PIN_EXPIRES;
-		os_get_time(&p->expiration);
+		os_get_reltime(&p->expiration);
 		p->expiration.sec += timeout;
 	}
 
@@ -797,13 +800,13 @@ static void wps_registrar_remove_pin(struct wps_registrar *reg,
 static void wps_registrar_expire_pins(struct wps_registrar *reg)
 {
 	struct wps_uuid_pin *pin, *prev;
-	struct os_time now;
+	struct os_reltime now;
 
-	os_get_time(&now);
+	os_get_reltime(&now);
 	dl_list_for_each_safe(pin, prev, &reg->pins, struct wps_uuid_pin, list)
 	{
 		if ((pin->flags & PIN_EXPIRES) &&
-		    os_time_before(&pin->expiration, &now)) {
+		    os_reltime_before(&pin->expiration, &now)) {
 			wpa_hexdump(MSG_DEBUG, "WPS: Expired PIN for UUID",
 				    pin->uuid, WPS_UUID_LEN);
 			wps_registrar_remove_pin(reg, pin);
@@ -1037,7 +1040,9 @@ void wps_registrar_complete(struct wps_registrar *registrar, const u8 *uuid_e,
 		wps_registrar_remove_pbc_session(registrar,
 						 uuid_e, NULL);
 		wps_registrar_pbc_completed(registrar);
-		os_get_time(&registrar->pbc_ignore_start);
+#ifdef WPS_WORKAROUNDS
+		os_get_reltime(&registrar->pbc_ignore_start);
+#endif /* WPS_WORKAROUNDS */
 		os_memcpy(registrar->pbc_ignore_uuid, uuid_e, WPS_UUID_LEN);
 	} else {
 		wps_registrar_pin_completed(registrar);
@@ -1140,9 +1145,9 @@ void wps_registrar_probe_req_rx(struct wps_registrar *reg, const u8 *addr,
 #ifdef WPS_WORKAROUNDS
 	if (reg->pbc_ignore_start.sec &&
 	    os_memcmp(attr.uuid_e, reg->pbc_ignore_uuid, WPS_UUID_LEN) == 0) {
-		struct os_time now, dur;
-		os_get_time(&now);
-		os_time_sub(&now, &reg->pbc_ignore_start, &dur);
+		struct os_reltime now, dur;
+		os_get_reltime(&now);
+		os_reltime_sub(&now, &reg->pbc_ignore_start, &dur);
 		if (dur.sec >= 0 && dur.sec < 5) {
 			wpa_printf(MSG_DEBUG, "WPS: Ignore PBC activation "
 				   "based on Probe Request from the Enrollee "
@@ -3189,7 +3194,9 @@ static enum wps_process_res wps_process_wsc_done(struct wps_data *wps,
 						 wps->uuid_e,
 						 wps->p2p_dev_addr);
 		wps_registrar_pbc_completed(wps->wps->registrar);
-		os_get_time(&wps->wps->registrar->pbc_ignore_start);
+#ifdef WPS_WORKAROUNDS
+		os_get_reltime(&wps->wps->registrar->pbc_ignore_start);
+#endif /* WPS_WORKAROUNDS */
 		os_memcpy(wps->wps->registrar->pbc_ignore_uuid, wps->uuid_e,
 			  WPS_UUID_LEN);
 	} else {
@@ -3446,7 +3453,7 @@ int wps_registrar_config_ap(struct wps_registrar *reg,
 			    struct wps_credential *cred)
 {
 #ifdef CONFIG_WPS2
-	printf("encr_type=0x%x\n", cred->encr_type);
+	wpa_printf(MSG_DEBUG, "WPS: encr_type=0x%x", cred->encr_type);
 	if (!(cred->encr_type & (WPS_ENCR_NONE | WPS_ENCR_TKIP |
 				 WPS_ENCR_AES))) {
 		if (cred->encr_type & WPS_ENCR_WEP) {

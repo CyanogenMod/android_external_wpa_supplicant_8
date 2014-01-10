@@ -105,6 +105,7 @@ struct tls_connection {
 	unsigned int ca_cert_verify:1;
 	unsigned int cert_probe:1;
 	unsigned int server_cert_only:1;
+	unsigned int server:1;
 
 	u8 srv_cert_hash[32];
 
@@ -112,6 +113,7 @@ struct tls_connection {
 
 	X509 *peer_cert;
 	X509 *peer_issuer;
+	X509 *peer_issuer_issuer;
 };
 
 
@@ -1385,6 +1387,8 @@ static int tls_verify_cb(int preverify_ok, X509_STORE_CTX *x509_ctx)
 		conn->peer_cert = err_cert;
 	else if (depth == 1)
 		conn->peer_issuer = err_cert;
+	else if (depth == 2)
+		conn->peer_issuer_issuer = err_cert;
 
 	context = conn->context;
 	match = conn->subject_match;
@@ -1476,6 +1480,16 @@ static int tls_verify_cb(int preverify_ok, X509_STORE_CTX *x509_ctx)
 		openssl_tls_fail_event(conn, err_cert, err, depth, buf,
 				       "Server certificate chain probe",
 				       TLS_FAIL_SERVER_CHAIN_PROBE);
+	}
+
+	if (!conn->server && err_cert && preverify_ok && depth == 0 &&
+	    (err_cert->ex_flags & EXFLAG_XKUSAGE) &&
+	    (err_cert->ex_xkusage & XKU_SSL_CLIENT)) {
+		wpa_printf(MSG_WARNING, "TLS: Server used client certificate");
+		openssl_tls_fail_event(conn, err_cert, err, depth, buf,
+				       "Server used client certificate",
+				       TLS_FAIL_SERVER_USED_CLIENT_CERT);
+		preverify_ok = 0;
 	}
 
 	if (preverify_ok && context->event_cb != NULL)
@@ -2529,6 +2543,8 @@ openssl_handshake(struct tls_connection *conn, const struct wpabuf *in_data,
 	int res;
 	struct wpabuf *out_data;
 
+	conn->server = !!server;
+
 	/*
 	 * Give TLS handshake data from the server (if available) to OpenSSL
 	 * for processing.
@@ -2890,7 +2906,6 @@ int tls_connection_get_write_alerts(void *ssl_ctx, struct tls_connection *conn)
 static void ocsp_debug_print_resp(OCSP_RESPONSE *rsp)
 {
 #ifndef CONFIG_NO_STDOUT_DEBUG
-	extern int wpa_debug_level;
 	BIO *out;
 	size_t rlen;
 	char *txt;
@@ -2931,6 +2946,8 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 	OCSP_BASICRESP *basic;
 	OCSP_CERTID *id;
 	ASN1_GENERALIZEDTIME *produced_at, *this_update, *next_update;
+	X509_STORE *store;
+	STACK_OF(X509) *certs = NULL;
 
 	len = SSL_get_tlsext_status_ocsp_resp(s, &p);
 	if (!p) {
@@ -2961,8 +2978,41 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 		return 0;
 	}
 
-	status = OCSP_basic_verify(basic, NULL, SSL_CTX_get_cert_store(s->ctx),
-				   0);
+	store = SSL_CTX_get_cert_store(s->ctx);
+	if (conn->peer_issuer) {
+		wpa_printf(MSG_DEBUG, "OpenSSL: Add issuer");
+		X509_print_fp(stdout, conn->peer_issuer);
+
+		if (X509_STORE_add_cert(store, conn->peer_issuer) != 1) {
+			tls_show_errors(MSG_INFO, __func__,
+					"OpenSSL: Could not add issuer to certificate store\n");
+		}
+		certs = sk_X509_new_null();
+		if (certs) {
+			X509 *cert;
+			cert = X509_dup(conn->peer_issuer);
+			if (cert && !sk_X509_push(certs, cert)) {
+				tls_show_errors(
+					MSG_INFO, __func__,
+					"OpenSSL: Could not add issuer to OCSP responder trust store\n");
+				X509_free(cert);
+				sk_X509_free(certs);
+				certs = NULL;
+			}
+			if (conn->peer_issuer_issuer) {
+				cert = X509_dup(conn->peer_issuer_issuer);
+				if (cert && !sk_X509_push(certs, cert)) {
+					tls_show_errors(
+						MSG_INFO, __func__,
+						"OpenSSL: Could not add issuer to OCSP responder trust store\n");
+					X509_free(cert);
+				}
+			}
+		}
+	}
+
+	status = OCSP_basic_verify(basic, certs, store, OCSP_TRUSTOTHER);
+	sk_X509_pop_free(certs, X509_free);
 	if (status <= 0) {
 		tls_show_errors(MSG_INFO, __func__,
 				"OpenSSL: OCSP response failed verification");

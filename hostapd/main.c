@@ -25,15 +25,7 @@
 #include "ap/ap_drv_ops.h"
 #include "config_file.h"
 #include "eap_register.h"
-#include "dump_state.h"
 #include "ctrl_iface.h"
-
-
-extern int wpa_debug_level;
-extern int wpa_debug_show_keys;
-extern int wpa_debug_timestamp;
-
-extern struct wpa_driver_ops *wpa_drivers[];
 
 
 struct hapd_global {
@@ -302,10 +294,7 @@ static void handle_reload(int sig, void *signal_ctx)
 
 static void handle_dump_state(int sig, void *signal_ctx)
 {
-#ifdef HOSTAPD_DUMP_STATE
-	struct hapd_interfaces *interfaces = signal_ctx;
-	hostapd_for_each_interface(interfaces, handle_dump_state_iface, NULL);
-#endif /* HOSTAPD_DUMP_STATE */
+	/* Not used anymore - ignore signal */
 }
 #endif /* CONFIG_NATIVE_WINDOWS */
 
@@ -424,7 +413,7 @@ static void show_version(void)
 		"hostapd v" VERSION_STR "\n"
 		"User space daemon for IEEE 802.11 AP management,\n"
 		"IEEE 802.1X/WPA/WPA2/EAP/RADIUS Authenticator\n"
-		"Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi> "
+		"Copyright (c) 2002-2014, Jouni Malinen <j@w1.fi> "
 		"and contributors\n");
 }
 

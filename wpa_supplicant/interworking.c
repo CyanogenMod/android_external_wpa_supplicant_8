@@ -1,6 +1,7 @@
 /*
  * Interworking (IEEE 802.11u)
  * Copyright (c) 2011-2013, Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -520,12 +521,13 @@ static int nai_realm_cred_username(struct nai_realm_eap *eap)
 	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL)
 		return 0; /* method not supported */
 
-	if (eap->method != EAP_TYPE_TTLS && eap->method != EAP_TYPE_PEAP) {
+	if (eap->method != EAP_TYPE_TTLS && eap->method != EAP_TYPE_PEAP &&
+	    eap->method != EAP_TYPE_FAST) {
 		/* Only tunneled methods with username/password supported */
 		return 0;
 	}
 
-	if (eap->method == EAP_TYPE_PEAP) {
+	if (eap->method == EAP_TYPE_PEAP || eap->method == EAP_TYPE_FAST) {
 		if (eap->inner_method &&
 		    eap_get_name(EAP_VENDOR_IETF, eap->inner_method) == NULL)
 			return 0;
@@ -1416,6 +1418,13 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 		}
 		break;
 	case EAP_TYPE_PEAP:
+	case EAP_TYPE_FAST:
+		if (wpa_config_set(ssid, "phase1", "\"fast_provisioning=2\"",
+				   0) < 0)
+			goto fail;
+		if (wpa_config_set(ssid, "pac_file",
+				   "\"blob://pac_interworking\"", 0) < 0)
+			goto fail;
 		os_snprintf(buf, sizeof(buf), "\"auth=%s\"",
 			    eap_get_name(EAP_VENDOR_IETF,
 					 eap->inner_method ?
@@ -2194,7 +2203,8 @@ static void interworking_scan_res_handler(struct wpa_supplicant *wpa_s,
 }
 
 
-int interworking_select(struct wpa_supplicant *wpa_s, int auto_select)
+int interworking_select(struct wpa_supplicant *wpa_s, int auto_select,
+			int *freqs)
 {
 	interworking_stop_fetch_anqp(wpa_s);
 	wpa_s->network_select = 1;
@@ -2206,6 +2216,8 @@ int interworking_select(struct wpa_supplicant *wpa_s, int auto_select)
 	wpa_s->scan_res_handler = interworking_scan_res_handler;
 	wpa_s->normal_scans = 0;
 	wpa_s->scan_req = MANUAL_SCAN_REQ;
+	os_free(wpa_s->manual_scan_freqs);
+	wpa_s->manual_scan_freqs = freqs;
 	wpa_s->after_wps = 0;
 	wpa_s->known_wps_freq = 0;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
@@ -2220,6 +2232,7 @@ static void gas_resp_cb(void *ctx, const u8 *addr, u8 dialog_token,
 			const struct wpabuf *resp, u16 status_code)
 {
 	struct wpa_supplicant *wpa_s = ctx;
+	struct wpabuf *n;
 
 	wpa_msg(wpa_s, MSG_INFO, GAS_RESPONSE_INFO "addr=" MACSTR
 		" dialog_token=%d status_code=%d resp_len=%d",
@@ -2228,10 +2241,14 @@ static void gas_resp_cb(void *ctx, const u8 *addr, u8 dialog_token,
 	if (!resp)
 		return;
 
-	wpabuf_free(wpa_s->last_gas_resp);
-	wpa_s->last_gas_resp = wpabuf_dup(resp);
-	if (wpa_s->last_gas_resp == NULL)
+	n = wpabuf_dup(resp);
+	if (n == NULL)
 		return;
+	wpabuf_free(wpa_s->prev_gas_resp);
+	wpa_s->prev_gas_resp = wpa_s->last_gas_resp;
+	os_memcpy(wpa_s->prev_gas_addr, wpa_s->last_gas_addr, ETH_ALEN);
+	wpa_s->prev_gas_dialog_token = wpa_s->last_gas_dialog_token;
+	wpa_s->last_gas_resp = n;
 	os_memcpy(wpa_s->last_gas_addr, addr, ETH_ALEN);
 	wpa_s->last_gas_dialog_token = dialog_token;
 }

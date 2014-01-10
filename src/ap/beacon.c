@@ -4,14 +4,8 @@
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2008-2012, Jouni Malinen <j@w1.fi>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See README and COPYING for more details.
+ * This software may be distributed under the terms of the BSD license.
+ * See README for more details.
  */
 
 #include "utils/includes.h"
@@ -21,7 +15,6 @@
 #include "utils/common.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
-#include "drivers/driver.h"
 #include "wps/wps_defs.h"
 #include "p2p/p2p.h"
 #include "hostapd.h"
@@ -207,10 +200,10 @@ static u8 * hostapd_eid_csa(struct hostapd_data *hapd, u8 *eid)
 {
 	u8 chan;
 
-	if (!hapd->iface->cs_freq)
+	if (!hapd->iface->cs_freq_params.freq)
 		return eid;
 
-	if (ieee80211_freq_to_chan(hapd->iface->cs_freq, &chan) ==
+	if (ieee80211_freq_to_chan(hapd->iface->cs_freq_params.freq, &chan) ==
 	    NUM_HOSTAPD_MODES)
 		return eid;
 
@@ -224,13 +217,56 @@ static u8 * hostapd_eid_csa(struct hostapd_data *hapd, u8 *eid)
 }
 
 
+static u8 * hostapd_eid_secondary_channel(struct hostapd_data *hapd, u8 *eid)
+{
+	u8 sec_ch;
+
+	if (!hapd->iface->cs_freq_params.sec_channel_offset)
+		return eid;
+
+	if (hapd->iface->cs_freq_params.sec_channel_offset == -1)
+		sec_ch = HT_INFO_HT_PARAM_SECONDARY_CHNL_BELOW;
+	else if (hapd->iface->cs_freq_params.sec_channel_offset == 1)
+		sec_ch = HT_INFO_HT_PARAM_SECONDARY_CHNL_ABOVE;
+	else
+		return eid;
+
+	*eid++ = WLAN_EID_SECONDARY_CHANNEL_OFFSET;
+	*eid++ = 1;
+	*eid++ = sec_ch;
+
+	return eid;
+}
+
+
+static u8 * hostapd_add_csa_elems(struct hostapd_data *hapd, u8 *pos,
+				  u8 *start, unsigned int *csa_counter_off)
+{
+	u8 *old_pos = pos;
+
+	if (!csa_counter_off)
+		return pos;
+
+	*csa_counter_off = 0;
+	pos = hostapd_eid_csa(hapd, pos);
+
+	if (pos != old_pos) {
+		/* save an offset to the counter - should be last byte */
+		*csa_counter_off = pos - start - 1;
+		pos = hostapd_eid_secondary_channel(hapd, pos);
+	}
+
+	return pos;
+}
+
+
 static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 				   struct sta_info *sta,
 				   const struct ieee80211_mgmt *req,
 				   int is_p2p, size_t *resp_len)
 {
 	struct ieee80211_mgmt *resp;
-	u8 *pos, *epos, *old_pos;
+	u8 *pos, *epos;
 	size_t buflen;
 
 #define MAX_PROBERESP_LEN 768
@@ -304,13 +340,8 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 	pos = hostapd_eid_adv_proto(hapd, pos);
 	pos = hostapd_eid_roaming_consortium(hapd, pos);
 
-	old_pos = pos;
-	pos = hostapd_eid_csa(hapd, pos);
-
-	/* save an offset to the counter - should be last byte */
-	hapd->iface->cs_c_off_proberesp = (pos != old_pos) ?
-		pos - (u8 *) resp - 1 : 0;
-
+	pos = hostapd_add_csa_elems(hapd, pos, (u8 *)resp,
+				    &hapd->iface->cs_c_off_proberesp);
 #ifdef CONFIG_IEEE80211AC
 	pos = hostapd_eid_vht_capabilities(hapd, pos);
 	pos = hostapd_eid_vht_operation(hapd, pos);
@@ -626,7 +657,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	size_t resp_len = 0;
 #ifdef NEED_AP_MLME
 	u16 capab_info;
-	u8 *pos, *tailpos, *old_pos;
+	u8 *pos, *tailpos;
 
 #define BEACON_HEAD_BUF_SIZE 256
 #define BEACON_TAIL_BUF_SIZE 512
@@ -721,11 +752,8 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	tailpos = hostapd_eid_interworking(hapd, tailpos);
 	tailpos = hostapd_eid_adv_proto(hapd, tailpos);
 	tailpos = hostapd_eid_roaming_consortium(hapd, tailpos);
-	old_pos = tailpos;
-	tailpos = hostapd_eid_csa(hapd, tailpos);
-	hapd->iface->cs_c_off_beacon = (old_pos != tailpos) ?
-		tailpos - tail - 1 : 0;
-
+	tailpos = hostapd_add_csa_elems(hapd, tailpos, tail,
+					&hapd->iface->cs_c_off_beacon);
 #ifdef CONFIG_IEEE80211AC
 	tailpos = hostapd_eid_vht_capabilities(hapd, tailpos);
 	tailpos = hostapd_eid_vht_operation(hapd, tailpos);
@@ -844,20 +872,21 @@ void ieee802_11_free_ap_params(struct wpa_driver_ap_params *params)
 }
 
 
-void ieee802_11_set_beacon(struct hostapd_data *hapd)
+int ieee802_11_set_beacon(struct hostapd_data *hapd)
 {
 	struct wpa_driver_ap_params params;
 	struct wpabuf *beacon, *proberesp, *assocresp;
+	int res, ret = -1;
 
 	if (hapd->iface->csa_in_progress) {
 		wpa_printf(MSG_ERROR, "Cannot set beacons during CSA period");
-		return;
+		return -1;
 	}
 
 	hapd->beacon_set_done = 1;
 
 	if (ieee802_11_build_ap_params(hapd, &params) < 0)
-		return;
+		return -1;
 
 	if (hostapd_build_ap_extra_ies(hapd, &beacon, &proberesp, &assocresp) <
 	    0)
@@ -867,31 +896,46 @@ void ieee802_11_set_beacon(struct hostapd_data *hapd)
 	params.proberesp_ies = proberesp;
 	params.assocresp_ies = assocresp;
 
-	if (hostapd_drv_set_ap(hapd, &params))
-		wpa_printf(MSG_ERROR, "Failed to set beacon parameters");
+	res = hostapd_drv_set_ap(hapd, &params);
 	hostapd_free_ap_extra_ies(hapd, beacon, proberesp, assocresp);
+	if (res)
+		wpa_printf(MSG_ERROR, "Failed to set beacon parameters");
+	else
+		ret = 0;
 fail:
 	ieee802_11_free_ap_params(&params);
+	return ret;
 }
 
 
-void ieee802_11_set_beacons(struct hostapd_iface *iface)
+int ieee802_11_set_beacons(struct hostapd_iface *iface)
 {
 	size_t i;
+	int ret = 0;
+
 	for (i = 0; i < iface->num_bss; i++) {
-		if (iface->bss[i]->started)
-			ieee802_11_set_beacon(iface->bss[i]);
+		if (iface->bss[i]->started &&
+		    ieee802_11_set_beacon(iface->bss[i]) < 0)
+			ret = -1;
 	}
+
+	return ret;
 }
 
 
 /* only update beacons if started */
-void ieee802_11_update_beacons(struct hostapd_iface *iface)
+int ieee802_11_update_beacons(struct hostapd_iface *iface)
 {
 	size_t i;
-	for (i = 0; i < iface->num_bss; i++)
-		if (iface->bss[i]->beacon_set_done && iface->bss[i]->started)
-			ieee802_11_set_beacon(iface->bss[i]);
+	int ret = 0;
+
+	for (i = 0; i < iface->num_bss; i++) {
+		if (iface->bss[i]->beacon_set_done && iface->bss[i]->started &&
+		    ieee802_11_set_beacon(iface->bss[i]) < 0)
+			ret = -1;
+	}
+
+	return ret;
 }
 
 #endif /* CONFIG_NATIVE_WINDOWS */

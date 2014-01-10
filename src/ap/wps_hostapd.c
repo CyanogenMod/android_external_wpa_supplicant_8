@@ -287,6 +287,20 @@ static void wps_reload_config(void *eloop_data, void *user_ctx)
 }
 
 
+void hostapd_wps_eap_completed(struct hostapd_data *hapd)
+{
+	/*
+	 * Reduce race condition of the station trying to reconnect immediately
+	 * after AP reconfiguration through WPS by rescheduling the reload
+	 * timeout to happen after EAP completion rather than the originally
+	 * scheduled 100 ms after new configuration became known.
+	 */
+	if (eloop_deplete_timeout(0, 0, wps_reload_config, hapd->iface, NULL) ==
+	    1)
+		wpa_printf(MSG_DEBUG, "WPS: Reschedule immediate configuration reload");
+}
+
+
 static void hapd_new_ap_event(struct hostapd_data *hapd, const u8 *attr,
 			      size_t attr_len)
 {
@@ -1227,6 +1241,7 @@ void hostapd_deinit_wps(struct hostapd_data *hapd)
 {
 	eloop_cancel_timeout(hostapd_wps_reenable_ap_pin, hapd, NULL);
 	eloop_cancel_timeout(hostapd_wps_ap_pin_timeout, hapd, NULL);
+	eloop_cancel_timeout(wps_reload_config, hapd->iface, NULL);
 	if (hapd->wps == NULL)
 		return;
 #ifdef CONFIG_WPS_UPNP

@@ -12,9 +12,6 @@
 /* STA flags */
 #define WLAN_STA_AUTH BIT(0)
 #define WLAN_STA_ASSOC BIT(1)
-#define WLAN_STA_PS BIT(2)
-#define WLAN_STA_TIM BIT(3)
-#define WLAN_STA_PERM BIT(4)
 #define WLAN_STA_AUTHORIZED BIT(5)
 #define WLAN_STA_PENDING_POLL BIT(6) /* pending activity poll not ACKed */
 #define WLAN_STA_SHORT_PREAMBLE BIT(7)
@@ -29,6 +26,7 @@
 #define WLAN_STA_WPS2 BIT(16)
 #define WLAN_STA_GAS BIT(17)
 #define WLAN_STA_VHT BIT(18)
+#define WLAN_STA_WNM_SLEEP_MODE BIT(19)
 #define WLAN_STA_PENDING_DISASSOC_CB BIT(29)
 #define WLAN_STA_PENDING_DEAUTH_CB BIT(30)
 #define WLAN_STA_NONERP BIT(31)
@@ -78,7 +76,7 @@ struct sta_info {
 
 	u32 acct_session_id_hi;
 	u32 acct_session_id_lo;
-	time_t acct_session_start;
+	struct os_reltime acct_session_start;
 	int acct_session_started;
 	int acct_terminate_cause; /* Acct-Terminate-Cause */
 	int acct_interim_interval; /* Acct-Interim-Interval */
@@ -194,5 +192,7 @@ static inline int ap_sta_is_authorized(struct sta_info *sta)
 
 void ap_sta_deauth_cb(struct hostapd_data *hapd, struct sta_info *sta);
 void ap_sta_disassoc_cb(struct hostapd_data *hapd, struct sta_info *sta);
+
+int ap_sta_flags_txt(u32 flags, char *buf, size_t buflen);
 
 #endif /* STA_INFO_H */

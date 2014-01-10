@@ -1,6 +1,6 @@
 /*
  * hostapd - command line interface for hostapd daemon
- * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -18,7 +18,7 @@
 
 static const char *hostapd_cli_version =
 "hostapd_cli v" VERSION_STR "\n"
-"Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2004-2014, Jouni Malinen <j@w1.fi> and contributors";
 
 
 static const char *hostapd_cli_license =
@@ -218,12 +218,19 @@ static int hostapd_cli_cmd_relog(struct wpa_ctrl *ctrl, int argc, char *argv[])
 
 static int hostapd_cli_cmd_status(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
+	if (argc > 0 && os_strcmp(argv[0], "driver") == 0)
+		return wpa_ctrl_command(ctrl, "STATUS-DRIVER");
 	return wpa_ctrl_command(ctrl, "STATUS");
 }
 
 
 static int hostapd_cli_cmd_mib(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
+	if (argc > 0) {
+		char buf[100];
+		os_snprintf(buf, sizeof(buf), "MIB %s", argv[0]);
+		return wpa_ctrl_command(ctrl, buf);
+	}
 	return wpa_ctrl_command(ctrl, "MIB");
 }
 
@@ -276,12 +283,15 @@ static void hostapd_cli_action_process(char *msg, size_t len)
 static int hostapd_cli_cmd_sta(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	char buf[64];
-	if (argc != 1) {
-		printf("Invalid 'sta' command - exactly one argument, STA "
+	if (argc < 1) {
+		printf("Invalid 'sta' command - at least one argument, STA "
 		       "address, is required.\n");
 		return -1;
 	}
-	snprintf(buf, sizeof(buf), "STA %s", argv[0]);
+	if (argc > 1)
+		snprintf(buf, sizeof(buf), "STA %s %s", argv[0], argv[1]);
+	else
+		snprintf(buf, sizeof(buf), "STA %s", argv[0]);
 	return wpa_ctrl_command(ctrl, buf);
 }
 

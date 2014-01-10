@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant - Scanning
- * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -21,7 +21,6 @@
 #include "hs20_supplicant.h"
 #include "notify.h"
 #include "bss.h"
-#include "gas_query.h"
 #include "scan.h"
 
 
@@ -142,71 +141,37 @@ static void wpa_supplicant_assoc_try(struct wpa_supplicant *wpa_s,
 }
 
 
-static int int_array_len(const int *a)
+static void wpas_trigger_scan_cb(struct wpa_radio_work *work, int deinit)
 {
-	int i;
-	for (i = 0; a && a[i]; i++)
-		;
-	return i;
-}
+	struct wpa_supplicant *wpa_s = work->wpa_s;
+	struct wpa_driver_scan_params *params = work->ctx;
+	int ret;
 
-
-static void int_array_concat(int **res, const int *a)
-{
-	int reslen, alen, i;
-	int *n;
-
-	reslen = int_array_len(*res);
-	alen = int_array_len(a);
-
-	n = os_realloc_array(*res, reslen + alen + 1, sizeof(int));
-	if (n == NULL) {
-		os_free(*res);
-		*res = NULL;
+	if (deinit) {
+		wpa_scan_free_params(params);
 		return;
 	}
-	for (i = 0; i <= alen; i++)
-		n[reslen + i] = a[i];
-	*res = n;
-}
 
+	wpa_supplicant_notify_scanning(wpa_s, 1);
 
-static int freq_cmp(const void *a, const void *b)
-{
-	int _a = *(int *) a;
-	int _b = *(int *) b;
-
-	if (_a == 0)
-		return 1;
-	if (_b == 0)
-		return -1;
-	return _a - _b;
-}
-
-
-static void int_array_sort_unique(int *a)
-{
-	int alen;
-	int i, j;
-
-	if (a == NULL)
+	if (wpa_s->clear_driver_scan_cache)
+		params->only_new_results = 1;
+	ret = wpa_drv_scan(wpa_s, params);
+	wpa_scan_free_params(params);
+	work->ctx = NULL;
+	if (ret) {
+		wpa_supplicant_notify_scanning(wpa_s, 0);
+		wpas_notify_scan_done(wpa_s, 0);
+		radio_work_done(work);
 		return;
-
-	alen = int_array_len(a);
-	qsort(a, alen, sizeof(int), freq_cmp);
-
-	i = 0;
-	j = 1;
-	while (a[i] && a[j]) {
-		if (a[i] == a[j]) {
-			j++;
-			continue;
-		}
-		a[++i] = a[j++];
 	}
-	if (a[i])
-		i++;
-	a[i] = 0;
+
+	os_get_reltime(&wpa_s->scan_trigger_time);
+	wpa_s->scan_runs++;
+	wpa_s->normal_scans++;
+	wpa_s->own_scan_requested = 1;
+	wpa_s->clear_driver_scan_cache = 0;
+	wpa_s->scan_work = work;
 }
 
 
@@ -219,21 +184,24 @@ static void int_array_sort_unique(int *a)
 int wpa_supplicant_trigger_scan(struct wpa_supplicant *wpa_s,
 				struct wpa_driver_scan_params *params)
 {
-	int ret;
+	struct wpa_driver_scan_params *ctx;
 
-	wpa_supplicant_notify_scanning(wpa_s, 1);
-
-	ret = wpa_drv_scan(wpa_s, params);
-	if (ret) {
-		wpa_supplicant_notify_scanning(wpa_s, 0);
-		wpas_notify_scan_done(wpa_s, 0);
-	} else {
-		os_get_time(&wpa_s->scan_trigger_time);
-		wpa_s->scan_runs++;
-		wpa_s->normal_scans++;
+	if (wpa_s->scan_work) {
+		wpa_dbg(wpa_s, MSG_INFO, "Reject scan trigger since one is already pending");
+		return -1;
 	}
 
-	return ret;
+	ctx = wpa_scan_clone_params(params);
+	if (ctx == NULL)
+		return -1;
+
+	if (radio_add_work(wpa_s, 0, "scan", 0, wpas_trigger_scan_cb, ctx) < 0)
+	{
+		wpa_scan_free_params(ctx);
+		return -1;
+	}
+
+	return 0;
 }
 
 
@@ -366,7 +334,8 @@ static void wpa_supplicant_optimize_freqs(
 		if (params->freqs)
 			params->freqs[0] = wpa_s->wps_freq;
 		wpa_s->after_wps--;
-	}
+	} else if (wpa_s->after_wps)
+		wpa_s->after_wps--;
 
 	if (params->freqs == NULL && wpa_s->known_wps_freq && wpa_s->wps_freq)
 	{
@@ -554,14 +523,12 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 
 	if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Skip scan - interface disabled");
-		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 
 	if (wpa_s->disconnected && wpa_s->scan_req == NORMAL_SCAN_REQ) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Disconnected - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
-		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 
@@ -579,7 +546,6 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	    wpa_s->scan_req == NORMAL_SCAN_REQ) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "No enabled networks - do not scan");
 		wpa_supplicant_set_state(wpa_s, WPA_INACTIVE);
-		wpas_p2p_continue_after_scan(wpa_s);
 		return;
 	}
 
@@ -597,29 +563,12 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 #ifdef CONFIG_P2P
-	if (wpas_p2p_in_progress(wpa_s) || wpas_wpa_is_in_progress(wpa_s, 0)) {
-		if (wpa_s->sta_scan_pending &&
-		    wpas_p2p_in_progress(wpa_s) == 2 &&
-		    wpa_s->global->p2p_cb_on_scan_complete) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Process pending station "
-				"mode scan during P2P search");
-		} else {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Delay station mode scan "
-				"while P2P operation is in progress");
-			wpa_s->sta_scan_pending = 1;
-			wpa_supplicant_req_scan(wpa_s, 5, 0);
-			return;
-		}
-	}
-#endif /* CONFIG_P2P */
-
-#ifdef CONFIG_GAS
-	if (gas_query_in_progress(wpa_s->gas)) {
-		wpa_dbg(wpa_s, MSG_DEBUG, "Delay scan while GAS query is in progress");
-		wpa_supplicant_req_scan(wpa_s, 1, 0);
+	if (wpas_p2p_in_progress(wpa_s)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Delay station mode scan while P2P operation is in progress");
+		wpa_supplicant_req_scan(wpa_s, 5, 0);
 		return;
 	}
-#endif /* CONFIG_GAS */
+#endif /* CONFIG_P2P */
 
 	if (wpa_s->conf->ap_scan == 2)
 		max_ssids = 1;
@@ -766,6 +715,9 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		wpa_dbg(wpa_s, MSG_DEBUG, "Include wildcard SSID in "
 			"the scan request");
 		params.num_ssids++;
+	} else if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
+		   wpa_s->manual_scan_passive && params.num_ssids == 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Use passive scan based on manual request");
 	} else {
 		wpa_s->prev_scan_ssid = WILDCARD_SSID_SCAN;
 		params.num_ssids++;
@@ -778,6 +730,17 @@ ssid_list_set:
 
 	wpa_supplicant_optimize_freqs(wpa_s, &params);
 	extra_ie = wpa_supplicant_extra_ies(wpa_s);
+
+	if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
+	    wpa_s->manual_scan_only_new)
+		params.only_new_results = 1;
+
+	if (wpa_s->last_scan_req == MANUAL_SCAN_REQ && params.freqs == NULL &&
+	    wpa_s->manual_scan_freqs) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Limit manual scan to specified channels");
+		params.freqs = wpa_s->manual_scan_freqs;
+		wpa_s->manual_scan_freqs = NULL;
+	}
 
 	if (params.freqs == NULL && wpa_s->next_scan_freqs) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Optimize scan based on previously "
@@ -867,6 +830,13 @@ scan:
 
 	ret = wpa_supplicant_trigger_scan(wpa_s, scan_params);
 
+	if (ret && wpa_s->last_scan_req == MANUAL_SCAN_REQ && params.freqs &&
+	    !wpa_s->manual_scan_freqs) {
+		/* Restore manual_scan_freqs for the next attempt */
+		wpa_s->manual_scan_freqs = params.freqs;
+		params.freqs = NULL;
+	}
+
 	wpabuf_free(extra_ie);
 	os_free(params.freqs);
 	os_free(params.filter_ssids);
@@ -918,17 +888,19 @@ void wpa_supplicant_update_scan_int(struct wpa_supplicant *wpa_s, int sec)
  */
 void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 {
-	if (eloop_deplete_timeout(sec, usec, wpa_supplicant_scan, wpa_s, NULL))
-	{
-		wpa_dbg(wpa_s, MSG_DEBUG, "Rescheduling scan request: %d sec %d usec",
+	int res = eloop_deplete_timeout(sec, usec, wpa_supplicant_scan, wpa_s,
+					NULL);
+	if (res == 1) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Rescheduling scan request: %d.%06d sec",
 			sec, usec);
-		return;
+	} else if (res == 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Ignore new scan request for %d.%06d sec since an earlier request is scheduled to trigger sooner",
+			sec, usec);
+	} else {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Setting scan request: %d.%06d sec",
+			sec, usec);
+		eloop_register_timeout(sec, usec, wpa_supplicant_scan, wpa_s, NULL);
 	}
-
-	wpa_dbg(wpa_s, MSG_DEBUG, "Setting scan request: %d sec %d usec",
-		sec, usec);
-	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
-	eloop_register_timeout(sec, usec, wpa_supplicant_scan, wpa_s, NULL);
 }
 
 
@@ -1200,7 +1172,6 @@ void wpa_supplicant_cancel_scan(struct wpa_supplicant *wpa_s)
 {
 	wpa_dbg(wpa_s, MSG_DEBUG, "Cancelling scan request");
 	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
-	wpas_p2p_continue_after_scan(wpa_s);
 }
 
 
@@ -1663,12 +1634,12 @@ wpa_supplicant_get_scan_results(struct wpa_supplicant *wpa_s,
 		 * Make sure we have a valid timestamp if the driver wrapper
 		 * does not set this.
 		 */
-		os_get_time(&scan_res->fetch_time);
+		os_get_reltime(&scan_res->fetch_time);
 	}
 	filter_scan_res(wpa_s, scan_res);
 
 #ifdef CONFIG_WPS
-	if (wpas_wps_in_progress(wpa_s)) {
+	if (wpas_wps_searching(wpa_s)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "WPS: Order scan results with WPS "
 			"provisioning rules");
 		compar = wpa_scan_result_wps_compar;
@@ -1720,13 +1691,104 @@ void scan_only_handler(struct wpa_supplicant *wpa_s,
 		       struct wpa_scan_results *scan_res)
 {
 	wpa_dbg(wpa_s, MSG_DEBUG, "Scan-only results received");
-	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
+	if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
+	    wpa_s->manual_scan_use_id && wpa_s->own_scan_running) {
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS "id=%u",
+			     wpa_s->manual_scan_id);
+		wpa_s->manual_scan_use_id = 0;
+	} else {
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
+	}
 	wpas_notify_scan_results(wpa_s);
 	wpas_notify_scan_done(wpa_s, 1);
+	if (wpa_s->scan_work) {
+		struct wpa_radio_work *work = wpa_s->scan_work;
+		wpa_s->scan_work = NULL;
+		radio_work_done(work);
+	}
 }
 
 
 int wpas_scan_scheduled(struct wpa_supplicant *wpa_s)
 {
 	return eloop_is_timeout_registered(wpa_supplicant_scan, wpa_s, NULL);
+}
+
+
+struct wpa_driver_scan_params *
+wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
+{
+	struct wpa_driver_scan_params *params;
+	size_t i;
+	u8 *n;
+
+	params = os_zalloc(sizeof(*params));
+	if (params == NULL)
+		return NULL;
+
+	for (i = 0; i < src->num_ssids; i++) {
+		if (src->ssids[i].ssid) {
+			n = os_malloc(src->ssids[i].ssid_len);
+			if (n == NULL)
+				goto failed;
+			os_memcpy(n, src->ssids[i].ssid,
+				  src->ssids[i].ssid_len);
+			params->ssids[i].ssid = n;
+			params->ssids[i].ssid_len = src->ssids[i].ssid_len;
+		}
+	}
+	params->num_ssids = src->num_ssids;
+
+	if (src->extra_ies) {
+		n = os_malloc(src->extra_ies_len);
+		if (n == NULL)
+			goto failed;
+		os_memcpy(n, src->extra_ies, src->extra_ies_len);
+		params->extra_ies = n;
+		params->extra_ies_len = src->extra_ies_len;
+	}
+
+	if (src->freqs) {
+		int len = int_array_len(src->freqs);
+		params->freqs = os_malloc((len + 1) * sizeof(int));
+		if (params->freqs == NULL)
+			goto failed;
+		os_memcpy(params->freqs, src->freqs, (len + 1) * sizeof(int));
+	}
+
+	if (src->filter_ssids) {
+		params->filter_ssids = os_malloc(sizeof(params->filter_ssids) *
+						 src->num_filter_ssids);
+		if (params->filter_ssids == NULL)
+			goto failed;
+		os_memcpy(params->filter_ssids, src->filter_ssids,
+			  sizeof(params->filter_ssids) * src->num_filter_ssids);
+		params->num_filter_ssids = src->num_filter_ssids;
+	}
+
+	params->filter_rssi = src->filter_rssi;
+	params->p2p_probe = src->p2p_probe;
+	params->only_new_results = src->only_new_results;
+
+	return params;
+
+failed:
+	wpa_scan_free_params(params);
+	return NULL;
+}
+
+
+void wpa_scan_free_params(struct wpa_driver_scan_params *params)
+{
+	size_t i;
+
+	if (params == NULL)
+		return;
+
+	for (i = 0; i < params->num_ssids; i++)
+		os_free((u8 *) params->ssids[i].ssid);
+	os_free((u8 *) params->extra_ies);
+	os_free(params->freqs);
+	os_free(params->filter_ssids);
+	os_free(params);
 }

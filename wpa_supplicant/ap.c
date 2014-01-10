@@ -276,7 +276,9 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 
 	if (bss->wpa_group_rekey < 86400 && (bss->wpa & 2) &&
 	    (bss->wpa_group == WPA_CIPHER_CCMP ||
-	     bss->wpa_group == WPA_CIPHER_GCMP)) {
+	     bss->wpa_group == WPA_CIPHER_GCMP ||
+	     bss->wpa_group == WPA_CIPHER_CCMP_256 ||
+	     bss->wpa_group == WPA_CIPHER_GCMP_256)) {
 		/*
 		 * Strong ciphers do not need frequent rekeying, so increase
 		 * the default GTK rekeying period to 24 hours.
@@ -511,7 +513,7 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		wpa_s->key_mgmt = WPA_KEY_MGMT_PSK;
 	else
 		wpa_s->key_mgmt = WPA_KEY_MGMT_NONE;
-	params.key_mgmt_suite = key_mgmt2driver(wpa_s->key_mgmt);
+	params.key_mgmt_suite = wpa_s->key_mgmt;
 
 	wpa_s->pairwise_cipher = wpa_pick_pairwise_cipher(ssid->pairwise_cipher,
 							  1);
@@ -520,8 +522,7 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 			   "cipher.");
 		return -1;
 	}
-	params.pairwise_suite =
-		wpa_cipher_to_suite_driver(wpa_s->pairwise_cipher);
+	params.pairwise_suite = wpa_s->pairwise_cipher;
 	params.group_suite = params.pairwise_suite;
 
 #ifdef CONFIG_P2P
@@ -679,6 +680,8 @@ void ap_eapol_tx_status(void *ctx, const u8 *dst,
 {
 #ifdef NEED_AP_MLME
 	struct wpa_supplicant *wpa_s = ctx;
+	if (!wpa_s->ap_iface)
+		return;
 	hostapd_tx_status(wpa_s->ap_iface->bss[0], dst, data, len, ack);
 #endif /* NEED_AP_MLME */
 }

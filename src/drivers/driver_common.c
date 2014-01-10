@@ -49,7 +49,6 @@ const char * event_to_string(enum wpa_event_type event)
 	E2S(TX_STATUS);
 	E2S(RX_FROM_UNKNOWN);
 	E2S(RX_MGMT);
-	E2S(RX_ACTION);
 	E2S(REMAIN_ON_CHANNEL);
 	E2S(CANCEL_REMAIN_ON_CHANNEL);
 	E2S(MLME_RX);
@@ -65,13 +64,6 @@ const char * event_to_string(enum wpa_event_type event)
 	E2S(UNPROT_DEAUTH);
 	E2S(UNPROT_DISASSOC);
 	E2S(STATION_LOW_ACK);
-	E2S(P2P_DEV_FOUND);
-	E2S(P2P_GO_NEG_REQ_RX);
-	E2S(P2P_GO_NEG_COMPLETED);
-	E2S(P2P_PROV_DISC_REQUEST);
-	E2S(P2P_PROV_DISC_RESPONSE);
-	E2S(P2P_SD_REQUEST);
-	E2S(P2P_SD_RESPONSE);
 	E2S(IBSS_PEER_LOST);
 	E2S(DRIVER_GTK_REKEY);
 	E2S(SCHED_SCAN_STOPPED);
@@ -85,6 +77,7 @@ const char * event_to_string(enum wpa_event_type event)
 	E2S(DFS_CAC_ABORTED);
 	E2S(DFS_NOP_FINISHED);
 	E2S(SURVEY);
+	E2S(SCAN_STARTED);
 	}
 
 	return "UNKNOWN";

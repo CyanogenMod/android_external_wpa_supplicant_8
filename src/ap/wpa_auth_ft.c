@@ -57,7 +57,7 @@ static int wpa_ft_add_tspec(struct wpa_authenticator *wpa_auth,
 			    u8 *tspec_ie, size_t tspec_ielen)
 {
 	if (wpa_auth->cb.add_tspec == NULL) {
-	        wpa_printf(MSG_DEBUG, "FT: add_tspec is not initialized");
+		wpa_printf(MSG_DEBUG, "FT: add_tspec is not initialized");
 		return -1;
 	}
 	return wpa_auth->cb.add_tspec(wpa_auth->cb.ctx, sta_addr, tspec_ie,
@@ -570,8 +570,8 @@ static u8 * wpa_ft_process_rdie(struct wpa_state_machine *sm,
 			else {
 				/* TSPEC accepted; include updated TSPEC in
 				 * response */
-		                rdie->descr_count = 1;
-	                        pos += sizeof(*tspec);
+				rdie->descr_count = 1;
+				pos += sizeof(*tspec);
 			}
 			return pos;
 		}
@@ -633,8 +633,7 @@ u8 * wpa_sm_write_assoc_resp_ies(struct wpa_state_machine *sm, u8 *pos,
 
 	conf = &sm->wpa_auth->conf;
 
-	if (sm->wpa_key_mgmt != WPA_KEY_MGMT_FT_IEEE8021X &&
-	    sm->wpa_key_mgmt != WPA_KEY_MGMT_FT_PSK)
+	if (!wpa_key_mgmt_ft(sm->wpa_key_mgmt))
 		return pos;
 
 	end = pos + max_len;

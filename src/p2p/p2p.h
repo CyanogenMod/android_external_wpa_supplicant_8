@@ -778,6 +778,17 @@ struct p2p_config {
 	 * or 0 if not.
 	 */
 	int (*go_connected)(void *ctx, const u8 *dev_addr);
+
+	/**
+	 * presence_resp - Callback on Presence Response
+	 * @ctx: Callback context from cb_ctx
+	 * @src: Source address (GO's P2P Interface Address)
+	 * @status: Result of the request (P2P_SC_*)
+	 * @noa: Returned NoA value
+	 * @noa_len: Length of the NoA buffer in octets
+	 */
+	void (*presence_resp)(void *ctx, const u8 *src, u8 status,
+			      const u8 *noa, size_t noa_len);
 };
 
 
@@ -1245,7 +1256,7 @@ void p2p_rx_action(struct p2p_data *p2p, const u8 *da, const u8 *sa,
  * start of a pending operation, e.g., to start a pending GO negotiation.
  */
 int p2p_scan_res_handler(struct p2p_data *p2p, const u8 *bssid, int freq,
-			 struct os_time *rx_time, int level, const u8 *ies,
+			 struct os_reltime *rx_time, int level, const u8 *ies,
 			 size_t ies_len);
 
 /**
@@ -1815,13 +1826,6 @@ int p2p_set_no_go_freq(struct p2p_data *p2p,
  */
 int p2p_in_progress(struct p2p_data *p2p);
 
-/**
- * p2p_other_scan_completed - Notify completion of non-P2P scan
- * @p2p: P2P module context from p2p_init()
- * Returns: 0 if P2P module is idle or 1 if an operation was started
- */
-int p2p_other_scan_completed(struct p2p_data *p2p);
-
 const char * p2p_wps_method_text(enum p2p_wps_method method);
 
 /**
@@ -1832,8 +1836,6 @@ const char * p2p_wps_method_text(enum p2p_wps_method method);
  */
 void p2p_set_config_timeout(struct p2p_data *p2p, u8 go_timeout,
 			    u8 client_timeout);
-
-void p2p_increase_search_delay(struct p2p_data *p2p, unsigned int delay);
 
 int p2p_set_wfd_ie_beacon(struct p2p_data *p2p, struct wpabuf *ie);
 int p2p_set_wfd_ie_probe_req(struct p2p_data *p2p, struct wpabuf *ie);

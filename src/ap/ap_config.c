@@ -433,7 +433,6 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	}
 	os_free(conf->eap_user_sqlite);
 
-	os_free(conf->dump_log_name);
 	os_free(conf->eap_req_id_text);
 	os_free(conf->accept_mac);
 	os_free(conf->deny_mac);
@@ -759,7 +758,9 @@ static int hostapd_config_check_bss(struct hostapd_bss_config *bss,
 
 	if (conf->ieee80211n && bss->wpa &&
 	    !(bss->wpa_pairwise & WPA_CIPHER_CCMP) &&
-	    !(bss->rsn_pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP))) {
+	    !(bss->rsn_pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP |
+				   WPA_CIPHER_CCMP_256 | WPA_CIPHER_GCMP_256)))
+	{
 		bss->disable_11n = 1;
 		wpa_printf(MSG_ERROR, "HT (IEEE 802.11n) with WPA/WPA2 "
 			   "requires CCMP/GCMP to be enabled, disabling HT "
@@ -792,7 +793,9 @@ static int hostapd_config_check_bss(struct hostapd_bss_config *bss,
 #ifdef CONFIG_HS20
 	if (bss->hs20 &&
 	    (!(bss->wpa & 2) ||
-	     !(bss->rsn_pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP)))) {
+	     !(bss->rsn_pairwise & (WPA_CIPHER_CCMP | WPA_CIPHER_GCMP |
+				    WPA_CIPHER_CCMP_256 |
+				    WPA_CIPHER_GCMP_256)))) {
 		wpa_printf(MSG_ERROR, "HS 2.0: WPA2-Enterprise/CCMP "
 			   "configuration is required for Hotspot 2.0 "
 			   "functionality");

@@ -1,6 +1,6 @@
 /*
  * wpa_supplicant / WPS integration
- * Copyright (c) 2008-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -54,6 +54,11 @@ static void wpas_wps_clear_ap_info(struct wpa_supplicant *wpa_s)
 
 int wpas_wps_eapol_cb(struct wpa_supplicant *wpa_s)
 {
+#ifdef CONFIG_P2P
+	if (wpas_p2p_wps_eapol_cb(wpa_s) > 0)
+		return 1;
+#endif /* CONFIG_P2P */
+
 	if (!wpa_s->wps_success &&
 	    wpa_s->current_ssid &&
 	    eap_is_wps_pin_enrollee(&wpa_s->current_ssid->eap)) {
@@ -259,31 +264,6 @@ static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
 		    ssid->pairwise_cipher != new_ssid->pairwise_cipher ||
 		    ssid->group_cipher != new_ssid->group_cipher)
 			continue;
-
-		if (ssid->passphrase && new_ssid->passphrase) {
-			if (os_strlen(ssid->passphrase) !=
-			    os_strlen(new_ssid->passphrase))
-				continue;
-			if (os_strcmp(ssid->passphrase, new_ssid->passphrase) !=
-			    0)
-				continue;
-		} else if (ssid->passphrase || new_ssid->passphrase)
-			continue;
-
-		if ((ssid->psk_set || new_ssid->psk_set) &&
-		    os_memcmp(ssid->psk, new_ssid->psk, sizeof(ssid->psk)) != 0)
-			continue;
-
-		if (ssid->auth_alg == WPA_ALG_WEP) {
-			if (ssid->wep_tx_keyidx != new_ssid->wep_tx_keyidx)
-				continue;
-			if (os_memcmp(ssid->wep_key, new_ssid->wep_key,
-				      sizeof(ssid->wep_key)))
-				continue;
-			if (os_memcmp(ssid->wep_key_len, new_ssid->wep_key_len,
-				      sizeof(ssid->wep_key_len)))
-				continue;
-		}
 
 		/* Remove the duplicated older network entry. */
 		wpa_printf(MSG_DEBUG, "Remove duplicate network %d", ssid->id);
@@ -891,6 +871,7 @@ static void wpas_clear_wps(struct wpa_supplicant *wpa_s)
 	wpas_wps_reenable_networks(wpa_s);
 
 	eloop_cancel_timeout(wpas_wps_timeout, wpa_s, NULL);
+	eloop_cancel_timeout(wpas_wps_clear_timeout, wpa_s, NULL);
 
 	/* Remove any existing WPS network from configuration */
 	ssid = wpa_s->conf->ssid;
@@ -1160,6 +1141,9 @@ int wpas_wps_cancel(struct wpa_supplicant *wpa_s)
 	} else {
 		wpas_wps_reenable_networks(wpa_s);
 		wpas_wps_clear_ap_info(wpa_s);
+		if (eloop_cancel_timeout(wpas_wps_clear_timeout, wpa_s, NULL) >
+		    0)
+			wpas_clear_wps(wpa_s);
 	}
 
 	wpa_s->after_wps = 0;
@@ -1298,7 +1282,9 @@ static u16 wps_fix_config_methods(u16 config_methods)
 static void wpas_wps_set_uuid(struct wpa_supplicant *wpa_s,
 			      struct wps_context *wps)
 {
-	wpa_printf(MSG_DEBUG, "WPS: Set UUID for interface %s", wpa_s->ifname);
+	char buf[50];
+	const char *src;
+
 	if (is_nil_uuid(wpa_s->conf->uuid)) {
 		struct wpa_supplicant *first;
 		first = wpa_s->global->ifaces;
@@ -1309,18 +1295,18 @@ static void wpas_wps_set_uuid(struct wpa_supplicant *wpa_s,
 				os_memcpy(wps->uuid,
 					  wpa_s->global->ifaces->wps->uuid,
 					  WPS_UUID_LEN);
-			wpa_hexdump(MSG_DEBUG, "WPS: UUID from the first "
-				    "interface", wps->uuid, WPS_UUID_LEN);
+			src = "from the first interface";
 		} else {
 			uuid_gen_mac_addr(wpa_s->own_addr, wps->uuid);
-			wpa_hexdump(MSG_DEBUG, "WPS: UUID based on MAC "
-				    "address", wps->uuid, WPS_UUID_LEN);
+			src = "based on MAC address";
 		}
 	} else {
 		os_memcpy(wps->uuid, wpa_s->conf->uuid, WPS_UUID_LEN);
-		wpa_hexdump(MSG_DEBUG, "WPS: UUID based on configuration",
-			    wps->uuid, WPS_UUID_LEN);
+		src = "based on configuration";
 	}
+
+	uuid_bin2str(wps->uuid, buf, sizeof(buf));
+	wpa_dbg(wpa_s, MSG_DEBUG, "WPS: UUID %s: %s", src, buf);
 }
 
 
@@ -1959,19 +1945,6 @@ int wpas_wps_terminate_pending(struct wpa_supplicant *wpa_s)
 }
 
 
-int wpas_wps_in_progress(struct wpa_supplicant *wpa_s)
-{
-	struct wpa_ssid *ssid;
-
-	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
-		if (!ssid->disabled && ssid->key_mgmt == WPA_KEY_MGMT_WPS)
-			return 1;
-	}
-
-	return 0;
-}
-
-
 void wpas_wps_update_config(struct wpa_supplicant *wpa_s)
 {
 	struct wps_context *wps = wpa_s->wps;
@@ -2260,8 +2233,9 @@ struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s, int cr)
 
 
 #ifdef CONFIG_WPS_NFC
-struct wpabuf * wpas_wps_er_nfc_handover_sel(struct wpa_supplicant *wpa_s,
-					     int ndef, const char *uuid)
+static struct wpabuf *
+wpas_wps_er_nfc_handover_sel(struct wpa_supplicant *wpa_s, int ndef,
+			     const char *uuid)
 {
 #ifdef CONFIG_WPS_ER
 	struct wpabuf *ret;
@@ -2355,12 +2329,10 @@ int wpas_wps_nfc_report_handover(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_WPS_NFC */
 
 
-extern int wpa_debug_level;
-
 static void wpas_wps_dump_ap_info(struct wpa_supplicant *wpa_s)
 {
 	size_t i;
-	struct os_time now;
+	struct os_reltime now;
 
 	if (wpa_debug_level > MSG_DEBUG)
 		return;
@@ -2368,7 +2340,7 @@ static void wpas_wps_dump_ap_info(struct wpa_supplicant *wpa_s)
 	if (wpa_s->wps_ap == NULL)
 		return;
 
-	os_get_time(&now);
+	os_get_reltime(&now);
 
 	for (i = 0; i < wpa_s->num_wps_ap; i++) {
 		struct wps_ap_info *ap = &wpa_s->wps_ap[i];
@@ -2481,5 +2453,5 @@ void wpas_wps_notify_assoc(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	if (ap == NULL)
 		return;
 	ap->tries++;
-	os_get_time(&ap->last_attempt);
+	os_get_reltime(&ap->last_attempt);
 }

@@ -22,9 +22,6 @@
 #include "config_file.h"
 
 
-extern struct wpa_driver_ops *wpa_drivers[];
-
-
 #ifndef CONFIG_NO_VLAN
 static int hostapd_config_read_vlan_file(struct hostapd_bss_config *bss,
 					 const char *fname)
@@ -1634,7 +1631,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		} else if (os_strcmp(buf, "logger_stdout") == 0) {
 			bss->logger_stdout = atoi(pos);
 		} else if (os_strcmp(buf, "dump_file") == 0) {
-			bss->dump_log_name = os_strdup(pos);
+			wpa_printf(MSG_INFO, "Line %d: DEPRECATED: 'dump_file' configuration variable is not used anymore",
+				   line);
 		} else if (os_strcmp(buf, "ssid") == 0) {
 			bss->ssid.ssid_len = os_strlen(pos);
 			if (bss->ssid.ssid_len > HOSTAPD_MAX_SSID_LEN ||

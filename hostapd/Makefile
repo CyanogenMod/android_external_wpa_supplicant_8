@@ -6,14 +6,19 @@ ifndef CFLAGS
 CFLAGS = -MMD -O2 -Wall -g
 endif
 
-CFLAGS += -I../src
-CFLAGS += -I../src/utils
+CFLAGS += -I$(abspath ../src)
+CFLAGS += -I$(abspath ../src/utils)
 
 # Uncomment following line and set the path to your kernel tree include
 # directory if your C library does not include all header files.
 # CFLAGS += -DUSE_KERNEL_HEADERS -I/usr/src/linux/include
 
 -include .config
+
+ifdef CONFIG_TESTING_OPTIONS
+CFLAGS += -DCONFIG_TESTING_OPTIONS
+CONFIG_WPS_TESTING=y
+endif
 
 ifndef CONFIG_OS
 ifdef CONFIG_NATIVE_WINDOWS
@@ -114,10 +119,10 @@ LIBS_n += -lgcov
 endif
 
 ifndef CONFIG_NO_DUMP_STATE
-# define HOSTAPD_DUMP_STATE to include SIGUSR1 handler for dumping state to
-# a file (undefine it, if you want to save in binary size)
+# define HOSTAPD_DUMP_STATE to include support for dumping internal state
+# through control interface commands (undefine it, if you want to save in
+# binary size)
 CFLAGS += -DHOSTAPD_DUMP_STATE
-OBJS += dump_state.o
 OBJS += ../src/eapol_auth/eapol_auth_dump.o
 endif
 
@@ -327,7 +332,7 @@ ifdef CONFIG_EAP_GPSK
 CFLAGS += -DEAP_SERVER_GPSK
 OBJS += ../src/eap_server/eap_server_gpsk.o ../src/eap_common/eap_gpsk_common.o
 ifdef CONFIG_EAP_GPSK_SHA256
-CFLAGS += -DEAP_SERVER_GPSK_SHA256
+CFLAGS += -DEAP_GPSK_SHA256
 endif
 NEED_SHA256=y
 NEED_AES_OMAC1=y
@@ -858,10 +863,6 @@ LIBS += -lsqlite3
 LIBS_h += -lsqlite3
 endif
 
-ifdef CONFIG_TESTING_OPTIONS
-CFLAGS += -DCONFIG_TESTING_OPTIONS
-endif
-
 ALL=hostapd hostapd_cli
 
 all: verify_config $(ALL)
@@ -873,9 +874,15 @@ Q=
 E=true
 endif
 
+ifdef CONFIG_CODE_COVERAGE
+%.o: %.c
+	@$(E) "  CC " $<
+	$(Q)cd $(dir $@); $(CC) -c -o $(notdir $@) $(CFLAGS) $(notdir $<)
+else
 %.o: %.c
 	$(Q)$(CC) -c -o $@ $(CFLAGS) $<
 	@$(E) "  CC " $<
+endif
 
 verify_config:
 	@if [ ! -r .config ]; then \
@@ -944,9 +951,15 @@ hlr_auc_gw: $(HOBJS)
 	$(Q)$(CC) $(LDFLAGS) -o hlr_auc_gw $(HOBJS) $(LIBS_h)
 	@$(E) "  LD " $@
 
+lcov-html:
+	lcov -c -d .. > lcov.info
+	genhtml lcov.info --output-directory lcov-html
+
 clean:
 	$(MAKE) -C ../src clean
 	rm -f core *~ *.o hostapd hostapd_cli nt_password_hash hlr_auc_gw
 	rm -f *.d *.gcno *.gcda *.gcov
+	rm -f lcov.info
+	rm -rf lcov-html
 
 -include $(OBJS:%.o=%.d)

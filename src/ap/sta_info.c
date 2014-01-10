@@ -15,7 +15,6 @@
 #include "common/sae.h"
 #include "radius/radius.h"
 #include "radius/radius_client.h"
-#include "drivers/driver.h"
 #include "p2p/p2p.h"
 #include "hostapd.h"
 #include "accounting.h"
@@ -495,7 +494,7 @@ void ap_sta_replenish_timeout(struct hostapd_data *hapd, struct sta_info *sta,
 			      u32 session_timeout)
 {
 	if (eloop_replenish_timeout(session_timeout, 0,
-				    ap_handle_session_timer, hapd, sta)) {
+				    ap_handle_session_timer, hapd, sta) == 1) {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG, "setting session timeout "
 			       "to %d seconds", session_timeout);
@@ -1011,4 +1010,34 @@ void ap_sta_disassoc_cb(struct hostapd_data *hapd, struct sta_info *sta)
 	sta->flags &= ~WLAN_STA_PENDING_DISASSOC_CB;
 	eloop_cancel_timeout(ap_sta_disassoc_cb_timeout, hapd, sta);
 	ap_sta_disassoc_cb_timeout(hapd, sta);
+}
+
+
+int ap_sta_flags_txt(u32 flags, char *buf, size_t buflen)
+{
+	int res;
+
+	buf[0] = '\0';
+	res = os_snprintf(buf, buflen, "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+			  (flags & WLAN_STA_AUTH ? "[AUTH]" : ""),
+			  (flags & WLAN_STA_ASSOC ? "[ASSOC]" : ""),
+			  (flags & WLAN_STA_AUTHORIZED ? "[AUTHORIZED]" : ""),
+			  (flags & WLAN_STA_PENDING_POLL ? "[PENDING_POLL" :
+			   ""),
+			  (flags & WLAN_STA_SHORT_PREAMBLE ?
+			   "[SHORT_PREAMBLE]" : ""),
+			  (flags & WLAN_STA_PREAUTH ? "[PREAUTH]" : ""),
+			  (flags & WLAN_STA_WMM ? "[WMM]" : ""),
+			  (flags & WLAN_STA_MFP ? "[MFP]" : ""),
+			  (flags & WLAN_STA_WPS ? "[WPS]" : ""),
+			  (flags & WLAN_STA_MAYBE_WPS ? "[MAYBE_WPS]" : ""),
+			  (flags & WLAN_STA_WDS ? "[WDS]" : ""),
+			  (flags & WLAN_STA_NONERP ? "[NonERP]" : ""),
+			  (flags & WLAN_STA_WPS2 ? "[WPS2]" : ""),
+			  (flags & WLAN_STA_GAS ? "[GAS]" : ""),
+			  (flags & WLAN_STA_VHT ? "[VHT]" : ""),
+			  (flags & WLAN_STA_WNM_SLEEP_MODE ?
+			   "[WNM_SLEEP_MODE]" : ""));
+
+	return res;
 }

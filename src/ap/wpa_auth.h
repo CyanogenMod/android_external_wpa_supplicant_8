@@ -203,7 +203,7 @@ struct wpa_auth_callbacks {
 	int (*send_ft_action)(void *ctx, const u8 *dst,
 			      const u8 *data, size_t data_len);
 	int (*add_tspec)(void *ctx, const u8 *sta_addr, u8 *tspec_ie,
-                         size_t tspec_ielen);
+			 size_t tspec_ielen);
 #endif /* CONFIG_IEEE80211R */
 };
 
@@ -295,5 +295,6 @@ int wpa_wnmsleep_gtk_subelem(struct wpa_state_machine *sm, u8 *pos);
 int wpa_wnmsleep_igtk_subelem(struct wpa_state_machine *sm, u8 *pos);
 
 int wpa_auth_uses_sae(struct wpa_state_machine *sm);
+int wpa_auth_uses_ft_sae(struct wpa_state_machine *sm);
 
 #endif /* WPA_AUTH_H */

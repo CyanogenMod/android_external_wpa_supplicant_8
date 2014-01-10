@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant
- * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -54,7 +54,7 @@
 
 const char *wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
-"Copyright (c) 2003-2013, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2003-2014, Jouni Malinen <j@w1.fi> and contributors";
 
 const char *wpa_supplicant_license =
 "This software may be distributed under the terms of the BSD license.\n"
@@ -103,11 +103,6 @@ const char *wpa_supplicant_full_license5 =
 "OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n"
 "\n";
 #endif /* CONFIG_NO_STDOUT_DEBUG */
-
-extern int wpa_debug_level;
-extern int wpa_debug_show_keys;
-extern int wpa_debug_timestamp;
-extern struct wpa_driver_ops *wpa_drivers[];
 
 /* Configure default/group WEP keys for static WEP */
 int wpa_set_wep_keys(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid)
@@ -200,8 +195,6 @@ static void wpa_supplicant_timeout(void *eloop_ctx, void *timeout_ctx)
 	 * So, wait a second until scanning again.
 	 */
 	wpa_supplicant_req_scan(wpa_s, 1, 0);
-
-	wpas_p2p_continue_after_scan(wpa_s);
 }
 
 
@@ -459,6 +452,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->next_scan_freqs);
 	wpa_s->next_scan_freqs = NULL;
 
+	os_free(wpa_s->manual_scan_freqs);
+	wpa_s->manual_scan_freqs = NULL;
+
 	gas_query_deinit(wpa_s->gas);
 	wpa_s->gas = NULL;
 
@@ -481,6 +477,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_s->ext_pw = NULL;
 
 	wpabuf_free(wpa_s->last_gas_resp);
+	wpa_s->last_gas_resp = NULL;
+	wpabuf_free(wpa_s->prev_gas_resp);
+	wpa_s->prev_gas_resp = NULL;
 
 	os_free(wpa_s->last_scan_res);
 	wpa_s->last_scan_res = NULL;
@@ -497,29 +496,23 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
  */
 void wpa_clear_keys(struct wpa_supplicant *wpa_s, const u8 *addr)
 {
-	if (wpa_s->keys_cleared) {
-		/* Some drivers (e.g., ndiswrapper & NDIS drivers) seem to have
-		 * timing issues with keys being cleared just before new keys
-		 * are set or just after association or something similar. This
-		 * shows up in group key handshake failing often because of the
-		 * client not receiving the first encrypted packets correctly.
-		 * Skipping some of the extra key clearing steps seems to help
-		 * in completing group key handshake more reliably. */
-		wpa_dbg(wpa_s, MSG_DEBUG, "No keys have been configured - "
-			"skip key clearing");
-		return;
-	}
+	int i, max;
+
+#ifdef CONFIG_IEEE80211W
+	max = 6;
+#else /* CONFIG_IEEE80211W */
+	max = 4;
+#endif /* CONFIG_IEEE80211W */
 
 	/* MLME-DELETEKEYS.request */
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 0, 0, NULL, 0, NULL, 0);
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 1, 0, NULL, 0, NULL, 0);
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 2, 0, NULL, 0, NULL, 0);
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 3, 0, NULL, 0, NULL, 0);
-#ifdef CONFIG_IEEE80211W
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 4, 0, NULL, 0, NULL, 0);
-	wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, 5, 0, NULL, 0, NULL, 0);
-#endif /* CONFIG_IEEE80211W */
-	if (addr) {
+	for (i = 0; i < max; i++) {
+		if (wpa_s->keys_cleared & BIT(i))
+			continue;
+		wpa_drv_set_key(wpa_s, WPA_ALG_NONE, NULL, i, 0, NULL, 0,
+				NULL, 0);
+	}
+	if (!(wpa_s->keys_cleared & BIT(0)) && addr &&
+	    !is_zero_ether_addr(addr)) {
 		wpa_drv_set_key(wpa_s, WPA_ALG_NONE, addr, 0, 0, NULL, 0, NULL,
 				0);
 		/* MLME-SETPROTECTION.request(None) */
@@ -528,7 +521,7 @@ void wpa_clear_keys(struct wpa_supplicant *wpa_s, const u8 *addr)
 			MLME_SETPROTECTION_PROTECT_TYPE_NONE,
 			MLME_SETPROTECTION_KEY_TYPE_PAIRWISE);
 	}
-	wpa_s->keys_cleared = 1;
+	wpa_s->keys_cleared = (u32) -1;
 }
 
 
@@ -659,6 +652,9 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_state_txt(wpa_s->wpa_state),
 		wpa_supplicant_state_txt(state));
 
+	if (state == WPA_COMPLETED)
+		wpas_connect_work_done(wpa_s);
+
 	if (state != WPA_SCANNING)
 		wpa_supplicant_notify_scanning(wpa_s, 0);
 
@@ -699,7 +695,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_BGSCAN
 	if (state == WPA_COMPLETED)
 		wpa_supplicant_start_bgscan(wpa_s);
-	else
+	else if (state < WPA_ASSOCIATED)
 		wpa_supplicant_stop_bgscan(wpa_s);
 #endif /* CONFIG_BGSCAN */
 
@@ -725,6 +721,7 @@ void wpa_supplicant_terminate_proc(struct wpa_global *global)
 #ifdef CONFIG_WPS
 	struct wpa_supplicant *wpa_s = global->ifaces;
 	while (wpa_s) {
+		struct wpa_supplicant *next = wpa_s->next;
 #ifdef CONFIG_P2P
 		if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE ||
 		    (wpa_s->current_ssid && wpa_s->current_ssid->p2p_group))
@@ -732,7 +729,7 @@ void wpa_supplicant_terminate_proc(struct wpa_global *global)
 #endif /* CONFIG_P2P */
 		if (wpas_wps_terminate_pending(wpa_s) == 1)
 			pending = 1;
-		wpa_s = wpa_s->next;
+		wpa_s = next;
 	}
 #endif /* CONFIG_WPS */
 	if (pending)
@@ -857,34 +854,6 @@ static void wpa_supplicant_reconfig(int sig, void *signal_ctx)
 		if (wpa_supplicant_reload_configuration(wpa_s) < 0) {
 			wpa_supplicant_terminate_proc(global);
 		}
-	}
-}
-
-
-enum wpa_key_mgmt key_mgmt2driver(int key_mgmt)
-{
-	switch (key_mgmt) {
-	case WPA_KEY_MGMT_NONE:
-		return KEY_MGMT_NONE;
-	case WPA_KEY_MGMT_IEEE8021X_NO_WPA:
-		return KEY_MGMT_802_1X_NO_WPA;
-	case WPA_KEY_MGMT_IEEE8021X:
-		return KEY_MGMT_802_1X;
-	case WPA_KEY_MGMT_WPA_NONE:
-		return KEY_MGMT_WPA_NONE;
-	case WPA_KEY_MGMT_FT_IEEE8021X:
-		return KEY_MGMT_FT_802_1X;
-	case WPA_KEY_MGMT_FT_PSK:
-		return KEY_MGMT_FT_PSK;
-	case WPA_KEY_MGMT_IEEE8021X_SHA256:
-		return KEY_MGMT_802_1X_SHA256;
-	case WPA_KEY_MGMT_PSK_SHA256:
-		return KEY_MGMT_PSK_SHA256;
-	case WPA_KEY_MGMT_WPS:
-		return KEY_MGMT_WPS;
-	case WPA_KEY_MGMT_PSK:
-	default:
-		return KEY_MGMT_PSK;
 	}
 }
 
@@ -1229,7 +1198,8 @@ static void wpas_ext_capab_byte(struct wpa_supplicant *wpa_s, u8 *pos, int idx)
 		break;
 	case 4: /* Bits 32-39 */
 #ifdef CONFIG_INTERWORKING
-		*pos |= 0x01; /* Bit 32 - QoS Map */
+		if (wpa_s->drv_flags / WPA_DRIVER_FLAGS_QOS_MAPPING)
+			*pos |= 0x01; /* Bit 32 - QoS Map */
 #endif /* CONFIG_INTERWORKING */
 		break;
 	case 5: /* Bits 40-47 */
@@ -1270,6 +1240,70 @@ int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf)
 }
 
 
+static int wpas_valid_bss(struct wpa_supplicant *wpa_s,
+			  struct wpa_bss *test_bss)
+{
+	struct wpa_bss *bss;
+
+	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
+		if (bss == test_bss)
+			return 1;
+	}
+
+	return 0;
+}
+
+
+static int wpas_valid_ssid(struct wpa_supplicant *wpa_s,
+			   struct wpa_ssid *test_ssid)
+{
+	struct wpa_ssid *ssid;
+
+	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+		if (ssid == test_ssid)
+			return 1;
+	}
+
+	return 0;
+}
+
+
+int wpas_valid_bss_ssid(struct wpa_supplicant *wpa_s, struct wpa_bss *test_bss,
+			struct wpa_ssid *test_ssid)
+{
+	if (test_bss && !wpas_valid_bss(wpa_s, test_bss))
+		return 0;
+
+	return test_ssid == NULL || wpas_valid_ssid(wpa_s, test_ssid);
+}
+
+
+void wpas_connect_work_free(struct wpa_connect_work *cwork)
+{
+	if (cwork == NULL)
+		return;
+	os_free(cwork);
+}
+
+
+void wpas_connect_work_done(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_connect_work *cwork;
+	struct wpa_radio_work *work = wpa_s->connect_work;
+
+	if (!work)
+		return;
+
+	wpa_s->connect_work = NULL;
+	cwork = work->ctx;
+	work->ctx = NULL;
+	wpas_connect_work_free(cwork);
+	radio_work_done(work);
+}
+
+
+static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit);
+
 /**
  * wpa_supplicant_associate - Request association
  * @wpa_s: Pointer to wpa_supplicant data
@@ -1281,19 +1315,7 @@ int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf)
 void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			      struct wpa_bss *bss, struct wpa_ssid *ssid)
 {
-	u8 wpa_ie[200];
-	size_t wpa_ie_len;
-	int use_crypt, ret, i, bssid_changed;
-	int algs = WPA_AUTH_ALG_OPEN;
-	enum wpa_cipher cipher_pairwise, cipher_group;
-	struct wpa_driver_associate_params params;
-	int wep_keys_set = 0;
-	int assoc_failed = 0;
-	struct wpa_ssid *old_ssid;
-#ifdef CONFIG_HT_OVERRIDES
-	struct ieee80211_ht_capabilities htcaps;
-	struct ieee80211_ht_capabilities htcaps_mask;
-#endif /* CONFIG_HT_OVERRIDES */
+	struct wpa_connect_work *cwork;
 
 #ifdef CONFIG_IBSS_RSN
 	ibss_rsn_deinit(wpa_s->ibss_rsn);
@@ -1331,6 +1353,58 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	if ((wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME) &&
 	    ssid->mode == IEEE80211_MODE_INFRA) {
 		sme_authenticate(wpa_s, bss, ssid);
+		return;
+	}
+
+	if (wpa_s->connect_work) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Reject wpa_supplicant_associate() call since connect_work exist");
+		return;
+	}
+
+	cwork = os_zalloc(sizeof(*cwork));
+	if (cwork == NULL)
+		return;
+
+	cwork->bss = bss;
+	cwork->ssid = ssid;
+
+	if (radio_add_work(wpa_s, bss ? bss->freq : 0, "connect", 1,
+			   wpas_start_assoc_cb, cwork) < 0) {
+		os_free(cwork);
+	}
+}
+
+
+static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
+{
+	struct wpa_connect_work *cwork = work->ctx;
+	struct wpa_bss *bss = cwork->bss;
+	struct wpa_ssid *ssid = cwork->ssid;
+	struct wpa_supplicant *wpa_s = work->wpa_s;
+	u8 wpa_ie[200];
+	size_t wpa_ie_len;
+	int use_crypt, ret, i, bssid_changed;
+	int algs = WPA_AUTH_ALG_OPEN;
+	unsigned int cipher_pairwise, cipher_group;
+	struct wpa_driver_associate_params params;
+	int wep_keys_set = 0;
+	int assoc_failed = 0;
+	struct wpa_ssid *old_ssid;
+#ifdef CONFIG_HT_OVERRIDES
+	struct ieee80211_ht_capabilities htcaps;
+	struct ieee80211_ht_capabilities htcaps_mask;
+#endif /* CONFIG_HT_OVERRIDES */
+
+	if (deinit) {
+		wpas_connect_work_free(cwork);
+		return;
+	}
+
+	wpa_s->connect_work = work;
+
+	if (!wpas_valid_bss_ssid(wpa_s, bss, ssid)) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "BSS/SSID entry for association not valid anymore - drop connection attempt");
+		wpas_connect_work_done(wpa_s);
 		return;
 	}
 
@@ -1526,8 +1600,8 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
 	use_crypt = 1;
-	cipher_pairwise = wpa_cipher_to_suite_driver(wpa_s->pairwise_cipher);
-	cipher_group = wpa_cipher_to_suite_driver(wpa_s->group_cipher);
+	cipher_pairwise = wpa_s->pairwise_cipher;
+	cipher_group = wpa_s->group_cipher;
 	if (wpa_s->key_mgmt == WPA_KEY_MGMT_NONE ||
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_IEEE8021X_NO_WPA) {
 		if (wpa_s->key_mgmt == WPA_KEY_MGMT_NONE)
@@ -1551,7 +1625,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			/* Assume that dynamic WEP-104 keys will be used and
 			 * set cipher suites in order for drivers to expect
 			 * encryption. */
-			cipher_pairwise = cipher_group = CIPHER_WEP104;
+			cipher_pairwise = cipher_group = WPA_CIPHER_WEP104;
 		}
 	}
 #endif /* IEEE8021X_EAPOL */
@@ -1592,7 +1666,7 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	params.wpa_ie_len = wpa_ie_len;
 	params.pairwise_suite = cipher_pairwise;
 	params.group_suite = cipher_group;
-	params.key_mgmt_suite = key_mgmt2driver(wpa_s->key_mgmt);
+	params.key_mgmt_suite = wpa_s->key_mgmt;
 	params.wpa_proto = wpa_s->wpa_proto;
 	params.auth_alg = algs;
 	params.mode = ssid->mode;
@@ -1605,8 +1679,8 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	params.wep_tx_keyidx = ssid->wep_tx_keyidx;
 
 	if ((wpa_s->drv_flags & WPA_DRIVER_FLAGS_4WAY_HANDSHAKE) &&
-	    (params.key_mgmt_suite == KEY_MGMT_PSK ||
-	     params.key_mgmt_suite == KEY_MGMT_FT_PSK)) {
+	    (params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+	     params.key_mgmt_suite == WPA_KEY_MGMT_FT_PSK)) {
 		params.passphrase = ssid->passphrase;
 		if (ssid->psk_set)
 			params.psk = ssid->psk;
@@ -2323,6 +2397,16 @@ void wpa_supplicant_rx_eapol(void *ctx, const u8 *src_addr,
 	wpa_dbg(wpa_s, MSG_DEBUG, "RX EAPOL from " MACSTR, MAC2STR(src_addr));
 	wpa_hexdump(MSG_MSGDUMP, "RX EAPOL", buf, len);
 
+#ifdef CONFIG_PEERKEY
+	if (wpa_s->wpa_state > WPA_ASSOCIATED && wpa_s->current_ssid &&
+	    wpa_s->current_ssid->peerkey &&
+	    !(wpa_s->drv_flags & WPA_DRIVER_FLAGS_4WAY_HANDSHAKE) &&
+	    wpa_sm_rx_eapol_peerkey(wpa_s->wpa, src_addr, buf, len) == 1) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "RSN: Processed PeerKey EAPOL-Key");
+		return;
+	}
+#endif /* CONFIG_PEERKEY */
+
 	if (wpa_s->wpa_state < WPA_ASSOCIATED ||
 	    (wpa_s->last_eapol_matches_bssid &&
 #ifdef CONFIG_AP
@@ -2348,7 +2432,7 @@ void wpa_supplicant_rx_eapol(void *ctx, const u8 *src_addr,
 		wpabuf_free(wpa_s->pending_eapol_rx);
 		wpa_s->pending_eapol_rx = wpabuf_alloc_copy(buf, len);
 		if (wpa_s->pending_eapol_rx) {
-			os_get_time(&wpa_s->pending_eapol_rx_time);
+			os_get_reltime(&wpa_s->pending_eapol_rx_time);
 			os_memcpy(wpa_s->pending_eapol_rx_src, src_addr,
 				  ETH_ALEN);
 		}
@@ -2918,9 +3002,86 @@ static struct wpa_radio * radio_add_interface(struct wpa_supplicant *wpa_s,
 	if (rn)
 		os_strlcpy(radio->name, rn, sizeof(radio->name));
 	dl_list_init(&radio->ifaces);
+	dl_list_init(&radio->work);
 	dl_list_add(&radio->ifaces, &wpa_s->radio_list);
 
 	return radio;
+}
+
+
+static void radio_work_free(struct wpa_radio_work *work)
+{
+	if (work->wpa_s->scan_work == work) {
+		/* This should not really happen. */
+		wpa_dbg(work->wpa_s, MSG_INFO, "Freeing radio work '%s'@%p (started=%d) that is marked as scan_work",
+			work->type, work, work->started);
+		work->wpa_s->scan_work = NULL;
+	}
+
+#ifdef CONFIG_P2P
+	if (work->wpa_s->p2p_scan_work == work) {
+		/* This should not really happen. */
+		wpa_dbg(work->wpa_s, MSG_INFO, "Freeing radio work '%s'@%p (started=%d) that is marked as p2p_scan_work",
+			work->type, work, work->started);
+		work->wpa_s->p2p_scan_work = NULL;
+	}
+#endif /* CONFIG_P2P */
+
+	dl_list_del(&work->list);
+	os_free(work);
+}
+
+
+static void radio_start_next_work(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_radio *radio = eloop_ctx;
+	struct wpa_radio_work *work;
+	struct os_reltime now, diff;
+	struct wpa_supplicant *wpa_s;
+
+	work = dl_list_first(&radio->work, struct wpa_radio_work, list);
+	if (work == NULL)
+		return;
+
+	if (work->started)
+		return; /* already started and still in progress */
+
+	wpa_s = dl_list_first(&radio->ifaces, struct wpa_supplicant,
+			      radio_list);
+	if (wpa_s && wpa_s->external_scan_running) {
+		wpa_printf(MSG_DEBUG, "Delay radio work start until externally triggered scan completes");
+		return;
+	}
+
+	os_get_reltime(&now);
+	os_reltime_sub(&now, &work->time, &diff);
+	wpa_dbg(work->wpa_s, MSG_DEBUG, "Starting radio work '%s'@%p after %ld.%06ld second wait",
+		work->type, work, diff.sec, diff.usec);
+	work->started = 1;
+	work->time = now;
+	work->cb(work, 0);
+}
+
+
+void radio_remove_unstarted_work(struct wpa_supplicant *wpa_s, const char *type)
+{
+	struct wpa_radio_work *work, *tmp;
+	struct wpa_radio *radio = wpa_s->radio;
+
+	dl_list_for_each_safe(work, tmp, &radio->work, struct wpa_radio_work,
+			      list) {
+		if (type && (work->started || os_strcmp(type, work->type) != 0))
+			continue;
+		if (work->started) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Leaving started radio work '%s'@%p in the list",
+				work->type, work);
+			continue;
+		}
+		wpa_dbg(wpa_s, MSG_DEBUG, "Remove unstarted radio work '%s'@%p",
+			work->type, work);
+		work->cb(work, 1);
+		radio_work_free(work);
+	}
 }
 
 
@@ -2934,13 +3095,109 @@ static void radio_remove_interface(struct wpa_supplicant *wpa_s)
 	wpa_printf(MSG_DEBUG, "Remove interface %s from radio %s",
 		   wpa_s->ifname, radio->name);
 	dl_list_del(&wpa_s->radio_list);
-	wpa_s->radio = NULL;
-
-	if (!dl_list_empty(&radio->ifaces))
+	if (!dl_list_empty(&radio->ifaces)) {
+		wpa_s->radio = NULL;
 		return; /* Interfaces remain for this radio */
+	}
 
 	wpa_printf(MSG_DEBUG, "Remove radio %s", radio->name);
+	radio_remove_unstarted_work(wpa_s, NULL);
+	eloop_cancel_timeout(radio_start_next_work, radio, NULL);
+	wpa_s->radio = NULL;
 	os_free(radio);
+}
+
+
+void radio_work_check_next(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_radio *radio = wpa_s->radio;
+
+	if (dl_list_empty(&radio->work))
+		return;
+	eloop_cancel_timeout(radio_start_next_work, radio, NULL);
+	eloop_register_timeout(0, 0, radio_start_next_work, radio, NULL);
+}
+
+
+/**
+ * radio_add_work - Add a radio work item
+ * @wpa_s: Pointer to wpa_supplicant data
+ * @freq: Frequency of the offchannel operation in MHz or 0
+ * @type: Unique identifier for each type of work
+ * @next: Force as the next work to be executed
+ * @cb: Callback function for indicating when radio is available
+ * @ctx: Context pointer for the work (work->ctx in cb())
+ * Returns: 0 on success, -1 on failure
+ *
+ * This function is used to request time for an operation that requires
+ * exclusive radio control. Once the radio is available, the registered callback
+ * function will be called. radio_work_done() must be called once the exclusive
+ * radio operation has been completed, so that the radio is freed for other
+ * operations. The special case of deinit=1 is used to free the context data
+ * during interface removal. That does not allow the callback function to start
+ * the radio operation, i.e., it must free any resources allocated for the radio
+ * work and return.
+ *
+ * The @freq parameter can be used to indicate a single channel on which the
+ * offchannel operation will occur. This may allow multiple radio work
+ * operations to be performed in parallel if they apply for the same channel.
+ * Setting this to 0 indicates that the work item may use multiple channels or
+ * requires exclusive control of the radio.
+ */
+int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
+		   const char *type, int next,
+		   void (*cb)(struct wpa_radio_work *work, int deinit),
+		   void *ctx)
+{
+	struct wpa_radio_work *work;
+	int was_empty;
+
+	work = os_zalloc(sizeof(*work));
+	if (work == NULL)
+		return -1;
+	wpa_dbg(wpa_s, MSG_DEBUG, "Add radio work '%s'@%p", type, work);
+	os_get_reltime(&work->time);
+	work->freq = freq;
+	work->type = type;
+	work->wpa_s = wpa_s;
+	work->cb = cb;
+	work->ctx = ctx;
+
+	was_empty = dl_list_empty(&wpa_s->radio->work);
+	if (next)
+		dl_list_add(&wpa_s->radio->work, &work->list);
+	else
+		dl_list_add_tail(&wpa_s->radio->work, &work->list);
+	if (was_empty) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "First radio work item in the queue - schedule start immediately");
+		radio_work_check_next(wpa_s);
+	}
+
+	return 0;
+}
+
+
+/**
+ * radio_work_done - Indicate that a radio work item has been completed
+ * @work: Completed work
+ *
+ * This function is called once the callback function registered with
+ * radio_add_work() has completed its work.
+ */
+void radio_work_done(struct wpa_radio_work *work)
+{
+	struct wpa_supplicant *wpa_s = work->wpa_s;
+	struct os_reltime now, diff;
+	unsigned int started = work->started;
+
+	os_get_reltime(&now);
+	os_reltime_sub(&now, &work->time, &diff);
+	wpa_dbg(wpa_s, MSG_DEBUG, "Radio work '%s'@%p %s in %ld.%06ld seconds",
+		work->type, work, started ? "done" : "canceled",
+		diff.sec, diff.usec);
+	radio_work_free(work);
+	if (started)
+		radio_work_check_next(wpa_s);
 }
 
 
@@ -3263,6 +3520,7 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_P2P */
 
+	wpas_ctrl_radio_work_flush(wpa_s);
 	radio_remove_interface(wpa_s);
 
 	if (wpa_s->drv_priv)
@@ -3751,6 +4009,8 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	int count;
 	int *freqs = NULL;
 
+	wpas_connect_work_done(wpa_s);
+
 	/*
 	 * Remove possible authentication timeout since the connection failed.
 	 */
@@ -3837,8 +4097,6 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	 */
 	wpa_supplicant_req_scan(wpa_s, timeout / 1000,
 				1000 * (timeout % 1000));
-
-	wpas_p2p_continue_after_scan(wpa_s);
 }
 
 
@@ -3978,7 +4236,7 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
 	int dur;
-	struct os_time now;
+	struct os_reltime now;
 
 	if (ssid == NULL) {
 		wpa_printf(MSG_DEBUG, "Authentication failure but no known "
@@ -4015,7 +4273,7 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s)
 	else
 		dur = 10;
 
-	os_get_time(&now);
+	os_get_reltime(&now);
 	if (now.sec + dur <= ssid->disabled_until.sec)
 		return;
 
@@ -4100,42 +4358,6 @@ void wpas_request_connection(struct wpa_supplicant *wpa_s)
 
 	if (wpa_supplicant_fast_associate(wpa_s) != 1)
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
-}
-
-
-static int wpas_conn_in_progress(struct wpa_supplicant *wpa_s)
-{
-	return wpa_s->wpa_state >= WPA_AUTHENTICATING &&
-		wpa_s->wpa_state != WPA_COMPLETED;
-}
-
-
-/**
- * wpas_wpa_is_in_progress - Check whether a connection is in progress
- * @wpa_s: Pointer to wpa_supplicant data
- * @include_current: Whether to consider specified interface
- *
- * This function is to check if the wpa state is in beginning of the connection
- * during 4-way handshake or group key handshake with WPA on any shared
- * interface.
- */
-int wpas_wpa_is_in_progress(struct wpa_supplicant *wpa_s, int include_current)
-{
-	struct wpa_supplicant *ifs;
-
-	dl_list_for_each(ifs, &wpa_s->radio->ifaces, struct wpa_supplicant,
-			 radio_list) {
-		if (!include_current && ifs == wpa_s)
-			continue;
-
-		if (wpas_conn_in_progress(ifs)) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "Connection is in progress "
-				"on interface %s - defer", ifs->ifname);
-			return 1;
-		}
-	}
-
-	return 0;
 }
 
 

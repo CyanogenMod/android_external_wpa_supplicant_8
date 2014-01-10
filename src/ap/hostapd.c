@@ -14,7 +14,6 @@
 #include "common/wpa_ctrl.h"
 #include "radius/radius_client.h"
 #include "radius/radius_das.h"
-#include "drivers/driver.h"
 #include "hostapd.h"
 #include "authsrv.h"
 #include "sta_info.h"
@@ -41,9 +40,6 @@ static int hostapd_setup_encryption(char *iface, struct hostapd_data *hapd);
 static int hostapd_broadcast_wep_clear(struct hostapd_data *hapd);
 static int setup_interface2(struct hostapd_iface *iface);
 static void channel_list_update_timeout(void *eloop_ctx, void *timeout_ctx);
-
-extern int wpa_debug_level;
-extern struct wpa_driver_ops *wpa_drivers[];
 
 
 int hostapd_for_each_interface(struct hapd_interfaces *interfaces,
@@ -811,8 +807,8 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 		return -1;
 	}
 
-	if (!hapd->conf->start_disabled)
-		ieee802_11_set_beacon(hapd);
+	if (!hapd->conf->start_disabled && ieee802_11_set_beacon(hapd) < 0)
+		return -1;
 
 	if (hapd->wpa_auth && wpa_init_keys(hapd->wpa_auth) < 0)
 		return -1;
@@ -2200,7 +2196,7 @@ static int hostapd_fill_csa_settings(struct hostapd_iface *iface,
 		return ret;
 
 	/* set channel switch parameters for csa ie */
-	iface->cs_freq = settings->freq_params.freq;
+	iface->cs_freq_params = settings->freq_params;
 	iface->cs_count = settings->cs_count;
 	iface->cs_block_tx = settings->block_tx;
 
@@ -2219,7 +2215,8 @@ static int hostapd_fill_csa_settings(struct hostapd_iface *iface,
 
 void hostapd_cleanup_cs_params(struct hostapd_data *hapd)
 {
-	hapd->iface->cs_freq = 0;
+	os_memset(&hapd->iface->cs_freq_params, 0,
+		  sizeof(hapd->iface->cs_freq_params));
 	hapd->iface->cs_count = 0;
 	hapd->iface->cs_block_tx = 0;
 	hapd->iface->cs_c_off_beacon = 0;

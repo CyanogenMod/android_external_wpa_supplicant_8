@@ -1,6 +1,6 @@
 /*
  * hostapd / UNIX domain socket -based control interface
- * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -20,6 +20,7 @@
 #include "common/ieee802_11_defs.h"
 #include "drivers/driver.h"
 #include "radius/radius_client.h"
+#include "radius/radius_server.h"
 #include "ap/hostapd.h"
 #include "ap/ap_config.h"
 #include "ap/ieee802_1x.h"
@@ -29,6 +30,7 @@
 #include "ap/wps_hostapd.h"
 #include "ap/ctrl_iface_ap.h"
 #include "ap/ap_drv_ops.h"
+#include "ap/wnm_ap.h"
 #include "ap/wpa_auth.h"
 #include "wps/wps_defs.h"
 #include "wps/wps.h"
@@ -665,9 +667,8 @@ static int hostapd_ctrl_iface_disassoc_imminent(struct hostapd_data *hapd,
 						const char *cmd)
 {
 	u8 addr[ETH_ALEN];
-	u8 buf[1000], *pos;
-	struct ieee80211_mgmt *mgmt;
 	int disassoc_timer;
+	struct sta_info *sta;
 
 	if (hwaddr_aton(cmd, addr))
 		return -1;
@@ -675,31 +676,15 @@ static int hostapd_ctrl_iface_disassoc_imminent(struct hostapd_data *hapd,
 		return -1;
 	disassoc_timer = atoi(cmd + 17);
 
-	os_memset(buf, 0, sizeof(buf));
-	mgmt = (struct ieee80211_mgmt *) buf;
-	mgmt->frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT,
-					   WLAN_FC_STYPE_ACTION);
-	os_memcpy(mgmt->da, addr, ETH_ALEN);
-	os_memcpy(mgmt->sa, hapd->own_addr, ETH_ALEN);
-	os_memcpy(mgmt->bssid, hapd->own_addr, ETH_ALEN);
-	mgmt->u.action.category = WLAN_ACTION_WNM;
-	mgmt->u.action.u.bss_tm_req.action = WNM_BSS_TRANS_MGMT_REQ;
-	mgmt->u.action.u.bss_tm_req.dialog_token = 1;
-	mgmt->u.action.u.bss_tm_req.req_mode =
-		WNM_BSS_TM_REQ_DISASSOC_IMMINENT;
-	mgmt->u.action.u.bss_tm_req.disassoc_timer =
-		host_to_le16(disassoc_timer);
-	mgmt->u.action.u.bss_tm_req.validity_interval = 0;
-
-	pos = mgmt->u.action.u.bss_tm_req.variable;
-
-	if (hostapd_drv_send_mlme(hapd, buf, pos - buf, 0) < 0) {
-		wpa_printf(MSG_DEBUG, "Failed to send BSS Transition "
-			   "Management Request frame");
+	sta = ap_get_sta(hapd, addr);
+	if (sta == NULL) {
+		wpa_printf(MSG_DEBUG, "Station " MACSTR
+			   " not found for disassociation imminent message",
+			   MAC2STR(addr));
 		return -1;
 	}
 
-	return 0;
+	return wnm_send_disassoc_imminent(hapd, sta, disassoc_timer);
 }
 
 
@@ -708,13 +693,19 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 {
 	u8 addr[ETH_ALEN];
 	const char *url, *timerstr;
-	u8 buf[1000], *pos;
-	struct ieee80211_mgmt *mgmt;
-	size_t url_len;
 	int disassoc_timer;
+	struct sta_info *sta;
 
 	if (hwaddr_aton(cmd, addr))
 		return -1;
+
+	sta = ap_get_sta(hapd, addr);
+	if (sta == NULL) {
+		wpa_printf(MSG_DEBUG, "Station " MACSTR
+			   " not found for ESS disassociation imminent message",
+			   MAC2STR(addr));
+		return -1;
+	}
 
 	timerstr = cmd + 17;
 	if (*timerstr != ' ')
@@ -728,76 +719,8 @@ static int hostapd_ctrl_iface_ess_disassoc(struct hostapd_data *hapd,
 	if (url == NULL)
 		return -1;
 	url++;
-	url_len = os_strlen(url);
-	if (url_len > 255)
-		return -1;
 
-	os_memset(buf, 0, sizeof(buf));
-	mgmt = (struct ieee80211_mgmt *) buf;
-	mgmt->frame_control = IEEE80211_FC(WLAN_FC_TYPE_MGMT,
-					   WLAN_FC_STYPE_ACTION);
-	os_memcpy(mgmt->da, addr, ETH_ALEN);
-	os_memcpy(mgmt->sa, hapd->own_addr, ETH_ALEN);
-	os_memcpy(mgmt->bssid, hapd->own_addr, ETH_ALEN);
-	mgmt->u.action.category = WLAN_ACTION_WNM;
-	mgmt->u.action.u.bss_tm_req.action = WNM_BSS_TRANS_MGMT_REQ;
-	mgmt->u.action.u.bss_tm_req.dialog_token = 1;
-	mgmt->u.action.u.bss_tm_req.req_mode =
-		WNM_BSS_TM_REQ_DISASSOC_IMMINENT |
-		WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT;
-	mgmt->u.action.u.bss_tm_req.disassoc_timer =
-		host_to_le16(disassoc_timer);
-	mgmt->u.action.u.bss_tm_req.validity_interval = 0x01;
-
-	pos = mgmt->u.action.u.bss_tm_req.variable;
-
-	/* Session Information URL */
-	*pos++ = url_len;
-	os_memcpy(pos, url, url_len);
-	pos += url_len;
-
-	if (hostapd_drv_send_mlme(hapd, buf, pos - buf, 0) < 0) {
-		wpa_printf(MSG_DEBUG, "Failed to send BSS Transition "
-			   "Management Request frame");
-		return -1;
-	}
-
-	/* send disassociation frame after time-out */
-	if (disassoc_timer) {
-		struct sta_info *sta;
-		int timeout, beacon_int;
-
-		/*
-		 * Prevent STA from reconnecting using cached PMKSA to force
-		 * full authentication with the authentication server (which may
-		 * decide to reject the connection),
-		 */
-		wpa_auth_pmksa_remove(hapd->wpa_auth, addr);
-
-		sta = ap_get_sta(hapd, addr);
-		if (sta == NULL) {
-			wpa_printf(MSG_DEBUG, "Station " MACSTR " not found "
-				   "for ESS disassociation imminent message",
-				   MAC2STR(addr));
-			return -1;
-		}
-
-		beacon_int = hapd->iconf->beacon_int;
-		if (beacon_int < 1)
-			beacon_int = 100; /* best guess */
-		/* Calculate timeout in ms based on beacon_int in TU */
-		timeout = disassoc_timer * beacon_int * 128 / 125;
-		wpa_printf(MSG_DEBUG, "Disassociation timer for " MACSTR
-			   " set to %d ms", MAC2STR(addr), timeout);
-
-		sta->timeout_next = STA_DISASSOC_FROM_CLI;
-		eloop_cancel_timeout(ap_handle_timer, hapd, sta);
-		eloop_register_timeout(timeout / 1000,
-				       timeout % 1000 * 1000,
-				       ap_handle_timer, hapd, sta);
-	}
-
-	return 0;
+	return wnm_send_ess_disassoc_imminent(hapd, sta, url, disassoc_timer);
 }
 
 #endif /* CONFIG_WNM */
@@ -994,6 +917,10 @@ static int hostapd_ctrl_iface_set(struct hostapd_data *hapd, char *cmd)
 		else
 			hapd->gas_frag_limit = val;
 #endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_TESTING_OPTIONS
+	} else if (os_strcasecmp(cmd, "ext_mgmt_frame_handling") == 0) {
+		hapd->ext_mgmt_frame_handling = atoi(value);
+#endif /* CONFIG_TESTING_OPTIONS */
 	} else {
 		ret = hostapd_set_iface(hapd->iconf, hapd->conf, cmd, value);
 	}
@@ -1051,6 +978,7 @@ static int hostapd_ctrl_iface_disable(struct hostapd_iface *iface)
 
 
 #ifdef CONFIG_TESTING_OPTIONS
+
 static int hostapd_ctrl_iface_radar(struct hostapd_data *hapd, char *cmd)
 {
 	union wpa_event_data data;
@@ -1108,6 +1036,35 @@ static int hostapd_ctrl_iface_radar(struct hostapd_data *hapd, char *cmd)
 
 	return 0;
 }
+
+
+static int hostapd_ctrl_iface_mgmt_tx(struct hostapd_data *hapd, char *cmd)
+{
+	size_t len;
+	u8 *buf;
+	int res;
+
+	wpa_printf(MSG_DEBUG, "External MGMT TX: %s", cmd);
+
+	len = os_strlen(cmd);
+	if (len & 1)
+		return -1;
+	len /= 2;
+
+	buf = os_malloc(len);
+	if (buf == NULL)
+		return -1;
+
+	if (hexstr2bin(cmd, buf, len) < 0) {
+		os_free(buf);
+		return -1;
+	}
+
+	res = hostapd_drv_send_mlme(hapd, buf, len, 0);
+	os_free(buf);
+	return res;
+}
+
 #endif /* CONFIG_TESTING_OPTIONS */
 
 
@@ -1124,6 +1081,19 @@ static int hostapd_ctrl_iface_chan_switch(struct hostapd_data *hapd, char *pos)
 #else /* NEED_AP_MLME */
 	return -1;
 #endif /* NEED_AP_MLME */
+}
+
+
+static int hostapd_ctrl_iface_mib(struct hostapd_data *hapd, char *reply,
+				  int reply_size, const char *param)
+{
+#ifdef RADIUS_SERVER
+	if (os_strcmp(param, "radius_server") == 0) {
+		return radius_server_get_mib(hapd->radius_srv, reply,
+					     reply_size);
+	}
+#endif /* RADIUS_SERVER */
+	return -1;
 }
 
 
@@ -1170,6 +1140,8 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strcmp(buf, "STATUS") == 0) {
 		reply_len = hostapd_ctrl_iface_status(hapd, reply,
 						      reply_size);
+	} else if (os_strcmp(buf, "STATUS-DRIVER") == 0) {
+		reply_len = hostapd_drv_status(hapd, reply, reply_size);
 	} else if (os_strcmp(buf, "MIB") == 0) {
 		reply_len = ieee802_11_get_mib(hapd, reply, reply_size);
 		if (reply_len >= 0) {
@@ -1199,6 +1171,9 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 				reply_len += res;
 		}
 #endif /* CONFIG_NO_RADIUS */
+	} else if (os_strncmp(buf, "MIB ", 4) == 0) {
+		reply_len = hostapd_ctrl_iface_mib(hapd, reply, reply_size,
+						   buf + 4);
 	} else if (os_strcmp(buf, "STA-FIRST") == 0) {
 		reply_len = hostapd_ctrl_iface_sta_first(hapd, reply,
 							 reply_size);
@@ -1311,6 +1286,9 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 #ifdef CONFIG_TESTING_OPTIONS
 	} else if (os_strncmp(buf, "RADAR ", 6) == 0) {
 		if (hostapd_ctrl_iface_radar(hapd, buf + 6))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "MGMT_TX ", 8) == 0) {
+		if (hostapd_ctrl_iface_mgmt_tx(hapd, buf + 8))
 			reply_len = -1;
 #endif /* CONFIG_TESTING_OPTIONS */
 	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {

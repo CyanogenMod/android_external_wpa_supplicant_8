@@ -10,10 +10,16 @@ export LIBDIR ?= /usr/local/lib/
 export BINDIR ?= /usr/local/sbin/
 PKG_CONFIG ?= pkg-config
 
-CFLAGS += -I../src
-CFLAGS += -I../src/utils
+CFLAGS += -I$(abspath ../src)
+CFLAGS += -I$(abspath ../src/utils)
 
 -include .config
+
+ifdef CONFIG_TESTING_OPTIONS
+CFLAGS += -DCONFIG_TESTING_OPTIONS
+CONFIG_WPS_TESTING=y
+CONFIG_TDLS_TESTING=y
+endif
 
 BINALL=wpa_supplicant wpa_cli
 
@@ -1622,9 +1628,15 @@ eap_eke.so: ../src/eap_peer/eap_eke.c ../src/eap_common/eap_eke_common.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $< \
 		-D$(*F:eap_%=eap_peer_%)_register=eap_peer_method_dynamic_init
 
+ifdef CONFIG_CODE_COVERAGE
+%.o: %.c
+	@$(E) "  CC " $<
+	$(Q)cd $(dir $@); $(CC) -c -o $(notdir $@) $(CFLAGS) $(notdir $<)
+else
 %.o: %.c
 	$(Q)$(CC) -c -o $@ $(CFLAGS) $<
 	@$(E) "  CC " $<
+endif
 
 %.service: %.service.in
 	sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
@@ -1676,6 +1688,10 @@ FIPSLD=$(FIPSDIR)/bin/fipsld
 fips:
 	$(MAKE) CC=$(FIPSLD) FIPSLD_CC="$(CC)"
 
+lcov-html: wpa_supplicant.gcda
+	lcov -c -d .. > lcov.info
+	genhtml lcov.info --output-directory lcov-html
+
 clean:
 	$(MAKE) -C ../src clean
 	$(MAKE) -C dbus clean
@@ -1683,5 +1699,7 @@ clean:
 	rm -f eap_*.so $(ALL) $(WINALL) eapol_test preauth_test
 	rm -f wpa_priv
 	rm -f nfc_pw_token
+	rm -f lcov.info
+	rm -rf lcov-html
 
 -include $(OBJS:%.o=%.d)

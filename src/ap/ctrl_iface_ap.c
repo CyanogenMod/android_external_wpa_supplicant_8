@@ -10,6 +10,7 @@
 
 #include "utils/common.h"
 #include "common/ieee802_11_defs.h"
+#include "eapol_auth/eapol_auth_sm.h"
 #include "hostapd.h"
 #include "ieee802_1x.h"
 #include "wpa_auth.h"
@@ -21,24 +22,61 @@
 #include "ap_drv_ops.h"
 
 
+static int hostapd_get_sta_tx_rx(struct hostapd_data *hapd,
+				 struct sta_info *sta,
+				 char *buf, size_t buflen)
+{
+	struct hostap_sta_driver_data data;
+	int ret;
+
+	if (hostapd_drv_read_sta_data(hapd, &data, sta->addr) < 0)
+		return 0;
+
+	ret = os_snprintf(buf, buflen, "rx_packets=%lu\ntx_packets=%lu\n"
+			  "rx_bytes=%lu\ntx_bytes=%lu\n",
+			  data.rx_packets, data.tx_packets,
+			  data.rx_bytes, data.tx_bytes);
+	if (ret < 0 || (size_t) ret >= buflen)
+		return 0;
+	return ret;
+}
+
+
 static int hostapd_get_sta_conn_time(struct sta_info *sta,
 				     char *buf, size_t buflen)
 {
 	struct os_reltime age;
-	int len = 0, ret;
+	int ret;
 
 	if (!sta->connected_time.sec)
 		return 0;
 
 	os_reltime_age(&sta->connected_time, &age);
 
-	ret = os_snprintf(buf + len, buflen - len, "connected_time=%u\n",
+	ret = os_snprintf(buf, buflen, "connected_time=%u\n",
 			  (unsigned int) age.sec);
-	if (ret < 0 || (size_t) ret >= buflen - len)
-		return len;
-	len += ret;
+	if (ret < 0 || (size_t) ret >= buflen)
+		return 0;
+	return ret;
+}
 
-	return len;
+
+static const char * timeout_next_str(int val)
+{
+	switch (val) {
+	case STA_NULLFUNC:
+		return "NULLFUNC POLL";
+	case STA_DISASSOC:
+		return "DISASSOC";
+	case STA_DEAUTH:
+		return "DEAUTH";
+	case STA_REMOVE:
+		return "REMOVE";
+	case STA_DISASSOC_FROM_CLI:
+		return "DISASSOC_FROM_CLI";
+	}
+
+	return "?";
 }
 
 
@@ -46,18 +84,38 @@ static int hostapd_ctrl_iface_sta_mib(struct hostapd_data *hapd,
 				      struct sta_info *sta,
 				      char *buf, size_t buflen)
 {
-	int len, res, ret;
-
-	if (sta == NULL) {
-		ret = os_snprintf(buf, buflen, "FAIL\n");
-		if (ret < 0 || (size_t) ret >= buflen)
-			return 0;
-		return ret;
-	}
+	int len, res, ret, i;
 
 	len = 0;
-	ret = os_snprintf(buf + len, buflen - len, MACSTR "\n",
+	ret = os_snprintf(buf + len, buflen - len, MACSTR "\nflags=",
 			  MAC2STR(sta->addr));
+	if (ret < 0 || (size_t) ret >= buflen - len)
+		return len;
+	len += ret;
+
+	ret = ap_sta_flags_txt(sta->flags, buf + len, buflen - len);
+	if (ret < 0)
+		return len;
+	len += ret;
+
+	ret = os_snprintf(buf + len, buflen - len, "\naid=%d\ncapability=0x%x\n"
+			  "listen_interval=%d\nsupported_rates=",
+			  sta->aid, sta->capability, sta->listen_interval);
+	if (ret < 0 || (size_t) ret >= buflen - len)
+		return len;
+	len += ret;
+
+	for (i = 0; i < sta->supported_rates_len; i++) {
+		ret = os_snprintf(buf + len, buflen - len, "%02x%s",
+				  sta->supported_rates[i],
+				  i + 1 < sta->supported_rates_len ? " " : "");
+		if (ret < 0 || (size_t) ret >= buflen - len)
+			return len;
+		len += ret;
+	}
+
+	ret = os_snprintf(buf + len, buflen - len, "\ntimeout_next=%s\n",
+			  timeout_next_str(sta->timeout_next));
 	if (ret < 0 || (size_t) ret >= buflen - len)
 		return len;
 	len += ret;
@@ -79,9 +137,8 @@ static int hostapd_ctrl_iface_sta_mib(struct hostapd_data *hapd,
 	if (res >= 0)
 		len += res;
 
-	res = hostapd_get_sta_conn_time(sta, buf + len, buflen - len);
-	if (res >= 0)
-		len += res;
+	len += hostapd_get_sta_tx_rx(hapd, sta, buf + len, buflen - len);
+	len += hostapd_get_sta_conn_time(sta, buf + len, buflen - len);
 
 	return len;
 }
@@ -99,6 +156,8 @@ int hostapd_ctrl_iface_sta(struct hostapd_data *hapd, const char *txtaddr,
 {
 	u8 addr[ETH_ALEN];
 	int ret;
+	const char *pos;
+	struct sta_info *sta;
 
 	if (hwaddr_aton(txtaddr, addr)) {
 		ret = os_snprintf(buf, buflen, "FAIL\n");
@@ -106,8 +165,28 @@ int hostapd_ctrl_iface_sta(struct hostapd_data *hapd, const char *txtaddr,
 			return 0;
 		return ret;
 	}
-	return hostapd_ctrl_iface_sta_mib(hapd, ap_get_sta(hapd, addr),
-					  buf, buflen);
+
+	sta = ap_get_sta(hapd, addr);
+	if (sta == NULL)
+		return -1;
+
+	pos = os_strchr(txtaddr, ' ');
+	if (pos) {
+		pos++;
+
+#ifdef HOSTAPD_DUMP_STATE
+		if (os_strcmp(pos, "eapol") == 0) {
+			if (sta->eapol_sm == NULL)
+				return -1;
+			return eapol_auth_dump_state(sta->eapol_sm, buf,
+						     buflen);
+		}
+#endif /* HOSTAPD_DUMP_STATE */
+
+		return -1;
+	}
+
+	return hostapd_ctrl_iface_sta_mib(hapd, sta, buf, buflen);
 }
 
 
