@@ -176,6 +176,7 @@ static int dfs_find_channel(struct hostapd_iface *iface,
 
 static void dfs_adjust_vht_center_freq(struct hostapd_iface *iface,
 				       struct hostapd_channel_data *chan,
+				       int secondary_channel,
 				       u8 *vht_oper_centr_freq_seg0_idx,
 				       u8 *vht_oper_centr_freq_seg1_idx)
 {
@@ -189,9 +190,9 @@ static void dfs_adjust_vht_center_freq(struct hostapd_iface *iface,
 
 	switch (iface->conf->vht_oper_chwidth) {
 	case VHT_CHANWIDTH_USE_HT:
-		if (iface->conf->secondary_channel == 1)
+		if (secondary_channel == 1)
 			*vht_oper_centr_freq_seg0_idx = chan->chan + 2;
-		else if (iface->conf->secondary_channel == -1)
+		else if (secondary_channel == -1)
 			*vht_oper_centr_freq_seg0_idx = chan->chan - 2;
 		else
 			*vht_oper_centr_freq_seg0_idx = chan->chan;
@@ -366,6 +367,7 @@ dfs_get_valid_channel(struct hostapd_iface *iface,
 		*secondary_channel = 0;
 
 	dfs_adjust_vht_center_freq(iface, chan,
+				   *secondary_channel,
 				   vht_oper_centr_freq_seg0_idx,
 				   vht_oper_centr_freq_seg1_idx);
 
@@ -680,13 +682,17 @@ static int hostapd_dfs_start_channel_switch(struct hostapd_iface *iface)
 	struct hostapd_data *hapd = iface->bss[0];
 	int err = 1;
 
-	wpa_printf(MSG_DEBUG, "%s called (CAC active: %s)", __func__,
-		   iface->cac_started ? "yes" : "no");
+	wpa_printf(MSG_DEBUG, "%s called (CAC active: %s, CSA active: %s)",
+		   __func__, iface->cac_started ? "yes" : "no",
+		   iface->csa_in_progress ? "yes" : "no");
+
+	/* Check if CSA in progress */
+	if (iface->csa_in_progress)
+		return 0;
 
 	/* Check if active CAC */
 	if (iface->cac_started)
 		return hostapd_dfs_start_channel_switch_cac(iface);
-
 
 	/* Perform channel switch/CSA */
 	channel = dfs_get_valid_channel(iface, &secondary_channel,

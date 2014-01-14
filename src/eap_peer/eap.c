@@ -179,6 +179,7 @@ SM_STATE(EAP, INITIALIZE)
 	eapol_set_bool(sm, EAPOL_eapNoResp, FALSE);
 	sm->num_rounds = 0;
 	sm->prev_failure = 0;
+	sm->expected_failure = 0;
 }
 
 
@@ -2046,6 +2047,8 @@ const u8 * eap_get_config_password2(struct eap_sm *sm, size_t *len, int *hash)
 	if (config->flags & EAP_CONFIG_FLAGS_EXT_PASSWORD) {
 		if (eap_get_ext_password(sm, config) < 0)
 			return NULL;
+		if (hash)
+			*hash = 0;
 		*len = wpabuf_len(sm->ext_pw_buf);
 		return wpabuf_head(sm->ext_pw_buf);
 	}
@@ -2414,4 +2417,10 @@ void eap_set_anon_id(struct eap_sm *sm, const u8 *id, size_t len)
 {
 	if (sm->eapol_cb->set_anon_id)
 		sm->eapol_cb->set_anon_id(sm->eapol_ctx, id, len);
+}
+
+
+int eap_peer_was_failure_expected(struct eap_sm *sm)
+{
+	return sm->expected_failure;
 }

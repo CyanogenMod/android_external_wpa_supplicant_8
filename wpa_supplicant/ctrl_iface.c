@@ -3652,6 +3652,7 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 	unsigned int timeout = atoi(cmd);
 	enum p2p_discovery_type type = P2P_FIND_START_WITH_FULL;
 	u8 dev_id[ETH_ALEN], *_dev_id = NULL;
+	u8 dev_type[WPS_DEV_TYPE_LEN], *_dev_type = NULL;
 	char *pos;
 	unsigned int search_delay;
 
@@ -3668,6 +3669,14 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 		_dev_id = dev_id;
 	}
 
+	pos = os_strstr(cmd, "dev_type=");
+	if (pos) {
+		pos += 9;
+		if (wps_dev_type_str2bin(pos, dev_type) < 0)
+			return -1;
+		_dev_type = dev_type;
+	}
+
 	pos = os_strstr(cmd, "delay=");
 	if (pos) {
 		pos += 6;
@@ -3675,8 +3684,8 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 	} else
 		search_delay = wpas_p2p_search_delay(wpa_s);
 
-	return wpas_p2p_find(wpa_s, timeout, type, 0, NULL, _dev_id,
-			     search_delay);
+	return wpas_p2p_find(wpa_s, timeout, type, _dev_type != NULL, _dev_type,
+			     _dev_id, search_delay);
 }
 
 
@@ -5252,6 +5261,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpas_p2p_service_flush(wpa_s);
 	wpa_s->global->p2p_disabled = 0;
 	wpa_s->global->p2p_per_sta_psk = 0;
+	wpa_s->conf->num_sec_device_types = 0;
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS_TESTING
@@ -5296,6 +5306,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_s->extra_blacklist_count = 0;
 	wpa_supplicant_ctrl_iface_remove_network(wpa_s, "all");
 	wpa_supplicant_ctrl_iface_remove_cred(wpa_s, "all");
+	wpa_config_flush_blobs(wpa_s->conf);
 
 	wpa_sm_set_param(wpa_s->wpa, RSNA_PMK_LIFETIME, 43200);
 	wpa_sm_set_param(wpa_s->wpa, RSNA_PMK_REAUTH_THRESHOLD, 70);
