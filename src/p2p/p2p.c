@@ -2390,14 +2390,7 @@ struct p2p_data * p2p_init(const struct p2p_config *cfg)
 			p2p->cfg->num_pref_chan = 0;
 	}
 
-#ifdef ANDROID_P2P
-	/* 100ms listen time is too less to receive the response frames in some scenarios
-	 * increasing min listen time to 200ms.
-	 */
-	p2p->min_disc_int = 2;
-#else
 	p2p->min_disc_int = 1;
-#endif
 	p2p->max_disc_int = 3;
 	p2p->max_disc_tu = -1;
 
