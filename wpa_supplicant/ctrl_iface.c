@@ -6345,10 +6345,8 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 {
 #ifdef CONFIG_P2P
 	static const char * cmd[] = {
-#ifdef ANDROID_P2P
 		"LIST_NETWORKS",
 		"SAVE_CONFIG",
-#endif
 		"P2P_FIND",
 		"P2P_STOP_FIND",
 		"P2P_LISTEN",
@@ -6363,12 +6361,12 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 		NULL
 	};
 	static const char * prefix[] = {
-#ifdef ANDROID_P2P
+#ifdef ANDROID
 		"DRIVER ",
+#endif /* ANDROID */
 		"GET_NETWORK ",
 		"REMOVE_NETWORK ",
 		"SET ",
-#endif
 		"P2P_FIND ",
 		"P2P_CONNECT ",
 		"P2P_LISTEN ",

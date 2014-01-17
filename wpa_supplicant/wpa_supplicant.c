@@ -652,6 +652,11 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_state_txt(wpa_s->wpa_state),
 		wpa_supplicant_state_txt(state));
 
+	if (state == WPA_INTERFACE_DISABLED) {
+		/* Assure normal scan when interface is restored */
+		wpa_s->normal_scans = 0;
+	}
+
 	if (state == WPA_COMPLETED)
 		wpas_connect_work_done(wpa_s);
 
@@ -2618,6 +2623,10 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 	wpa_s->prev_scan_wildcard = 0;
 
 	if (wpa_supplicant_enabled_networks(wpa_s)) {
+		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
+			wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
+			interface_count = 0;
+		}
 		if (wpa_supplicant_delayed_sched_scan(wpa_s, interface_count,
 						      100000))
 			wpa_supplicant_req_scan(wpa_s, interface_count,

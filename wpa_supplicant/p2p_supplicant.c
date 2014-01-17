@@ -4239,17 +4239,7 @@ static void wpas_p2p_join_scan_req(struct wpa_supplicant *wpa_s, int freq,
 	struct wpabuf *wps_ie, *ies;
 	size_t ielen;
 	int freqs[2] = { 0, 0 };
-#ifdef ANDROID_P2P
-	int oper_freq;
 
-	/* If freq is not provided, check the operating freq of the GO and do a
-	 * a directed scan to save time
-	 */
-	if(!freq) {
-		freq = (oper_freq = p2p_get_oper_freq(wpa_s->global->p2p,
-			 wpa_s->pending_join_iface_addr) == -1) ? 0 : oper_freq; 
-	}
-#endif
 	os_memset(&params, 0, sizeof(params));
 
 	/* P2P Wildcard SSID */
@@ -4289,6 +4279,18 @@ static void wpas_p2p_join_scan_req(struct wpa_supplicant *wpa_s, int freq,
 	params.p2p_probe = 1;
 	params.extra_ies = wpabuf_head(ies);
 	params.extra_ies_len = wpabuf_len(ies);
+
+	if (!freq) {
+		int oper_freq;
+		/*
+		 * If freq is not provided, check the operating freq of the GO
+		 * and use a single channel scan on if possible.
+		 */
+		oper_freq = p2p_get_oper_freq(wpa_s->global->p2p,
+					      wpa_s->pending_join_iface_addr);
+		if (oper_freq > 0)
+			freq = oper_freq;
+	}
 	if (freq > 0) {
 		freqs[0] = freq;
 		params.freqs = freqs;
