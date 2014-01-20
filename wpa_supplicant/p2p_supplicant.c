@@ -3376,7 +3376,6 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 	p2p.get_noa = wpas_get_noa;
 	p2p.go_connected = wpas_go_connected;
 	p2p.is_concurrent_session_active = wpas_is_concurrent_session_active;
-	p2p.is_p2p_in_progress = _wpas_p2p_in_progress;
 
 	os_memcpy(wpa_s->global->p2p_dev_addr, wpa_s->own_addr, ETH_ALEN);
 	os_memcpy(p2p.dev_addr, wpa_s->global->p2p_dev_addr, ETH_ALEN);
