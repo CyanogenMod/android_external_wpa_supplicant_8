@@ -3584,7 +3584,7 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 
 		nla_for_each_nested(nl, tb[NL80211_ATTR_VENDOR_DATA], rem) {
 			struct nl80211_vendor_cmd_info *vinfo;
-			if (nla_len(nl) != sizeof(vinfo)) {
+			if (nla_len(nl) != sizeof(*vinfo)) {
 				wpa_printf(MSG_DEBUG, "nl80211: Unexpected vendor data info");
 				continue;
 			}
@@ -3600,7 +3600,7 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 
 		nla_for_each_nested(nl, tb[NL80211_ATTR_VENDOR_EVENTS], rem) {
 			struct nl80211_vendor_cmd_info *vinfo;
-			if (nla_len(nl) != sizeof(vinfo)) {
+			if (nla_len(nl) != sizeof(*vinfo)) {
 				wpa_printf(MSG_DEBUG, "nl80211: Unexpected vendor data info");
 				continue;
 			}
@@ -4215,6 +4215,18 @@ static int nl80211_mgmt_subscribe_non_ap(struct i802_bss *bss)
 		ret = -1;
 	/* GAS Comeback Response */
 	if (nl80211_register_action_frame(bss, (u8 *) "\x04\x0d", 2) < 0)
+		ret = -1;
+	/* Protected GAS Initial Request */
+	if (nl80211_register_action_frame(bss, (u8 *) "\x09\x0a", 2) < 0)
+		ret = -1;
+	/* Protected GAS Initial Response */
+	if (nl80211_register_action_frame(bss, (u8 *) "\x09\x0b", 2) < 0)
+		ret = -1;
+	/* Protected GAS Comeback Request */
+	if (nl80211_register_action_frame(bss, (u8 *) "\x09\x0c", 2) < 0)
+		ret = -1;
+	/* Protected GAS Comeback Response */
+	if (nl80211_register_action_frame(bss, (u8 *) "\x09\x0d", 2) < 0)
 		ret = -1;
 #endif /* CONFIG_P2P || CONFIG_INTERWORKING */
 #ifdef CONFIG_P2P
