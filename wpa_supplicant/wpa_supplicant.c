@@ -1565,6 +1565,8 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 				"disallows" : "allows");
 		}
 	}
+
+	os_memset(wpa_s->p2p_ip_addr_info, 0, sizeof(wpa_s->p2p_ip_addr_info));
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_HS20
@@ -3927,6 +3929,7 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	os_free(global->params.override_ctrl_interface);
 
 	os_free(global->p2p_disallow_freq.range);
+	os_free(global->p2p_go_avoid_freq.range);
 	os_free(global->add_psk);
 
 	os_free(global);

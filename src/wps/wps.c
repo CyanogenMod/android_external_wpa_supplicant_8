@@ -18,6 +18,7 @@
 #ifdef CONFIG_WPS_TESTING
 int wps_version_number = 0x20;
 int wps_testing_dummy_cred = 0;
+int wps_corrupt_pkhash = 0;
 #endif /* CONFIG_WPS_TESTING */
 
 
@@ -58,6 +59,10 @@ struct wps_data * wps_init(const struct wps_config *cfg)
 	}
 
 #ifdef CONFIG_WPS_NFC
+	if (cfg->pin == NULL &&
+	    cfg->dev_pw_id == DEV_PW_NFC_CONNECTION_HANDOVER)
+		data->dev_pw_id = cfg->dev_pw_id;
+
 	if (cfg->wps->ap && !cfg->registrar && cfg->wps->ap_nfc_dev_pw_id) {
 		/* Keep AP PIN as alternative Device Password */
 		data->alt_dev_pw_id = data->dev_pw_id;
@@ -133,6 +138,12 @@ struct wps_data * wps_init(const struct wps_config *cfg)
 	data->use_psk_key = cfg->use_psk_key;
 	data->pbc_in_m1 = cfg->pbc_in_m1;
 
+	if (cfg->peer_pubkey_hash) {
+		os_memcpy(data->peer_pubkey_hash, cfg->peer_pubkey_hash,
+			  WPS_OOB_PUBKEY_HASH_LEN);
+		data->peer_pubkey_hash_set = 1;
+	}
+
 	return data;
 }
 
@@ -168,7 +179,6 @@ void wps_deinit(struct wps_data *data)
 	wps_device_data_free(&data->peer_dev);
 	os_free(data->new_ap_settings);
 	dh5_free(data->dh_ctx);
-	os_free(data->nfc_pw_token);
 	os_free(data);
 }
 

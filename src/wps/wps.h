@@ -183,6 +183,11 @@ struct wps_config {
 	 * PBC with the AP.
 	 */
 	int pbc_in_m1;
+
+	/**
+	 * peer_pubkey_hash - Peer public key hash or %NULL if not known
+	 */
+	const u8 *peer_pubkey_hash;
 };
 
 struct wps_data * wps_init(const struct wps_config *cfg);
@@ -801,7 +806,8 @@ int wps_registrar_config_ap(struct wps_registrar *reg,
 			    struct wps_credential *cred);
 int wps_registrar_add_nfc_pw_token(struct wps_registrar *reg,
 				   const u8 *pubkey_hash, u16 pw_id,
-				   const u8 *dev_pw, size_t dev_pw_len);
+				   const u8 *dev_pw, size_t dev_pw_len,
+				   int pk_hash_provided_oob);
 int wps_registrar_add_nfc_password_token(struct wps_registrar *reg,
 					 const u8 *oob_dev_pw,
 					 size_t oob_dev_pw_len);
@@ -815,7 +821,8 @@ unsigned int wps_generate_pin(void);
 int wps_pin_str_valid(const char *pin);
 void wps_free_pending_msgs(struct upnp_pending_message *msgs);
 
-struct wpabuf * wps_get_oob_cred(struct wps_context *wps);
+struct wpabuf * wps_get_oob_cred(struct wps_context *wps, int rf_band,
+				 int channel);
 int wps_oob_use_cred(struct wps_context *wps, struct wps_parse_attr *attr);
 int wps_attr_text(struct wpabuf *data, char *buf, char *end);
 const char * wps_ei_str(enum wps_error_indication ei);
@@ -839,6 +846,9 @@ struct wpabuf * wps_er_config_token_from_cred(struct wps_context *wps,
 					      struct wps_credential *cred);
 struct wpabuf * wps_er_nfc_config_token(struct wps_er *er, const u8 *uuid,
 					const u8 *addr);
+struct wpabuf * wps_er_nfc_handover_sel(struct wps_er *er,
+					struct wps_context *wps, const u8 *uuid,
+					const u8 *addr, struct wpabuf *pubkey);
 
 int wps_dev_type_str2bin(const char *str, u8 dev_type[WPS_DEV_TYPE_LEN]);
 char * wps_dev_type_bin2str(const u8 dev_type[WPS_DEV_TYPE_LEN], char *buf,
@@ -850,15 +860,27 @@ struct wpabuf * wps_build_nfc_pw_token(u16 dev_pw_id,
 				       const struct wpabuf *dev_pw);
 struct wpabuf * wps_nfc_token_build(int ndef, int id, struct wpabuf *pubkey,
 				    struct wpabuf *dev_pw);
+int wps_nfc_gen_dh(struct wpabuf **pubkey, struct wpabuf **privkey);
 struct wpabuf * wps_nfc_token_gen(int ndef, int *id, struct wpabuf **pubkey,
 				  struct wpabuf **privkey,
 				  struct wpabuf **dev_pw);
+struct wpabuf * wps_build_nfc_handover_req(struct wps_context *ctx,
+					   struct wpabuf *nfc_dh_pubkey);
+struct wpabuf * wps_build_nfc_handover_sel(struct wps_context *ctx,
+					   struct wpabuf *nfc_dh_pubkey,
+					   const u8 *bssid, int freq);
+struct wpabuf * wps_build_nfc_handover_req_p2p(struct wps_context *ctx,
+					       struct wpabuf *nfc_dh_pubkey);
+struct wpabuf * wps_build_nfc_handover_sel_p2p(struct wps_context *ctx,
+					       int nfc_dev_pw_id,
+					       struct wpabuf *nfc_dh_pubkey,
+					       struct wpabuf *nfc_dev_pw);
 
 /* ndef.c */
 struct wpabuf * ndef_parse_wifi(const struct wpabuf *buf);
 struct wpabuf * ndef_build_wifi(const struct wpabuf *buf);
-struct wpabuf * ndef_build_wifi_hc(int begin);
-struct wpabuf * ndef_build_wifi_hr(void);
+struct wpabuf * ndef_parse_p2p(const struct wpabuf *buf);
+struct wpabuf * ndef_build_p2p(const struct wpabuf *buf);
 
 #ifdef CONFIG_WPS_STRICT
 int wps_validate_beacon(const struct wpabuf *wps_ie);

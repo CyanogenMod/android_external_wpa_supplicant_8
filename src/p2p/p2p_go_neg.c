@@ -103,6 +103,8 @@ u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method)
 		return DEV_PW_USER_SPECIFIED;
 	case WPS_PBC:
 		return DEV_PW_PUSHBUTTON;
+	case WPS_NFC:
+		return DEV_PW_NFC_CONNECTION_HANDOVER;
 	default:
 		return DEV_PW_DEFAULT;
 	}
@@ -118,6 +120,8 @@ static const char * p2p_wps_method_str(enum p2p_wps_method wps_method)
 		return "Keypad";
 	case WPS_PBC:
 		return "PBC";
+	case WPS_NFC:
+		return "NFC";
 	default:
 		return "??";
 	}
@@ -131,6 +135,7 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 	u8 *len;
 	u8 group_capab;
 	size_t extra = 0;
+	u16 pw_id;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	if (p2p->wfd_ie_go_neg)
@@ -172,8 +177,10 @@ static struct wpabuf * p2p_build_go_neg_req(struct p2p_data *p2p,
 	p2p_buf_update_ie_hdr(buf, len);
 
 	/* WPS IE with Device Password ID attribute */
-	if (p2p_build_wps_ie(p2p, buf, p2p_wps_method_pw_id(peer->wps_method),
-			     0) < 0) {
+	pw_id = p2p_wps_method_pw_id(peer->wps_method);
+	if (peer->oob_pw_id)
+		pw_id = peer->oob_pw_id;
+	if (p2p_build_wps_ie(p2p, buf, pw_id, 0) < 0) {
 		p2p_dbg(p2p, "Failed to build WPS IE for GO Negotiation Request");
 		wpabuf_free(buf);
 		return NULL;
@@ -210,6 +217,8 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 	}
 
 	freq = dev->listen_freq > 0 ? dev->listen_freq : dev->oper_freq;
+	if (dev->oob_go_neg_freq > 0)
+		freq = dev->oob_go_neg_freq;
 	if (freq <= 0) {
 		p2p_dbg(p2p, "No Listen/Operating frequency known for the peer "
 			MACSTR " to send GO Negotiation Request",
@@ -250,6 +259,7 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	u8 *len;
 	u8 group_capab;
 	size_t extra = 0;
+	u16 pw_id;
 
 	p2p_dbg(p2p, "Building GO Negotiation Response");
 
@@ -312,9 +322,10 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	p2p_buf_update_ie_hdr(buf, len);
 
 	/* WPS IE with Device Password ID attribute */
-	if (p2p_build_wps_ie(p2p, buf,
-			     p2p_wps_method_pw_id(peer ? peer->wps_method :
-						  WPS_NOT_READY), 0) < 0) {
+	pw_id = p2p_wps_method_pw_id(peer ? peer->wps_method : WPS_NOT_READY);
+	if (peer && peer->oob_pw_id)
+		pw_id = peer->oob_pw_id;
+	if (p2p_build_wps_ie(p2p, buf, pw_id, 0) < 0) {
 		p2p_dbg(p2p, "Failed to build WPS IE for GO Negotiation Response");
 		wpabuf_free(buf);
 		return NULL;
@@ -605,7 +616,11 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 	if (dev && dev->flags & P2P_DEV_USER_REJECTED) {
 		p2p_dbg(p2p, "User has rejected this peer");
 		status = P2P_SC_FAIL_REJECTED_BY_USER;
-	} else if (dev == NULL || dev->wps_method == WPS_NOT_READY) {
+	} else if (dev == NULL ||
+		   (dev->wps_method == WPS_NOT_READY &&
+		    (p2p->authorized_oob_dev_pw_id == 0 ||
+		     p2p->authorized_oob_dev_pw_id !=
+		     msg.dev_password_id))) {
 		p2p_dbg(p2p, "Not ready for GO negotiation with " MACSTR,
 			MAC2STR(sa));
 		status = P2P_SC_FAIL_INFO_CURRENTLY_UNAVAILABLE;
@@ -692,6 +707,28 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 			}
 			break;
 		default:
+			if (msg.dev_password_id &&
+			    msg.dev_password_id == dev->oob_pw_id) {
+				p2p_dbg(p2p, "Peer using NFC");
+				if (dev->wps_method != WPS_NFC) {
+					p2p_dbg(p2p, "We have wps_method=%s -> incompatible",
+						p2p_wps_method_str(
+							dev->wps_method));
+					status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;
+					goto fail;
+				}
+				break;
+			}
+#ifdef CONFIG_WPS_NFC
+			if (p2p->authorized_oob_dev_pw_id &&
+			    msg.dev_password_id ==
+			    p2p->authorized_oob_dev_pw_id) {
+				p2p_dbg(p2p, "Using static handover with our device password from NFC Tag");
+				dev->wps_method = WPS_NFC;
+				dev->oob_pw_id = p2p->authorized_oob_dev_pw_id;
+				break;
+			}
+#endif /* CONFIG_WPS_NFC */
 			p2p_dbg(p2p, "Unsupported Device Password ID %d",
 				msg.dev_password_id);
 			status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;
@@ -1017,6 +1054,17 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 		}
 		break;
 	default:
+		if (msg.dev_password_id &&
+		    msg.dev_password_id == dev->oob_pw_id) {
+			p2p_dbg(p2p, "Peer using NFC");
+			if (dev->wps_method != WPS_NFC) {
+				p2p_dbg(p2p, "We have wps_method=%s -> incompatible",
+					p2p_wps_method_str(dev->wps_method));
+				status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;
+				goto fail;
+			}
+			break;
+		}
 		p2p_dbg(p2p, "Unsupported Device Password ID %d",
 			msg.dev_password_id);
 		status = P2P_SC_FAIL_INCOMPATIBLE_PROV_METHOD;

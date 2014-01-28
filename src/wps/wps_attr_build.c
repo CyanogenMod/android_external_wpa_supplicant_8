@@ -38,8 +38,15 @@ int wps_build_public_key(struct wps_data *wps, struct wpabuf *msg)
 		wps->wps->dh_ctx = NULL;
 		pubkey = wpabuf_dup(wps->wps->dh_pubkey);
 #ifdef CONFIG_WPS_NFC
-	} else if (wps->dev_pw_id >= 0x10 && wps->wps->ap &&
-		   wps->dev_pw_id == wps->wps->ap_nfc_dev_pw_id) {
+	} else if ((wps->dev_pw_id >= 0x10 ||
+		    wps->dev_pw_id == DEV_PW_NFC_CONNECTION_HANDOVER) &&
+		   (wps->wps->ap ||
+		    (wps->wps->ap_nfc_dh_pubkey &&
+		     wps->wps->ap_nfc_dev_pw_id ==
+		     DEV_PW_NFC_CONNECTION_HANDOVER &&
+		     wps->dev_pw_id == DEV_PW_NFC_CONNECTION_HANDOVER)) &&
+		   (wps->dev_pw_id == wps->wps->ap_nfc_dev_pw_id ||
+		    wps->wps->ap_nfc_dh_pubkey)) {
 		wpa_printf(MSG_DEBUG, "WPS: Using NFC password token DH keys");
 		if (wps->wps->ap_nfc_dh_privkey == NULL) {
 			wpa_printf(MSG_DEBUG,
@@ -392,6 +399,14 @@ int wps_build_oob_dev_pw(struct wpabuf *msg, u16 dev_pw_id,
 	addr[0] = wpabuf_head(pubkey);
 	hash_len = wpabuf_len(pubkey);
 	sha256_vector(1, addr, &hash_len, pubkey_hash);
+#ifdef CONFIG_WPS_TESTING
+	if (wps_corrupt_pkhash) {
+		wpa_hexdump(MSG_DEBUG, "WPS: Real Public Key Hash",
+			    pubkey_hash, WPS_OOB_PUBKEY_HASH_LEN);
+		wpa_printf(MSG_INFO, "WPS: Testing - corrupt public key hash");
+		pubkey_hash[WPS_OOB_PUBKEY_HASH_LEN - 2]++;
+	}
+#endif /* CONFIG_WPS_TESTING */
 
 	wpabuf_put_be16(msg, ATTR_OOB_DEVICE_PASSWORD);
 	wpabuf_put_be16(msg, WPS_OOB_PUBKEY_HASH_LEN + 2 + dev_pw_len);
@@ -399,9 +414,11 @@ int wps_build_oob_dev_pw(struct wpabuf *msg, u16 dev_pw_id,
 		    pubkey_hash, WPS_OOB_PUBKEY_HASH_LEN);
 	wpabuf_put_data(msg, pubkey_hash, WPS_OOB_PUBKEY_HASH_LEN);
 	wpabuf_put_be16(msg, dev_pw_id);
-	wpa_hexdump_key(MSG_DEBUG, "WPS: OOB Device Password",
-			dev_pw, dev_pw_len);
-	wpabuf_put_data(msg, dev_pw, dev_pw_len);
+	if (dev_pw) {
+		wpa_hexdump_key(MSG_DEBUG, "WPS: OOB Device Password",
+				dev_pw, dev_pw_len);
+		wpabuf_put_data(msg, dev_pw, dev_pw_len);
+	}
 
 	return 0;
 }
@@ -447,5 +464,25 @@ int wps_build_mac_addr(struct wpabuf *msg, const u8 *addr)
 	wpabuf_put_be16(msg, ATTR_MAC_ADDR);
 	wpabuf_put_be16(msg, ETH_ALEN);
 	wpabuf_put_data(msg, addr, ETH_ALEN);
+	return 0;
+}
+
+
+int wps_build_rf_bands_attr(struct wpabuf *msg, u8 rf_bands)
+{
+	wpa_printf(MSG_DEBUG, "WPS:  * RF Bands (%x)", rf_bands);
+	wpabuf_put_be16(msg, ATTR_RF_BANDS);
+	wpabuf_put_be16(msg, 1);
+	wpabuf_put_u8(msg, rf_bands);
+	return 0;
+}
+
+
+int wps_build_ap_channel(struct wpabuf *msg, u16 ap_channel)
+{
+	wpa_printf(MSG_DEBUG, "WPS:  * AP Channel (%u)", ap_channel);
+	wpabuf_put_be16(msg, ATTR_AP_CHANNEL);
+	wpabuf_put_be16(msg, 2);
+	wpabuf_put_be16(msg, ap_channel);
 	return 0;
 }

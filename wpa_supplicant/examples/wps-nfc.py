@@ -10,7 +10,8 @@ import os
 import sys
 import time
 import random
-import StringIO
+import threading
+import argparse
 
 import nfc
 import nfc.ndef
@@ -18,11 +19,13 @@ import nfc.llcp
 import nfc.handover
 
 import logging
-logging.basicConfig()
 
 import wpaspy
 
 wpas_ctrl = '/var/run/wpa_supplicant'
+srv = None
+continue_loop = True
+terminate_now = False
 
 def wpas_connect():
     ifaces = []
@@ -50,7 +53,7 @@ def wpas_tag_read(message):
     wpas = wpas_connect()
     if (wpas == None):
         return False
-    if "FAIL" in wpas.request("WPS_NFC_TAG_READ " + message.encode("hex")):
+    if "FAIL" in wpas.request("WPS_NFC_TAG_READ " + str(message).encode("hex")):
         return False
     return True
 
@@ -71,7 +74,10 @@ def wpas_get_er_config_token(uuid):
     wpas = wpas_connect()
     if (wpas == None):
         return None
-    return wpas.request("WPS_ER_NFC_CONFIG_TOKEN NDEF " + uuid).rstrip().decode("hex")
+    ret = wpas.request("WPS_ER_NFC_CONFIG_TOKEN NDEF " + uuid)
+    if "FAIL" in ret:
+        return None
+    return ret.rstrip().decode("hex")
 
 
 def wpas_get_password_token():
@@ -93,8 +99,12 @@ def wpas_get_handover_sel(uuid):
     if (wpas == None):
         return None
     if uuid is None:
-        return wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR").rstrip().decode("hex")
-    return wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR " + uuid).rstrip().decode("hex")
+        res = wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR").rstrip()
+    else:
+	res = wpas.request("NFC_GET_HANDOVER_SEL NDEF WPS-CR " + uuid).rstrip()
+    if "FAIL" in res:
+	return None
+    return res.decode("hex")
 
 
 def wpas_report_handover(req, sel, type):
@@ -107,12 +117,19 @@ def wpas_report_handover(req, sel, type):
 
 
 class HandoverServer(nfc.handover.HandoverServer):
-    def __init__(self):
-        super(HandoverServer, self).__init__()
+    def __init__(self, llc):
+        super(HandoverServer, self).__init__(llc)
+        self.sent_carrier = None
+        self.ho_server_processing = False
+        self.success = False
 
     def process_request(self, request):
+        self.ho_server_processing = True
         print "HandoverServer - request received"
-        print "Parsed handover request: " + request.pretty()
+        try:
+            print "Parsed handover request: " + request.pretty()
+        except Exception, e:
+            print e
 
         sel = nfc.ndef.HandoverSelectMessage(version="1.2")
 
@@ -120,7 +137,6 @@ class HandoverServer(nfc.handover.HandoverServer):
             print "Remote carrier type: " + carrier.type
             if carrier.type == "application/vnd.wfa.wsc":
                 print "WPS carrier type match - add WPS carrier record"
-                self.received_carrier = carrier.record
                 data = wpas_get_handover_sel(self.uuid)
                 if data is None:
                     print "Could not get handover select carrier record from wpa_supplicant"
@@ -128,52 +144,24 @@ class HandoverServer(nfc.handover.HandoverServer):
                 print "Handover select carrier record from wpa_supplicant:"
                 print data.encode("hex")
                 self.sent_carrier = data
+                wpas_report_handover(carrier.record, self.sent_carrier, "RESP")
 
                 message = nfc.ndef.Message(data);
                 sel.add_carrier(message[0], "active", message[1:])
 
         print "Handover select:"
-        print sel.pretty()
+        try:
+            print sel.pretty()
+        except Exception, e:
+            print e
         print str(sel).encode("hex")
 
         print "Sending handover select"
+        self.success = True
         return sel
 
 
-def wps_handover_resp(peer, uuid):
-    if uuid is None:
-        print "Trying to handle WPS handover"
-    else:
-        print "Trying to handle WPS handover with AP " + uuid
-
-    srv = HandoverServer()
-    srv.sent_carrier = None
-    srv.uuid = uuid
-
-    nfc.llcp.activate(peer);
-
-    try:
-        print "Trying handover";
-        srv.start()
-        print "Wait for disconnect"
-        while nfc.llcp.connected():
-            time.sleep(0.1)
-        print "Disconnected after handover"
-    except nfc.llcp.ConnectRefused:
-        print "Handover connection refused"
-        nfc.llcp.shutdown()
-        return
-
-    if srv.sent_carrier:
-        wpas_report_handover(srv.received_carrier, srv.sent_carrier, "RESP")
-
-    print "Remove peer"
-    nfc.llcp.shutdown()
-    print "Done with handover"
-    time.sleep(1)
-
-
-def wps_handover_init(peer):
+def wps_handover_init(llc):
     print "Trying to initiate WPS handover"
 
     data = wpas_get_handover_req()
@@ -181,30 +169,26 @@ def wps_handover_init(peer):
         print "Could not get handover request carrier record from wpa_supplicant"
         return
     print "Handover request carrier record from wpa_supplicant: " + data.encode("hex")
-    record = nfc.ndef.Record()
-    f = StringIO.StringIO(data)
-    record._read(f)
-    record = nfc.ndef.HandoverCarrierRecord(record)
-    print "Parsed handover request carrier record:"
-    print record.pretty()
 
     message = nfc.ndef.HandoverRequestMessage(version="1.2")
     message.nonce = random.randint(0, 0xffff)
-    message.add_carrier(record, "active")
+    datamsg = nfc.ndef.Message(data)
+    message.add_carrier(datamsg[0], "active", datamsg[1:])
 
     print "Handover request:"
-    print message.pretty()
+    try:
+        print message.pretty()
+    except Exception, e:
+        print e
+    print str(message).encode("hex")
 
-    nfc.llcp.activate(peer);
-
-    client = nfc.handover.HandoverClient()
+    client = nfc.handover.HandoverClient(llc)
     try:
         print "Trying handover";
         client.connect()
         print "Connected for handover"
     except nfc.llcp.ConnectRefused:
         print "Handover connection refused"
-        nfc.llcp.shutdown()
         client.close()
         return
 
@@ -217,42 +201,53 @@ def wps_handover_init(peer):
     message = client._recv()
     if message is None:
         print "No response received"
-        nfc.llcp.shutdown()
         client.close()
         return
     if message.type != "urn:nfc:wkt:Hs":
         print "Response was not Hs - received: " + message.type
-        nfc.llcp.shutdown()
         client.close()
         return
 
     print "Received message"
-    print message.pretty()
+    try:
+        print message.pretty()
+    except Exception, e:
+        print e
+    print str(message).encode("hex")
     message = nfc.ndef.HandoverSelectMessage(message)
     print "Handover select received"
-    print message.pretty()
+    try:
+        print message.pretty()
+    except Exception, e:
+        print e
 
     for carrier in message.carriers:
         print "Remote carrier type: " + carrier.type
         if carrier.type == "application/vnd.wfa.wsc":
             print "WPS carrier type match - send to wpa_supplicant"
             wpas_report_handover(data, carrier.record, "INIT")
-            wifi = nfc.ndef.WifiConfigRecord(carrier.record)
-            print wifi.pretty()
+            # nfcpy does not support the new format..
+            #wifi = nfc.ndef.WifiConfigRecord(carrier.record)
+            #print wifi.pretty()
 
     print "Remove peer"
-    nfc.llcp.shutdown()
     client.close()
     print "Done with handover"
+    global only_one
+    if only_one:
+        global continue_loop
+        continue_loop = False
 
+    global no_wait
+    if no_wait:
+        print "Trying to exit.."
+        global terminate_now
+        terminate_now = True
 
 def wps_tag_read(tag, wait_remove=True):
     success = False
     if len(tag.ndef.message):
-        message = nfc.ndef.Message(tag.ndef.message)
-        print "message type " + message.type
-
-        for record in message:
+        for record in tag.ndef.message:
             print "record type " + record.type
             if record.type == "application/vnd.wfa.wsc":
                 print "WPS tag - send to wpa_supplicant"
@@ -269,166 +264,190 @@ def wps_tag_read(tag, wait_remove=True):
     return success
 
 
+def rdwr_connected_write(tag):
+    print "Tag found - writing"
+    global write_data
+    tag.ndef.message = str(write_data)
+    print "Done - remove tag"
+    global only_one
+    if only_one:
+        global continue_loop
+        continue_loop = False
+    global write_wait_remove
+    while write_wait_remove and tag.is_present:
+        time.sleep(0.1)
+
 def wps_write_config_tag(clf, id=None, wait_remove=True):
     print "Write WPS config token"
-    data = wpas_get_config_token(id)
-    if (data == None):
+    global write_data, write_wait_remove
+    write_wait_remove = wait_remove
+    write_data = wpas_get_config_token(id)
+    if write_data == None:
         print "Could not get WPS config token from wpa_supplicant"
         sys.exit(1)
         return
-
     print "Touch an NFC tag"
-    while True:
-        tag = clf.poll()
-        if tag == None:
-            time.sleep(0.1)
-            continue
-        break
-
-    print "Tag found - writing"
-    tag.ndef.message = data
-    print "Done - remove tag"
-    while wait_remove and tag.is_present:
-        time.sleep(0.1)
+    clf.connect(rdwr={'on-connect': rdwr_connected_write})
 
 
-def wps_write_er_config_tag(clf, uuid):
+def wps_write_er_config_tag(clf, uuid, wait_remove=True):
     print "Write WPS ER config token"
-    data = wpas_get_er_config_token(uuid)
-    if (data == None):
+    global write_data, write_wait_remove
+    write_wait_remove = wait_remove
+    write_data = wpas_get_er_config_token(uuid)
+    if write_data == None:
         print "Could not get WPS config token from wpa_supplicant"
         return
 
     print "Touch an NFC tag"
-    while True:
-        tag = clf.poll()
-        if tag == None:
-            time.sleep(0.1)
-            continue
-        break
-
-    print "Tag found - writing"
-    tag.ndef.message = data
-    print "Done - remove tag"
-    while tag.is_present:
-        time.sleep(0.1)
+    clf.connect(rdwr={'on-connect': rdwr_connected_write})
 
 
 def wps_write_password_tag(clf, wait_remove=True):
     print "Write WPS password token"
-    data = wpas_get_password_token()
-    if (data == None):
+    global write_data, write_wait_remove
+    write_wait_remove = wait_remove
+    write_data = wpas_get_password_token()
+    if write_data == None:
         print "Could not get WPS password token from wpa_supplicant"
         return
 
     print "Touch an NFC tag"
-    while True:
-        tag = clf.poll()
-        if tag == None:
-            time.sleep(0.1)
-            continue
-        break
-
-    print "Tag found - writing"
-    tag.ndef.message = data
-    print "Done - remove tag"
-    while wait_remove and tag.is_present:
-        time.sleep(0.1)
+    clf.connect(rdwr={'on-connect': rdwr_connected_write})
 
 
-def find_peer(clf):
-    while True:
-        if nfc.llcp.connected():
-            print "LLCP connected"
-        general_bytes = nfc.llcp.startup({})
-        peer = clf.listen(ord(os.urandom(1)) + 250, general_bytes)
-        if isinstance(peer, nfc.DEP):
-            print "listen -> DEP";
-            if peer.general_bytes.startswith("Ffm"):
-                print "Found DEP"
-                return peer
-            print "mismatch in general_bytes"
-            print peer.general_bytes
+def rdwr_connected(tag):
+    global only_one, no_wait
+    print "Tag connected: " + str(tag)
 
-        peer = clf.poll(general_bytes)
-        if isinstance(peer, nfc.DEP):
-            print "poll -> DEP";
-            if peer.general_bytes.startswith("Ffm"):
-                print "Found DEP"
-                return peer
-            print "mismatch in general_bytes"
-            print peer.general_bytes
+    if tag.ndef:
+        print "NDEF tag: " + tag.type
+        try:
+            print tag.ndef.message.pretty()
+        except Exception, e:
+            print e
+        success = wps_tag_read(tag, not only_one)
+        if only_one and success:
+            global continue_loop
+            continue_loop = False
+    else:
+        print "Not an NDEF tag - remove tag"
 
-        if peer:
-            print "Found tag"
-            return peer
+    return not no_wait
 
+
+def llcp_worker(llc):
+    global arg_uuid
+    if arg_uuid is None:
+        wps_handover_init(llc)
+        print "Exiting llcp_worker thread"
+        return
+
+    global srv
+    global wait_connection
+    while not wait_connection and srv.sent_carrier is None:
+        if srv.ho_server_processing:
+            time.sleep(0.025)
+
+def llcp_startup(clf, llc):
+    global arg_uuid
+    if arg_uuid:
+        print "Start LLCP server"
+        global srv
+        srv = HandoverServer(llc)
+        if arg_uuid is "ap":
+            print "Trying to handle WPS handover"
+            srv.uuid = None
+        else:
+            print "Trying to handle WPS handover with AP " + arg_uuid
+            srv.uuid = arg_uuid
+    return llc
+
+def llcp_connected(llc):
+    print "P2P LLCP connected"
+    global wait_connection
+    wait_connection = False
+    global arg_uuid
+    if arg_uuid:
+        global srv
+        srv.start()
+    else:
+        threading.Thread(target=llcp_worker, args=(llc,)).start()
+    print "llcp_connected returning"
+    return True
+
+
+def terminate_loop():
+    global terminate_now
+    return terminate_now
 
 def main():
     clf = nfc.ContactlessFrontend()
 
+    parser = argparse.ArgumentParser(description='nfcpy to wpa_supplicant integration for WPS NFC operations')
+    parser.add_argument('-d', const=logging.DEBUG, default=logging.INFO,
+                        action='store_const', dest='loglevel',
+                        help='verbose debug output')
+    parser.add_argument('-q', const=logging.WARNING, action='store_const',
+                        dest='loglevel', help='be quiet')
+    parser.add_argument('--only-one', '-1', action='store_true',
+                        help='run only one operation and exit')
+    parser.add_argument('--no-wait', action='store_true',
+                        help='do not wait for tag to be removed before exiting')
+    parser.add_argument('--uuid',
+                        help='UUID of an AP (used for WPS ER operations)')
+    parser.add_argument('--id',
+                        help='network id (used for WPS ER operations)')
+    parser.add_argument('command', choices=['write-config',
+                                            'write-er-config',
+                                            'write-password'],
+                        nargs='?')
+    args = parser.parse_args()
+
+    global arg_uuid
+    arg_uuid = args.uuid
+
+    global only_one
+    only_one = args.only_one
+
+    global no_wait
+    no_wait = args.no_wait
+
+    logging.basicConfig(level=args.loglevel)
+
     try:
-        arg_uuid = None
-        if len(sys.argv) > 1 and sys.argv[1] != '-1':
-            arg_uuid = sys.argv[1]
-
-        if len(sys.argv) > 1 and sys.argv[1] == '-1':
-            only_one = True
-        else:
-            only_one = False
-
-        if len(sys.argv) > 1 and sys.argv[1] == "write-config":
-            wps_write_config_tag(clf)
+        if not clf.open("usb"):
+            print "Could not open connection with an NFC device"
             raise SystemExit
 
-        if len(sys.argv) > 1 and sys.argv[1] == "write-config-no-wait":
-            wps_write_config_tag(clf, wait_remove=False)
+        if args.command == "write-config":
+            wps_write_config_tag(clf, id=args.id, wait_remove=not args.no_wait)
             raise SystemExit
 
-        if len(sys.argv) > 2 and sys.argv[1] == "write-config-id":
-            wps_write_config_tag(clf, sys.argv[2])
+        if args.command == "write-er-config":
+            wps_write_er_config_tag(clf, args.uuid, wait_remove=not args.no_wait)
             raise SystemExit
 
-        if len(sys.argv) > 2 and sys.argv[1] == "write-er-config":
-            wps_write_er_config_tag(clf, sys.argv[2])
+        if args.command == "write-password":
+            wps_write_password_tag(clf, wait_remove=not args.no_wait)
             raise SystemExit
 
-        if len(sys.argv) > 1 and sys.argv[1] == "write-password":
-            wps_write_password_tag(clf)
-            raise SystemExit
-
-        if len(sys.argv) > 1 and sys.argv[1] == "write-password-no-wait":
-            wps_write_password_tag(clf, wait_remove=False)
-            raise SystemExit
-
-        while True:
+        global continue_loop
+        while continue_loop:
             print "Waiting for a tag or peer to be touched"
-
-            tag = find_peer(clf)
-            if isinstance(tag, nfc.DEP):
-                if arg_uuid is None:
-                    wps_handover_init(tag)
-                elif arg_uuid is "ap":
-                    wps_handover_resp(tag, None)
-                else:
-                    wps_handover_resp(tag, arg_uuid)
-                if only_one:
+            wait_connection = True
+            try:
+                if not clf.connect(rdwr={'on-connect': rdwr_connected},
+                                   llcp={'on-startup': llcp_startup,
+                                         'on-connect': llcp_connected},
+                                   terminate=terminate_loop):
                     break
-                continue
+            except Exception, e:
+                print "clf.connect failed"
 
-            if tag.ndef:
-                success = wps_tag_read(tag, not only_one)
-                if only_one:
-                    if not success:
-                        sys.exit(1)
-                    break
-                continue
-
-            print "Not an NDEF tag - remove tag"
-            if only_one:
-                sys.exit(1)
-            while tag.is_present:
-                time.sleep(0.1)
+            global srv
+            if only_one and srv and srv.success:
+                raise SystemExit
 
     except KeyboardInterrupt:
         raise SystemExit

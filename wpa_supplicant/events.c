@@ -68,9 +68,25 @@ static int wpas_temp_disabled(struct wpa_supplicant *wpa_s,
 }
 
 
+static struct wpa_bss * wpa_supplicant_get_new_bss(
+	struct wpa_supplicant *wpa_s, const u8 *bssid)
+{
+	struct wpa_bss *bss = NULL;
+	struct wpa_ssid *ssid = wpa_s->current_ssid;
+
+	if (ssid->ssid_len > 0)
+		bss = wpa_bss_get(wpa_s, bssid, ssid->ssid, ssid->ssid_len);
+	if (!bss)
+		bss = wpa_bss_get_bssid(wpa_s, bssid);
+
+	return bss;
+}
+
+
 static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid, *old_ssid;
+	struct wpa_bss *bss;
 	int res;
 
 	if (wpa_s->conf->ap_scan == 1 && wpa_s->current_ssid)
@@ -119,6 +135,18 @@ static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 		eapol_sm_invalidate_cached_session(wpa_s->eapol);
 	old_ssid = wpa_s->current_ssid;
 	wpa_s->current_ssid = ssid;
+
+	bss = wpa_supplicant_get_new_bss(wpa_s, wpa_s->bssid);
+	if (!bss) {
+		wpa_supplicant_update_scan_results(wpa_s);
+
+		/* Get the BSS from the new scan results */
+		bss = wpa_supplicant_get_new_bss(wpa_s, wpa_s->bssid);
+	}
+
+	if (bss)
+		wpa_s->current_bss = bss;
+
 	wpa_supplicant_rsn_supp_set_config(wpa_s, wpa_s->current_ssid);
 	wpa_supplicant_initiate_eapol(wpa_s);
 	if (old_ssid != wpa_s->current_ssid)
@@ -1766,21 +1794,6 @@ static int wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 }
 
 
-static struct wpa_bss * wpa_supplicant_get_new_bss(
-	struct wpa_supplicant *wpa_s, const u8 *bssid)
-{
-	struct wpa_bss *bss = NULL;
-	struct wpa_ssid *ssid = wpa_s->current_ssid;
-
-	if (ssid->ssid_len > 0)
-		bss = wpa_bss_get(wpa_s, bssid, ssid->ssid, ssid->ssid_len);
-	if (!bss)
-		bss = wpa_bss_get_bssid(wpa_s, bssid);
-
-	return bss;
-}
-
-
 static int wpa_supplicant_assoc_update_ie(struct wpa_supplicant *wpa_s)
 {
 	const u8 *bss_wpa = NULL, *bss_rsn = NULL;
@@ -1849,20 +1862,6 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 			return;
-		}
-		if (wpa_s->current_ssid) {
-			struct wpa_bss *bss = NULL;
-
-			bss = wpa_supplicant_get_new_bss(wpa_s, bssid);
-			if (!bss) {
-				wpa_supplicant_update_scan_results(wpa_s);
-
-				/* Get the BSS from the new scan results */
-				bss = wpa_supplicant_get_new_bss(wpa_s, bssid);
-			}
-
-			if (bss)
-				wpa_s->current_bss = bss;
 		}
 
 #ifdef ANDROID
@@ -2779,6 +2778,58 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 }
 
 
+static void wpa_supplicant_notify_avoid_freq(struct wpa_supplicant *wpa_s,
+					     union wpa_event_data *event)
+{
+#ifdef CONFIG_P2P
+	struct wpa_supplicant *ifs;
+#endif /* CONFIG_P2P */
+	struct wpa_freq_range_list *list;
+	char *str = NULL;
+
+	list = &event->freq_range;
+
+	if (list->num)
+		str = freq_range_list_str(list);
+	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_AVOID_FREQ "ranges=%s",
+		str ? str : "");
+
+#ifdef CONFIG_P2P
+	if (freq_range_list_parse(&wpa_s->global->p2p_go_avoid_freq, str)) {
+		wpa_dbg(wpa_s, MSG_ERROR, "%s: Failed to parse freq range",
+			__func__);
+	} else {
+		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Update channel list based on frequency avoid event");
+		wpas_p2p_update_channel_list(wpa_s);
+	}
+
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		int freq;
+		if (!ifs->current_ssid ||
+		    !ifs->current_ssid->p2p_group ||
+		    (ifs->current_ssid->mode != WPAS_MODE_P2P_GO &&
+		     ifs->current_ssid->mode != WPAS_MODE_P2P_GROUP_FORMATION))
+			continue;
+
+		freq = ifs->current_ssid->frequency;
+		if (!freq_range_list_includes(list, freq)) {
+			wpa_dbg(ifs, MSG_DEBUG, "P2P GO operating frequency %d MHz in safe range",
+				freq);
+			continue;
+		}
+
+		wpa_dbg(ifs, MSG_DEBUG, "P2P GO operating in unsafe frequency %d MHz",
+			freq);
+		/* TODO: Consider using CSA or removing the group within
+		 * wpa_supplicant */
+		wpa_msg(ifs, MSG_INFO, P2P_EVENT_REMOVE_AND_REFORM_GROUP);
+	}
+#endif /* CONFIG_P2P */
+
+	os_free(str);
+}
+
+
 void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			  union wpa_event_data *data)
 {
@@ -3269,6 +3320,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_WPS
 		wpas_wps_start_pbc(wpa_s, NULL, 0);
 #endif /* CONFIG_WPS */
+		break;
+	case EVENT_AVOID_FREQUENCIES:
+		wpa_supplicant_notify_avoid_freq(wpa_s, data);
 		break;
 	case EVENT_CONNECT_FAILED_REASON:
 #ifdef CONFIG_AP

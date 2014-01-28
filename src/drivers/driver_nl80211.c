@@ -28,6 +28,7 @@
 #include "common.h"
 #include "eloop.h"
 #include "utils/list.h"
+#include "common/qca-vendor.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "l2_packet/l2_packet.h"
@@ -2716,6 +2717,69 @@ static void nl80211_spurious_frame(struct i802_bss *bss, struct nlattr **tb,
 }
 
 
+static void qca_nl80211_avoid_freq(struct wpa_driver_nl80211_data *drv,
+				   const u8 *data, size_t len)
+{
+	u32 i, count;
+	union wpa_event_data event;
+	struct wpa_freq_range *range = NULL;
+	const struct qca_avoid_freq_list *freq_range;
+
+	freq_range = (const struct qca_avoid_freq_list *) data;
+	if (len < sizeof(freq_range->count))
+		return;
+
+	count = freq_range->count;
+	if (len < sizeof(freq_range->count) +
+	    count * sizeof(struct qca_avoid_freq_range)) {
+		wpa_printf(MSG_DEBUG, "nl80211: Ignored too short avoid frequency list (len=%u)",
+			   (unsigned int) len);
+		return;
+	}
+
+	if (count > 0) {
+		range = os_calloc(count, sizeof(struct wpa_freq_range));
+		if (range == NULL)
+			return;
+	}
+
+	os_memset(&event, 0, sizeof(event));
+	for (i = 0; i < count; i++) {
+		unsigned int idx = event.freq_range.num;
+		range[idx].min = freq_range->range[i].start_freq;
+		range[idx].max = freq_range->range[i].end_freq;
+		wpa_printf(MSG_DEBUG, "nl80211: Avoid frequency range: %u-%u",
+			   range[idx].min, range[idx].max);
+		if (range[idx].min > range[idx].max) {
+			wpa_printf(MSG_DEBUG, "nl80211: Ignore invalid frequency range");
+			continue;
+		}
+		event.freq_range.num++;
+	}
+	event.freq_range.range = range;
+
+	wpa_supplicant_event(drv->ctx, EVENT_AVOID_FREQUENCIES, &event);
+
+	os_free(range);
+}
+
+
+static void nl80211_vendor_event_qca(struct wpa_driver_nl80211_data *drv,
+				     u32 subcmd, u8 *data, size_t len)
+{
+	switch (subcmd) {
+	case QCA_NL80211_VENDOR_SUBCMD_AVOID_FREQUENCY:
+		qca_nl80211_avoid_freq(drv, data, len);
+		break;
+	default:
+		wpa_printf(MSG_DEBUG,
+			   "nl80211: Ignore unsupported QCA vendor event %u",
+			   subcmd);
+		break;
+	}
+}
+
+
 static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
 				 struct nlattr **tb)
 {
@@ -2751,6 +2815,9 @@ static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
 	}
 
 	switch (vendor_id) {
+	case OUI_QCA:
+		nl80211_vendor_event_qca(drv, subcmd, data, len);
+		break;
 	default:
 		wpa_printf(MSG_DEBUG, "nl80211: Ignore unsupported vendor event");
 		break;

@@ -514,6 +514,24 @@ static int wps_process_pubkey(struct wps_data *wps, const u8 *pk,
 		return -1;
 	}
 
+	if (wps->peer_pubkey_hash_set) {
+		u8 hash[WPS_HASH_LEN];
+		sha256_vector(1, &pk, &pk_len, hash);
+		if (os_memcmp(hash, wps->peer_pubkey_hash,
+			      WPS_OOB_PUBKEY_HASH_LEN) != 0) {
+			wpa_printf(MSG_ERROR, "WPS: Public Key hash mismatch");
+			wpa_hexdump(MSG_DEBUG, "WPS: Received public key",
+				    pk, pk_len);
+			wpa_hexdump(MSG_DEBUG, "WPS: Calculated public key "
+				    "hash", hash, WPS_OOB_PUBKEY_HASH_LEN);
+			wpa_hexdump(MSG_DEBUG, "WPS: Expected public key hash",
+				    wps->peer_pubkey_hash,
+				    WPS_OOB_PUBKEY_HASH_LEN);
+			wps->config_error = WPS_CFG_PUBLIC_KEY_HASH_MISMATCH;
+			return -1;
+		}
+	}
+
 	wpabuf_free(wps->dh_pubkey_r);
 	wps->dh_pubkey_r = wpabuf_alloc_copy(pk, pk_len);
 	if (wps->dh_pubkey_r == NULL)
@@ -928,6 +946,38 @@ static enum wps_process_res wps_process_m2(struct wps_data *wps,
 		wps->state = SEND_WSC_NACK;
 		return WPS_CONTINUE;
 	}
+
+#ifdef CONFIG_WPS_NFC
+	if (wps->peer_pubkey_hash_set) {
+		struct wpabuf *decrypted;
+		struct wps_parse_attr eattr;
+
+		decrypted = wps_decrypt_encr_settings(wps, attr->encr_settings,
+						      attr->encr_settings_len);
+		if (decrypted == NULL) {
+			wpa_printf(MSG_DEBUG, "WPS: Failed to decrypt "
+				   "Encrypted Settings attribute");
+			wps->state = SEND_WSC_NACK;
+			return WPS_CONTINUE;
+		}
+
+		wpa_printf(MSG_DEBUG, "WPS: Processing decrypted Encrypted "
+			   "Settings attribute");
+		if (wps_parse_msg(decrypted, &eattr) < 0 ||
+		    wps_process_key_wrap_auth(wps, decrypted,
+					      eattr.key_wrap_auth) ||
+		    wps_process_creds(wps, eattr.cred, eattr.cred_len,
+				      eattr.num_cred, attr->version2 != NULL)) {
+			wpabuf_free(decrypted);
+			wps->state = SEND_WSC_NACK;
+			return WPS_CONTINUE;
+		}
+		wpabuf_free(decrypted);
+
+		wps->state = WPS_MSG_DONE;
+		return WPS_CONTINUE;
+	}
+#endif /* CONFIG_WPS_NFC */
 
 	wps->state = SEND_M3;
 	return WPS_CONTINUE;

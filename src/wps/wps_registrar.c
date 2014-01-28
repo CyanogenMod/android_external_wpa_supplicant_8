@@ -31,9 +31,11 @@
 struct wps_nfc_pw_token {
 	struct dl_list list;
 	u8 pubkey_hash[WPS_OOB_PUBKEY_HASH_LEN];
+	unsigned int peer_pk_hash_known:1;
 	u16 pw_id;
 	u8 dev_pw[WPS_OOB_DEVICE_PASSWORD_LEN * 2 + 1];
 	size_t dev_pw_len;
+	int pk_hash_provided_oob; /* whether own PK hash was provided OOB */
 };
 
 
@@ -1360,10 +1362,23 @@ static int wps_get_dev_password(struct wps_data *wps)
 		pin_len = 8;
 #ifdef CONFIG_WPS_NFC
 	} else if (wps->nfc_pw_token) {
+		if (wps->nfc_pw_token->pw_id == DEV_PW_NFC_CONNECTION_HANDOVER)
+		{
+			wpa_printf(MSG_DEBUG, "WPS: Using NFC connection "
+				   "handover and abbreviated WPS handshake "
+				   "without Device Password");
+			return 0;
+		}
 		wpa_printf(MSG_DEBUG, "WPS: Use OOB Device Password from NFC "
 			   "Password Token");
 		pin = wps->nfc_pw_token->dev_pw;
 		pin_len = wps->nfc_pw_token->dev_pw_len;
+	} else if (wps->dev_pw_id >= 0x10 &&
+		   wps->wps->ap_nfc_dev_pw_id == wps->dev_pw_id &&
+		   wps->wps->ap_nfc_dev_pw) {
+		wpa_printf(MSG_DEBUG, "WPS: Use OOB Device Password from own NFC Password Token");
+		pin = wpabuf_head(wps->wps->ap_nfc_dev_pw);
+		pin_len = wpabuf_len(wps->wps->ap_nfc_dev_pw);
 #endif /* CONFIG_WPS_NFC */
 	} else {
 		pin = wps_registrar_get_pin(wps->wps->registrar, wps->uuid_e,
@@ -1777,6 +1792,7 @@ static struct wpabuf * wps_build_ap_cred(struct wps_data *wps)
 static struct wpabuf * wps_build_m2(struct wps_data *wps)
 {
 	struct wpabuf *msg;
+	int config_in_m2 = 0;
 
 	if (random_get_bytes(wps->nonce_r, WPS_NONCE_LEN) < 0)
 		return NULL;
@@ -1807,14 +1823,41 @@ static struct wpabuf * wps_build_m2(struct wps_data *wps)
 	    wps_build_config_error(msg, WPS_CFG_NO_ERROR) ||
 	    wps_build_dev_password_id(msg, wps->dev_pw_id) ||
 	    wps_build_os_version(&wps->wps->dev, msg) ||
-	    wps_build_wfa_ext(msg, 0, NULL, 0) ||
-	    wps_build_authenticator(wps, msg)) {
+	    wps_build_wfa_ext(msg, 0, NULL, 0)) {
+		wpabuf_free(msg);
+		return NULL;
+	}
+
+#ifdef CONFIG_WPS_NFC
+	if (wps->nfc_pw_token && wps->nfc_pw_token->pk_hash_provided_oob &&
+	    wps->nfc_pw_token->pw_id == DEV_PW_NFC_CONNECTION_HANDOVER) {
+		/*
+		 * Use abbreviated handshake since public key hash allowed
+		 * Enrollee to validate our public key similarly to how Enrollee
+		 * public key was validated. There is no need to validate Device
+		 * Password in this case.
+		 */
+		struct wpabuf *plain = wpabuf_alloc(500);
+		if (plain == NULL ||
+		    wps_build_cred(wps, plain) ||
+		    wps_build_key_wrap_auth(wps, plain) ||
+		    wps_build_encr_settings(wps, msg, plain)) {
+			wpabuf_free(msg);
+			wpabuf_free(plain);
+			return NULL;
+		}
+		wpabuf_free(plain);
+		config_in_m2 = 1;
+	}
+#endif /* CONFIG_WPS_NFC */
+
+	if (wps_build_authenticator(wps, msg)) {
 		wpabuf_free(msg);
 		return NULL;
 	}
 
 	wps->int_reg = 1;
-	wps->state = RECV_M3;
+	wps->state = config_in_m2 ? RECV_DONE : RECV_M3;
 	return msg;
 }
 
@@ -2528,6 +2571,9 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 	    wps->dev_pw_id != DEV_PW_USER_SPECIFIED &&
 	    wps->dev_pw_id != DEV_PW_MACHINE_SPECIFIED &&
 	    wps->dev_pw_id != DEV_PW_REGISTRAR_SPECIFIED &&
+#ifdef CONFIG_WPS_NFC
+	    wps->dev_pw_id != DEV_PW_NFC_CONNECTION_HANDOVER &&
+#endif /* CONFIG_WPS_NFC */
 	    (wps->dev_pw_id != DEV_PW_PUSHBUTTON ||
 	     !wps->wps->registrar->pbc)) {
 		wpa_printf(MSG_DEBUG, "WPS: Unsupported Device Password ID %d",
@@ -2537,7 +2583,8 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 	}
 
 #ifdef CONFIG_WPS_NFC
-	if (wps->dev_pw_id >= 0x10) {
+	if (wps->dev_pw_id >= 0x10 ||
+	    wps->dev_pw_id == DEV_PW_NFC_CONNECTION_HANDOVER) {
 		struct wps_nfc_pw_token *token;
 		const u8 *addr[1];
 		u8 hash[WPS_HASH_LEN];
@@ -2546,7 +2593,7 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 			   wps->dev_pw_id, wps->wps, wps->wps->registrar);
 		token = wps_get_nfc_pw_token(
 			&wps->wps->registrar->nfc_pw_tokens, wps->dev_pw_id);
-		if (token) {
+		if (token && token->peer_pk_hash_known) {
 			wpa_printf(MSG_DEBUG, "WPS: Found matching NFC "
 				   "Password Token");
 			dl_list_del(&token->list);
@@ -2558,8 +2605,19 @@ static enum wps_process_res wps_process_m1(struct wps_data *wps,
 				      WPS_OOB_PUBKEY_HASH_LEN) != 0) {
 				wpa_printf(MSG_ERROR, "WPS: Public Key hash "
 					   "mismatch");
-				return WPS_FAILURE;
+				wps->state = SEND_M2D;
+				wps->config_error =
+					WPS_CFG_PUBLIC_KEY_HASH_MISMATCH;
+				return WPS_CONTINUE;
 			}
+		} else if (token) {
+			wpa_printf(MSG_DEBUG, "WPS: Found matching NFC "
+				   "Password Token (no peer PK hash)");
+			wps->nfc_pw_token = token;
+		} else if (wps->dev_pw_id >= 0x10 &&
+			   wps->wps->ap_nfc_dev_pw_id == wps->dev_pw_id &&
+			   wps->wps->ap_nfc_dev_pw) {
+			wpa_printf(MSG_DEBUG, "WPS: Found match with own NFC Password Token");
 		}
 	}
 #endif /* CONFIG_WPS_NFC */
@@ -3493,12 +3551,20 @@ int wps_registrar_config_ap(struct wps_registrar *reg,
 
 int wps_registrar_add_nfc_pw_token(struct wps_registrar *reg,
 				   const u8 *pubkey_hash, u16 pw_id,
-				   const u8 *dev_pw, size_t dev_pw_len)
+				   const u8 *dev_pw, size_t dev_pw_len,
+				   int pk_hash_provided_oob)
 {
 	struct wps_nfc_pw_token *token;
 
 	if (dev_pw_len > WPS_OOB_DEVICE_PASSWORD_LEN)
 		return -1;
+
+	if (pw_id == DEV_PW_NFC_CONNECTION_HANDOVER &&
+	    (pubkey_hash == NULL || !pk_hash_provided_oob)) {
+		wpa_printf(MSG_DEBUG, "WPS: Unexpected NFC Password Token "
+			   "addition - missing public key hash");
+		return -1;
+	}
 
 	wps_free_nfc_pw_tokens(&reg->nfc_pw_tokens, pw_id);
 
@@ -3506,12 +3572,18 @@ int wps_registrar_add_nfc_pw_token(struct wps_registrar *reg,
 	if (token == NULL)
 		return -1;
 
-	os_memcpy(token->pubkey_hash, pubkey_hash, WPS_OOB_PUBKEY_HASH_LEN);
+	token->peer_pk_hash_known = pubkey_hash != NULL;
+	if (pubkey_hash)
+		os_memcpy(token->pubkey_hash, pubkey_hash,
+			  WPS_OOB_PUBKEY_HASH_LEN);
 	token->pw_id = pw_id;
-	wpa_snprintf_hex_uppercase((char *) token->dev_pw,
-				   sizeof(token->dev_pw),
-				   dev_pw, dev_pw_len);
-	token->dev_pw_len = dev_pw_len * 2;
+	token->pk_hash_provided_oob = pk_hash_provided_oob;
+	if (dev_pw) {
+		wpa_snprintf_hex_uppercase((char *) token->dev_pw,
+					   sizeof(token->dev_pw),
+					   dev_pw, dev_pw_len);
+		token->dev_pw_len = dev_pw_len * 2;
+	}
 
 	dl_list_add(&reg->nfc_pw_tokens, &token->list);
 
@@ -3540,8 +3612,7 @@ int wps_registrar_add_nfc_password_token(struct wps_registrar *reg,
 	u16 id;
 	size_t dev_pw_len;
 
-	if (oob_dev_pw_len < WPS_OOB_PUBKEY_HASH_LEN + 2 +
-	    WPS_OOB_DEVICE_PASSWORD_MIN_LEN ||
+	if (oob_dev_pw_len < WPS_OOB_PUBKEY_HASH_LEN + 2 ||
 	    oob_dev_pw_len > WPS_OOB_PUBKEY_HASH_LEN + 2 +
 	    WPS_OOB_DEVICE_PASSWORD_LEN)
 		return -1;
@@ -3560,7 +3631,7 @@ int wps_registrar_add_nfc_password_token(struct wps_registrar *reg,
 	wpa_hexdump_key(MSG_DEBUG, "WPS: Device Password", dev_pw, dev_pw_len);
 
 	return wps_registrar_add_nfc_pw_token(reg, hash, id, dev_pw,
-					      dev_pw_len);
+					      dev_pw_len, 0);
 }
 
 
@@ -3570,6 +3641,14 @@ void wps_registrar_remove_nfc_pw_token(struct wps_registrar *reg,
 	wps_registrar_remove_authorized_mac(reg,
 					    (u8 *) "\xff\xff\xff\xff\xff\xff");
 	wps_registrar_selected_registrar_changed(reg, 0);
+
+	/*
+	 * Free the NFC password token if it was used only for a single protocol
+	 * run. The static handover case uses the same password token multiple
+	 * times, so do not free that case here.
+	 */
+	if (token->peer_pk_hash_known)
+		os_free(token);
 }
 
 #endif /* CONFIG_WPS_NFC */

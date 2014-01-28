@@ -13,6 +13,7 @@
 
 extern int wps_version_number;
 extern int wps_testing_dummy_cred;
+extern int wps_corrupt_pkhash;
 #define WPS_VERSION wps_version_number
 
 #else /* CONFIG_WPS_TESTING */
@@ -155,7 +156,8 @@ enum wps_dev_password_id {
 	DEV_PW_MACHINE_SPECIFIED = 0x0002,
 	DEV_PW_REKEY = 0x0003,
 	DEV_PW_PUSHBUTTON = 0x0004,
-	DEV_PW_REGISTRAR_SPECIFIED = 0x0005
+	DEV_PW_REGISTRAR_SPECIFIED = 0x0005,
+	DEV_PW_NFC_CONNECTION_HANDOVER = 0x0007
 };
 
 /* Message Type */
@@ -215,7 +217,9 @@ enum wps_config_error {
 	WPS_CFG_SETUP_LOCKED = 15,
 	WPS_CFG_MSG_TIMEOUT = 16,
 	WPS_CFG_REG_SESS_TIMEOUT = 17,
-	WPS_CFG_DEV_PASSWORD_AUTH_FAILURE = 18
+	WPS_CFG_DEV_PASSWORD_AUTH_FAILURE = 18,
+	WPS_CFG_60G_CHAN_NOT_SUPPORTED = 19,
+	WPS_CFG_PUBLIC_KEY_HASH_MISMATCH = 20
 };
 
 /* Vendor specific Error Indication for WPS event messages */

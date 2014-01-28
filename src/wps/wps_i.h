@@ -75,6 +75,9 @@ struct wps_data {
 	size_t alt_dev_password_len;
 	u16 alt_dev_pw_id;
 
+	u8 peer_pubkey_hash[WPS_OOB_PUBKEY_HASH_LEN];
+	int peer_pubkey_hash_set;
+
 	/**
 	 * request_type - Request Type attribute from (Re)AssocReq
 	 */
@@ -173,6 +176,8 @@ int wps_build_oob_dev_pw(struct wpabuf *msg, u16 dev_pw_id,
 			 size_t dev_pw_len);
 struct wpabuf * wps_ie_encapsulate(struct wpabuf *data);
 int wps_build_mac_addr(struct wpabuf *msg, const u8 *addr);
+int wps_build_rf_bands_attr(struct wpabuf *msg, u8 rf_bands);
+int wps_build_ap_channel(struct wpabuf *msg, u16 ap_channel);
 
 /* wps_attr_process.c */
 int wps_process_authenticator(struct wps_data *wps, const u8 *authenticator,

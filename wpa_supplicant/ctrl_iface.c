@@ -364,6 +364,10 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 		wps_testing_dummy_cred = atoi(value);
 		wpa_printf(MSG_DEBUG, "WPS: Testing - dummy_cred=%d",
 			   wps_testing_dummy_cred);
+	} else if (os_strcasecmp(cmd, "wps_corrupt_pkhash") == 0) {
+		wps_corrupt_pkhash = atoi(value);
+		wpa_printf(MSG_DEBUG, "WPS: Testing - wps_corrupt_pkhash=%d",
+			   wps_corrupt_pkhash);
 #endif /* CONFIG_WPS_TESTING */
 	} else if (os_strcasecmp(cmd, "ampdu") == 0) {
 		if (wpa_drv_ampdu(wpa_s, atoi(value)) < 0)
@@ -813,7 +817,8 @@ static int wpa_supplicant_ctrl_iface_wps_nfc(struct wpa_supplicant *wpa_s,
 	else if (hwaddr_aton(cmd, bssid))
 		return -1;
 
-	return wpas_wps_start_nfc(wpa_s, _bssid);
+	return wpas_wps_start_nfc(wpa_s, NULL, _bssid, NULL, 0, 0, NULL, NULL,
+				  0, 0);
 }
 
 
@@ -885,6 +890,15 @@ static int wpa_supplicant_ctrl_iface_wps_nfc_tag_read(
 	size_t len;
 	struct wpabuf *buf;
 	int ret;
+	char *freq;
+	int forced_freq = 0;
+
+	freq = strstr(pos, " freq=");
+	if (freq) {
+		*freq = '\0';
+		freq += 6;
+		forced_freq = atoi(freq);
+	}
 
 	len = os_strlen(pos);
 	if (len & 0x01)
@@ -899,7 +913,7 @@ static int wpa_supplicant_ctrl_iface_wps_nfc_tag_read(
 		return -1;
 	}
 
-	ret = wpas_wps_nfc_tag_read(wpa_s, buf);
+	ret = wpas_wps_nfc_tag_read(wpa_s, buf, forced_freq);
 	wpabuf_free(buf);
 
 	return ret;
@@ -908,14 +922,38 @@ static int wpa_supplicant_ctrl_iface_wps_nfc_tag_read(
 
 static int wpas_ctrl_nfc_get_handover_req_wps(struct wpa_supplicant *wpa_s,
 					      char *reply, size_t max_len,
-					      int cr)
+					      int ndef)
 {
 	struct wpabuf *buf;
 	int res;
 
-	buf = wpas_wps_nfc_handover_req(wpa_s, cr);
+	buf = wpas_wps_nfc_handover_req(wpa_s, ndef);
 	if (buf == NULL)
 		return -1;
+
+	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
+					 wpabuf_len(buf));
+	reply[res++] = '\n';
+	reply[res] = '\0';
+
+	wpabuf_free(buf);
+
+	return res;
+}
+
+
+static int wpas_ctrl_nfc_get_handover_req_p2p(struct wpa_supplicant *wpa_s,
+					      char *reply, size_t max_len,
+					      int ndef)
+{
+	struct wpabuf *buf;
+	int res;
+
+	buf = wpas_p2p_nfc_handover_req(wpa_s, ndef);
+	if (buf == NULL) {
+		wpa_printf(MSG_DEBUG, "P2P: Could not generate NFC handover request");
+		return -1;
+	}
 
 	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
 					 wpabuf_len(buf));
@@ -933,18 +971,30 @@ static int wpas_ctrl_nfc_get_handover_req(struct wpa_supplicant *wpa_s,
 					  size_t max_len)
 {
 	char *pos;
+	int ndef;
 
 	pos = os_strchr(cmd, ' ');
 	if (pos == NULL)
 		return -1;
 	*pos++ = '\0';
 
-	if (os_strcmp(cmd, "NDEF") != 0)
+	if (os_strcmp(cmd, "WPS") == 0)
+		ndef = 0;
+	else if (os_strcmp(cmd, "NDEF") == 0)
+		ndef = 1;
+	else
 		return -1;
 
 	if (os_strcmp(pos, "WPS") == 0 || os_strcmp(pos, "WPS-CR") == 0) {
+		if (!ndef)
+			return -1;
 		return wpas_ctrl_nfc_get_handover_req_wps(
-			wpa_s, reply, max_len, os_strcmp(pos, "WPS-CR") == 0);
+			wpa_s, reply, max_len, ndef);
+	}
+
+	if (os_strcmp(pos, "P2P-CR") == 0) {
+		return wpas_ctrl_nfc_get_handover_req_p2p(
+			wpa_s, reply, max_len, ndef);
 	}
 
 	return -1;
@@ -959,6 +1009,28 @@ static int wpas_ctrl_nfc_get_handover_sel_wps(struct wpa_supplicant *wpa_s,
 	int res;
 
 	buf = wpas_wps_nfc_handover_sel(wpa_s, ndef, cr, uuid);
+	if (buf == NULL)
+		return -1;
+
+	res = wpa_snprintf_hex_uppercase(reply, max_len, wpabuf_head(buf),
+					 wpabuf_len(buf));
+	reply[res++] = '\n';
+	reply[res] = '\0';
+
+	wpabuf_free(buf);
+
+	return res;
+}
+
+
+static int wpas_ctrl_nfc_get_handover_sel_p2p(struct wpa_supplicant *wpa_s,
+					      char *reply, size_t max_len,
+					      int ndef, int tag)
+{
+	struct wpabuf *buf;
+	int res;
+
+	buf = wpas_p2p_nfc_handover_sel(wpa_s, ndef, tag);
 	if (buf == NULL)
 		return -1;
 
@@ -996,9 +1068,21 @@ static int wpas_ctrl_nfc_get_handover_sel(struct wpa_supplicant *wpa_s,
 	if (pos2)
 		*pos2++ = '\0';
 	if (os_strcmp(pos, "WPS") == 0 || os_strcmp(pos, "WPS-CR") == 0) {
+		if (!ndef)
+			return -1;
 		return wpas_ctrl_nfc_get_handover_sel_wps(
 			wpa_s, reply, max_len, ndef,
 			os_strcmp(pos, "WPS-CR") == 0, pos2);
+	}
+
+	if (os_strcmp(pos, "P2P-CR") == 0) {
+		return wpas_ctrl_nfc_get_handover_sel_p2p(
+			wpa_s, reply, max_len, ndef, 0);
+	}
+
+	if (os_strcmp(pos, "P2P-CR-TAG") == 0) {
+		return wpas_ctrl_nfc_get_handover_sel_p2p(
+			wpa_s, reply, max_len, ndef, 1);
 	}
 
 	return -1;
@@ -1067,39 +1151,60 @@ static int wpas_ctrl_nfc_report_handover(struct wpa_supplicant *wpa_s,
 	struct wpabuf *req, *sel;
 	int ret;
 	char *pos, *role, *type, *pos2;
+	char *freq;
+	int forced_freq = 0;
+
+	freq = strstr(cmd, " freq=");
+	if (freq) {
+		*freq = '\0';
+		freq += 6;
+		forced_freq = atoi(freq);
+	}
 
 	role = cmd;
 	pos = os_strchr(role, ' ');
-	if (pos == NULL)
+	if (pos == NULL) {
+		wpa_printf(MSG_DEBUG, "NFC: Missing type in handover report");
 		return -1;
+	}
 	*pos++ = '\0';
 
 	type = pos;
 	pos = os_strchr(type, ' ');
-	if (pos == NULL)
+	if (pos == NULL) {
+		wpa_printf(MSG_DEBUG, "NFC: Missing request message in handover report");
 		return -1;
+	}
 	*pos++ = '\0';
 
 	pos2 = os_strchr(pos, ' ');
-	if (pos2 == NULL)
+	if (pos2 == NULL) {
+		wpa_printf(MSG_DEBUG, "NFC: Missing select message in handover report");
 		return -1;
+	}
 	*pos2++ = '\0';
 
 	len = os_strlen(pos);
-	if (len & 0x01)
+	if (len & 0x01) {
+		wpa_printf(MSG_DEBUG, "NFC: Invalid request message length in handover report");
 		return -1;
+	}
 	len /= 2;
 
 	req = wpabuf_alloc(len);
-	if (req == NULL)
+	if (req == NULL) {
+		wpa_printf(MSG_DEBUG, "NFC: Failed to allocate memory for request message");
 		return -1;
+	}
 	if (hexstr2bin(pos, wpabuf_put(req, len), len) < 0) {
+		wpa_printf(MSG_DEBUG, "NFC: Invalid request message hexdump in handover report");
 		wpabuf_free(req);
 		return -1;
 	}
 
 	len = os_strlen(pos2);
 	if (len & 0x01) {
+		wpa_printf(MSG_DEBUG, "NFC: Invalid select message length in handover report");
 		wpabuf_free(req);
 		return -1;
 	}
@@ -1107,17 +1212,34 @@ static int wpas_ctrl_nfc_report_handover(struct wpa_supplicant *wpa_s,
 
 	sel = wpabuf_alloc(len);
 	if (sel == NULL) {
+		wpa_printf(MSG_DEBUG, "NFC: Failed to allocate memory for select message");
 		wpabuf_free(req);
 		return -1;
 	}
 	if (hexstr2bin(pos2, wpabuf_put(sel, len), len) < 0) {
+		wpa_printf(MSG_DEBUG, "NFC: Invalid select message hexdump in handover report");
 		wpabuf_free(req);
 		wpabuf_free(sel);
 		return -1;
 	}
 
+	wpa_printf(MSG_DEBUG, "NFC: Connection handover reported - role=%s type=%s req_len=%d sel_len=%d",
+		   role, type, (int) wpabuf_len(req), (int) wpabuf_len(sel));
+
 	if (os_strcmp(role, "INIT") == 0 && os_strcmp(type, "WPS") == 0) {
 		ret = wpas_wps_nfc_report_handover(wpa_s, req, sel);
+	} else if (os_strcmp(role, "RESP") == 0 && os_strcmp(type, "WPS") == 0)
+	{
+		ret = wpas_ap_wps_nfc_report_handover(wpa_s, req, sel);
+		if (ret < 0)
+			ret = wpas_er_wps_nfc_report_handover(wpa_s, req, sel);
+	} else if (os_strcmp(role, "INIT") == 0 && os_strcmp(type, "P2P") == 0)
+	{
+		ret = wpas_p2p_nfc_report_handover(wpa_s, 1, req, sel, 0);
+	} else if (os_strcmp(role, "RESP") == 0 && os_strcmp(type, "P2P") == 0)
+	{
+		ret = wpas_p2p_nfc_report_handover(wpa_s, 0, req, sel,
+						   forced_freq);
 	} else {
 		wpa_printf(MSG_DEBUG, "NFC: Unsupported connection handover "
 			   "reported: role=%s type=%s", role, type);
@@ -1125,6 +1247,9 @@ static int wpas_ctrl_nfc_report_handover(struct wpa_supplicant *wpa_s,
 	}
 	wpabuf_free(req);
 	wpabuf_free(sel);
+
+	if (ret)
+		wpa_printf(MSG_DEBUG, "NFC: Failed to process reported handover messages");
 
 	return ret;
 }
@@ -4594,6 +4719,16 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 		return 0;
 	}
 
+#ifdef CONFIG_WPS_NFC
+	if (os_strcmp(cmd, "nfc_tag") == 0)
+		return wpas_p2p_nfc_tag_enabled(wpa_s, !!atoi(param));
+#endif /* CONFIG_WPS_NFC */
+
+	if (os_strcmp(cmd, "disable_ip_addr_req") == 0) {
+		wpa_s->p2p_disable_ip_addr_req = !!atoi(param);
+		return 0;
+	}
+
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE: Unknown P2P_SET field value '%s'",
 		   cmd);
 
@@ -5270,11 +5405,13 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_s->global->p2p_disabled = 0;
 	wpa_s->global->p2p_per_sta_psk = 0;
 	wpa_s->conf->num_sec_device_types = 0;
+	wpa_s->p2p_disable_ip_addr_req = 0;
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS_TESTING
 	wps_version_number = 0x20;
 	wps_testing_dummy_cred = 0;
+	wps_corrupt_pkhash = 0;
 #endif /* CONFIG_WPS_TESTING */
 #ifdef CONFIG_WPS
 	wpa_s->wps_fragment_size = 0;

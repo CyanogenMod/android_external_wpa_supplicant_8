@@ -211,6 +211,7 @@ void p2p_go_neg_failed(struct p2p_data *p2p, struct p2p_device *peer,
 	if (p2p->go_neg_peer) {
 		p2p->go_neg_peer->flags &= ~P2P_DEV_PEER_WAITING_RESPONSE;
 		p2p->go_neg_peer->wps_method = WPS_NOT_READY;
+		p2p->go_neg_peer->oob_pw_id = 0;
 	}
 	p2p->go_neg_peer = NULL;
 
@@ -1292,15 +1293,16 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 		int go_intent, const u8 *own_interface_addr,
 		unsigned int force_freq, int persistent_group,
 		const u8 *force_ssid, size_t force_ssid_len,
-		int pd_before_go_neg, unsigned int pref_freq)
+		int pd_before_go_neg, unsigned int pref_freq, u16 oob_pw_id)
 {
 	struct p2p_device *dev;
 
 	p2p_dbg(p2p, "Request to start group negotiation - peer=" MACSTR
 		"  GO Intent=%d  Intended Interface Address=" MACSTR
-		" wps_method=%d persistent_group=%d pd_before_go_neg=%d",
+		" wps_method=%d persistent_group=%d pd_before_go_neg=%d "
+		"oob_pw_id=%u",
 		MAC2STR(peer_addr), go_intent, MAC2STR(own_interface_addr),
-		wps_method, persistent_group, pd_before_go_neg);
+		wps_method, persistent_group, pd_before_go_neg, oob_pw_id);
 
 	dev = p2p_get_device(p2p, peer_addr);
 	if (dev == NULL || (dev->flags & P2P_DEV_PROBE_REQ_ONLY)) {
@@ -1384,6 +1386,7 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 	}
 
 	dev->wps_method = wps_method;
+	dev->oob_pw_id = oob_pw_id;
 	dev->status = P2P_SC_SUCCESS;
 
 	if (p2p->p2p_scan_running) {
@@ -1403,15 +1406,15 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 		  int go_intent, const u8 *own_interface_addr,
 		  unsigned int force_freq, int persistent_group,
 		  const u8 *force_ssid, size_t force_ssid_len,
-		  unsigned int pref_freq)
+		  unsigned int pref_freq, u16 oob_pw_id)
 {
 	struct p2p_device *dev;
 
 	p2p_dbg(p2p, "Request to authorize group negotiation - peer=" MACSTR
 		"  GO Intent=%d  Intended Interface Address=" MACSTR
-		" wps_method=%d  persistent_group=%d",
+		" wps_method=%d  persistent_group=%d oob_pw_id=%u",
 		MAC2STR(peer_addr), go_intent, MAC2STR(own_interface_addr),
-		wps_method, persistent_group);
+		wps_method, persistent_group, oob_pw_id);
 
 	dev = p2p_get_device(p2p, peer_addr);
 	if (dev == NULL) {
@@ -1442,6 +1445,7 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 	os_memcpy(p2p->intended_addr, own_interface_addr, ETH_ALEN);
 
 	dev->wps_method = wps_method;
+	dev->oob_pw_id = oob_pw_id;
 	dev->status = P2P_SC_SUCCESS;
 
 	return 0;
@@ -1593,6 +1597,7 @@ void p2p_go_complete(struct p2p_data *p2p, struct p2p_device *peer)
 	p2p->ssid_set = 0;
 	peer->go_neg_req_sent = 0;
 	peer->wps_method = WPS_NOT_READY;
+	peer->oob_pw_id = 0;
 
 	p2p_set_state(p2p, P2P_PROVISIONING);
 	p2p->cfg->go_neg_completed(p2p->cfg->cb_ctx, &res);
@@ -1757,7 +1762,8 @@ static void p2p_invite_start(void *eloop_ctx, void *timeout_ctx)
 	if (p2p->invite_peer == NULL)
 		return;
 	p2p->cfg->stop_listen(p2p->cfg->cb_ctx);
-	p2p_invite_send(p2p, p2p->invite_peer, p2p->invite_go_dev_addr);
+	p2p_invite_send(p2p, p2p->invite_peer, p2p->invite_go_dev_addr,
+			p2p->invite_dev_pw_id);
 }
 
 
@@ -2459,6 +2465,7 @@ int p2p_unauthorize(struct p2p_data *p2p, const u8 *addr)
 		p2p->go_neg_peer = NULL;
 
 	dev->wps_method = WPS_NOT_READY;
+	dev->oob_pw_id = 0;
 	dev->flags &= ~P2P_DEV_WAIT_GO_NEG_RESPONSE;
 	dev->flags &= ~P2P_DEV_WAIT_GO_NEG_CONFIRM;
 
@@ -3122,7 +3129,12 @@ static void p2p_timeout_connect(struct p2p_data *p2p)
 		p2p_connect_send(p2p, p2p->go_neg_peer);
 		return;
 	}
-
+	if (p2p->go_neg_peer && p2p->go_neg_peer->oob_go_neg_freq > 0) {
+		p2p_dbg(p2p, "Skip connect-listen since GO Neg channel known (OOB)");
+		p2p_set_state(p2p, P2P_CONNECT_LISTEN);
+		p2p_set_timeout(p2p, 0, 30000);
+		return;
+	}
 	p2p_set_state(p2p, P2P_CONNECT_LISTEN);
 	p2p_listen_in_find(p2p, 0);
 }
@@ -3266,7 +3278,7 @@ static void p2p_timeout_invite_listen(struct p2p_data *p2p)
 	if (p2p->invite_peer && p2p->invite_peer->invitation_reqs < 100) {
 		p2p_set_state(p2p, P2P_INVITE);
 		p2p_invite_send(p2p, p2p->invite_peer,
-				p2p->invite_go_dev_addr);
+				p2p->invite_go_dev_addr, p2p->invite_dev_pw_id);
 	} else {
 		if (p2p->invite_peer) {
 			p2p_dbg(p2p, "Invitation Request retry limit reached");
@@ -3381,6 +3393,8 @@ const char * p2p_wps_method_text(enum p2p_wps_method method)
 		return "Keypad";
 	case WPS_PBC:
 		return "PBC";
+	case WPS_NFC:
+		return "NFC";
 	}
 
 	return "??";
@@ -4362,3 +4376,219 @@ void p2p_err(struct p2p_data *p2p, const char *fmt, ...)
 	va_end(ap);
 	p2p->cfg->debug_print(p2p->cfg->cb_ctx, MSG_ERROR, buf);
 }
+
+
+#ifdef CONFIG_WPS_NFC
+
+static struct wpabuf * p2p_build_nfc_handover(struct p2p_data *p2p,
+					      int client_freq,
+					      const u8 *go_dev_addr,
+					      const u8 *ssid, size_t ssid_len)
+{
+	struct wpabuf *buf;
+	u8 op_class, channel;
+	enum p2p_role_indication role = P2P_DEVICE_NOT_IN_GROUP;
+
+	buf = wpabuf_alloc(1000);
+	if (buf == NULL)
+		return NULL;
+
+	op_class = p2p->cfg->reg_class;
+	channel = p2p->cfg->channel;
+
+	p2p_buf_add_capability(buf, p2p->dev_capab &
+			       ~P2P_DEV_CAPAB_CLIENT_DISCOVERABILITY, 0);
+	p2p_buf_add_device_info(buf, p2p, NULL);
+
+	if (p2p->num_groups > 0) {
+		role = P2P_GO_IN_A_GROUP;
+		p2p_freq_to_channel(p2p_group_get_freq(p2p->groups[0]),
+				    &op_class, &channel);
+	} else if (client_freq > 0) {
+		role = P2P_CLIENT_IN_A_GROUP;
+		p2p_freq_to_channel(client_freq, &op_class, &channel);
+	}
+
+	p2p_buf_add_oob_go_neg_channel(buf, p2p->cfg->country, op_class,
+				       channel, role);
+
+	if (p2p->num_groups > 0) {
+		/* Limit number of clients to avoid very long message */
+		p2p_buf_add_group_info(p2p->groups[0], buf, 5);
+		p2p_group_buf_add_id(p2p->groups[0], buf);
+	} else if (client_freq > 0 &&
+		   go_dev_addr && !is_zero_ether_addr(go_dev_addr) &&
+		   ssid && ssid_len > 0) {
+		/*
+		 * Add the optional P2P Group ID to indicate in which group this
+		 * device is a P2P Client.
+		 */
+		p2p_buf_add_group_id(buf, go_dev_addr, ssid, ssid_len);
+	}
+
+	return buf;
+}
+
+
+struct wpabuf * p2p_build_nfc_handover_req(struct p2p_data *p2p,
+					   int client_freq,
+					   const u8 *go_dev_addr,
+					   const u8 *ssid, size_t ssid_len)
+{
+	return p2p_build_nfc_handover(p2p, client_freq, go_dev_addr, ssid,
+				      ssid_len);
+}
+
+
+struct wpabuf * p2p_build_nfc_handover_sel(struct p2p_data *p2p,
+					   int client_freq,
+					   const u8 *go_dev_addr,
+					   const u8 *ssid, size_t ssid_len)
+{
+	return p2p_build_nfc_handover(p2p, client_freq, go_dev_addr, ssid,
+				      ssid_len);
+}
+
+
+int p2p_process_nfc_connection_handover(struct p2p_data *p2p,
+					struct p2p_nfc_params *params)
+{
+	struct p2p_message msg;
+	struct p2p_device *dev;
+	const u8 *p2p_dev_addr;
+	int freq;
+	enum p2p_role_indication role;
+
+	params->next_step = NO_ACTION;
+
+	if (p2p_parse_ies_separate(params->wsc_attr, params->wsc_len,
+				   params->p2p_attr, params->p2p_len, &msg)) {
+		p2p_dbg(p2p, "Failed to parse WSC/P2P attributes from NFC");
+		p2p_parse_free(&msg);
+		return -1;
+	}
+
+	if (msg.p2p_device_addr)
+		p2p_dev_addr = msg.p2p_device_addr;
+	else if (msg.device_id)
+		p2p_dev_addr = msg.device_id;
+	else {
+		p2p_dbg(p2p, "Ignore scan data without P2P Device Info or P2P Device Id");
+		p2p_parse_free(&msg);
+		return -1;
+	}
+
+	if (msg.oob_dev_password) {
+		os_memcpy(params->oob_dev_pw, msg.oob_dev_password,
+			  msg.oob_dev_password_len);
+		params->oob_dev_pw_len = msg.oob_dev_password_len;
+	}
+
+	dev = p2p_create_device(p2p, p2p_dev_addr);
+	if (dev == NULL) {
+		p2p_parse_free(&msg);
+		return -1;
+	}
+
+	params->peer = &dev->info;
+
+	os_get_reltime(&dev->last_seen);
+	dev->flags &= ~(P2P_DEV_PROBE_REQ_ONLY | P2P_DEV_GROUP_CLIENT_ONLY);
+	p2p_copy_wps_info(p2p, dev, 0, &msg);
+
+	if (!msg.oob_go_neg_channel) {
+		p2p_dbg(p2p, "OOB GO Negotiation Channel attribute not included");
+		return -1;
+	}
+
+	if (msg.oob_go_neg_channel[3] == 0 &&
+	    msg.oob_go_neg_channel[4] == 0)
+		freq = 0;
+	else
+		freq = p2p_channel_to_freq(msg.oob_go_neg_channel[3],
+					   msg.oob_go_neg_channel[4]);
+	if (freq < 0) {
+		p2p_dbg(p2p, "Unknown peer OOB GO Neg channel");
+		return -1;
+	}
+	role = msg.oob_go_neg_channel[5];
+
+	if (role == P2P_GO_IN_A_GROUP) {
+		p2p_dbg(p2p, "Peer OOB GO operating channel: %u MHz", freq);
+		params->go_freq = freq;
+	} else if (role == P2P_CLIENT_IN_A_GROUP) {
+		p2p_dbg(p2p, "Peer (client) OOB GO operating channel: %u MHz",
+			freq);
+		params->go_freq = freq;
+	} else
+		p2p_dbg(p2p, "Peer OOB GO Neg channel: %u MHz", freq);
+	dev->oob_go_neg_freq = freq;
+
+	if (!params->sel && role != P2P_GO_IN_A_GROUP) {
+		freq = p2p_channel_to_freq(p2p->cfg->reg_class,
+					   p2p->cfg->channel);
+		if (freq < 0) {
+			p2p_dbg(p2p, "Own listen channel not known");
+			return -1;
+		}
+		p2p_dbg(p2p, "Use own Listen channel as OOB GO Neg channel: %u MHz", freq);
+		dev->oob_go_neg_freq = freq;
+	}
+
+	if (msg.group_id) {
+		os_memcpy(params->go_dev_addr, msg.group_id, ETH_ALEN);
+		params->go_ssid_len = msg.group_id_len - ETH_ALEN;
+		os_memcpy(params->go_ssid, msg.group_id + ETH_ALEN,
+			  params->go_ssid_len);
+	}
+
+	p2p_parse_free(&msg);
+
+	if (dev->flags & P2P_DEV_USER_REJECTED) {
+		p2p_dbg(p2p, "Do not report rejected device");
+		return 0;
+	}
+
+	if (!(dev->flags & P2P_DEV_REPORTED)) {
+		p2p->cfg->dev_found(p2p->cfg->cb_ctx, p2p_dev_addr, &dev->info,
+				    !(dev->flags & P2P_DEV_REPORTED_ONCE));
+		dev->flags |= P2P_DEV_REPORTED | P2P_DEV_REPORTED_ONCE;
+	}
+
+	if (role == P2P_GO_IN_A_GROUP && p2p->num_groups > 0)
+		params->next_step = BOTH_GO;
+	else if (role == P2P_GO_IN_A_GROUP)
+		params->next_step = JOIN_GROUP;
+	else if (role == P2P_CLIENT_IN_A_GROUP) {
+		dev->flags |= P2P_DEV_GROUP_CLIENT_ONLY;
+		params->next_step = PEER_CLIENT;
+	} else if (p2p->num_groups > 0)
+		params->next_step = AUTH_JOIN;
+	else if (params->sel)
+		params->next_step = INIT_GO_NEG;
+	else
+		params->next_step = RESP_GO_NEG;
+
+	return 0;
+}
+
+
+void p2p_set_authorized_oob_dev_pw_id(struct p2p_data *p2p, u16 dev_pw_id,
+				      int go_intent,
+				      const u8 *own_interface_addr)
+{
+
+	p2p->authorized_oob_dev_pw_id = dev_pw_id;
+	if (dev_pw_id == 0) {
+		p2p_dbg(p2p, "NFC OOB Password unauthorized for static handover");
+		return;
+	}
+
+	p2p_dbg(p2p, "NFC OOB Password (id=%u) authorized for static handover",
+		dev_pw_id);
+
+	p2p->go_intent = go_intent;
+	os_memcpy(p2p->intended_addr, own_interface_addr, ETH_ALEN);
+}
+
+#endif /* CONFIG_WPS_NFC */

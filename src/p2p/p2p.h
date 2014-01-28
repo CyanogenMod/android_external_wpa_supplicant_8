@@ -9,6 +9,8 @@
 #ifndef P2P_H
 #define P2P_H
 
+#include "wps/wps_defs.h"
+
 /**
  * P2P_MAX_REG_CLASSES - Maximum number of regulatory classes
  */
@@ -50,7 +52,7 @@ struct p2p_channels {
 };
 
 enum p2p_wps_method {
-	WPS_NOT_READY, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC
+	WPS_NOT_READY, WPS_PIN_DISPLAY, WPS_PIN_KEYPAD, WPS_PBC, WPS_NFC
 };
 
 /**
@@ -706,6 +708,8 @@ struct p2p_config {
 	 *	persistent group (instead of invitation to join an active
 	 *	group)
 	 * @channels: Available operating channels for the group
+	 * @dev_pw_id: Device Password ID for NFC static handover or -1 if not
+	 *	used
 	 * Returns: Status code (P2P_SC_*)
 	 *
 	 * This optional callback can be used to implement persistent reconnect
@@ -727,7 +731,8 @@ struct p2p_config {
 				 const u8 *go_dev_addr, const u8 *ssid,
 				 size_t ssid_len, int *go, u8 *group_bssid,
 				 int *force_freq, int persistent_group,
-				 const struct p2p_channels *channels);
+				 const struct p2p_channels *channels,
+				 int dev_pw_id);
 
 	/**
 	 * invitation_received - Callback on Invitation Request RX
@@ -972,7 +977,7 @@ int p2p_connect(struct p2p_data *p2p, const u8 *peer_addr,
 		int go_intent, const u8 *own_interface_addr,
 		unsigned int force_freq, int persistent_group,
 		const u8 *force_ssid, size_t force_ssid_len,
-		int pd_before_go_neg, unsigned int pref_freq);
+		int pd_before_go_neg, unsigned int pref_freq, u16 oob_pw_id);
 
 /**
  * p2p_authorize - Authorize P2P group formation (GO negotiation)
@@ -1000,7 +1005,7 @@ int p2p_authorize(struct p2p_data *p2p, const u8 *peer_addr,
 		  int go_intent, const u8 *own_interface_addr,
 		  unsigned int force_freq, int persistent_group,
 		  const u8 *force_ssid, size_t force_ssid_len,
-		  unsigned int pref_freq);
+		  unsigned int pref_freq, u16 oob_pw_id);
 
 /**
  * p2p_reject - Reject peer device (explicitly block connection attempts)
@@ -1102,12 +1107,14 @@ enum p2p_invite_role {
  * @persistent_group: Whether this is to reinvoke a persistent group
  * @pref_freq: Preferred operating frequency in MHz or 0 (this is only used if
  *	force_freq == 0)
+ * @dev_pw_id: Device Password ID from OOB Device Password (NFC) static handover
+ *	case or -1 if not used
  * Returns: 0 on success, -1 on failure
  */
 int p2p_invite(struct p2p_data *p2p, const u8 *peer, enum p2p_invite_role role,
 	       const u8 *bssid, const u8 *ssid, size_t ssid_len,
 	       unsigned int force_freq, const u8 *go_dev_addr,
-	       int persistent_group, unsigned int pref_freq);
+	       int persistent_group, unsigned int pref_freq, int dev_pw_id);
 
 /**
  * p2p_presence_req - Request GO presence
@@ -1370,6 +1377,11 @@ struct p2p_group_config {
 	 * ssid_len - Length of SSID
 	 */
 	size_t ssid_len;
+
+	/**
+	 * freq - Operating channel of the group
+	 */
+	int freq;
 
 	/**
 	 * cb_ctx - Context to use with callback functions
@@ -1891,5 +1903,42 @@ int p2p_set_disc_int(struct p2p_data *p2p, int min_disc_int, int max_disc_int,
  * mainly for debugging purposes.
  */
 const char * p2p_get_state_txt(struct p2p_data *p2p);
+
+struct wpabuf * p2p_build_nfc_handover_req(struct p2p_data *p2p,
+					   int client_freq,
+					   const u8 *go_dev_addr,
+					   const u8 *ssid, size_t ssid_len);
+struct wpabuf * p2p_build_nfc_handover_sel(struct p2p_data *p2p,
+					   int client_freq,
+					   const u8 *go_dev_addr,
+					   const u8 *ssid, size_t ssid_len);
+
+struct p2p_nfc_params {
+	int sel;
+	const u8 *wsc_attr;
+	size_t wsc_len;
+	const u8 *p2p_attr;
+	size_t p2p_len;
+
+	enum {
+		NO_ACTION, JOIN_GROUP, AUTH_JOIN, INIT_GO_NEG, RESP_GO_NEG,
+		BOTH_GO, PEER_CLIENT
+	} next_step;
+	struct p2p_peer_info *peer;
+	u8 oob_dev_pw[WPS_OOB_PUBKEY_HASH_LEN + 2 +
+		      WPS_OOB_DEVICE_PASSWORD_LEN];
+	size_t oob_dev_pw_len;
+	int go_freq;
+	u8 go_dev_addr[ETH_ALEN];
+	u8 go_ssid[32];
+	size_t go_ssid_len;
+};
+
+int p2p_process_nfc_connection_handover(struct p2p_data *p2p,
+					struct p2p_nfc_params *params);
+
+void p2p_set_authorized_oob_dev_pw_id(struct p2p_data *p2p, u16 dev_pw_id,
+				      int go_intent,
+				      const u8 *own_interface_addr);
 
 #endif /* P2P_H */
