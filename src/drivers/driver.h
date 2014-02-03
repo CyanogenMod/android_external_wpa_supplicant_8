@@ -42,6 +42,7 @@ enum reg_change_initiator {
 	REGDOM_SET_BY_USER,
 	REGDOM_SET_BY_DRIVER,
 	REGDOM_SET_BY_COUNTRY_IE,
+	REGDOM_BEACON_HINT,
 };
 
 /**
