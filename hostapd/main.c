@@ -14,6 +14,7 @@
 
 #include "utils/common.h"
 #include "utils/eloop.h"
+#include "utils/uuid.h"
 #include "crypto/random.h"
 #include "crypto/tls.h"
 #include "common/version.h"
@@ -91,7 +92,8 @@ static void hostapd_logger_cb(void *ctx, const u8 *addr, unsigned int module,
 	if (hapd && hapd->conf && addr)
 		os_snprintf(format, maxlen, "%s: STA " MACSTR "%s%s: %s",
 			    hapd->conf->iface, MAC2STR(addr),
-			    module_str ? " " : "", module_str, txt);
+			    module_str ? " " : "", module_str ? module_str : "",
+			    txt);
 	else if (hapd && hapd->conf)
 		os_snprintf(format, maxlen, "%s:%s%s %s",
 			    hapd->conf->iface, module_str ? " " : "",
@@ -501,6 +503,27 @@ static int hostapd_get_ctrl_iface_group(struct hapd_interfaces *interfaces,
 }
 
 
+#ifdef CONFIG_WPS
+static int gen_uuid(const char *txt_addr)
+{
+	u8 addr[ETH_ALEN];
+	u8 uuid[UUID_LEN];
+	char buf[100];
+
+	if (hwaddr_aton(txt_addr, addr) < 0)
+		return -1;
+
+	uuid_gen_mac_addr(addr, uuid);
+	if (uuid_bin2str(uuid, buf, sizeof(buf)) < 0)
+		return -1;
+
+	printf("%s\n", buf);
+
+	return 0;
+}
+#endif /* CONFIG_WPS */
+
+
 int main(int argc, char *argv[])
 {
 	struct hapd_interfaces interfaces;
@@ -531,7 +554,7 @@ int main(int argc, char *argv[])
 	interfaces.global_ctrl_sock = -1;
 
 	for (;;) {
-		c = getopt(argc, argv, "b:Bde:f:hKP:Ttvg:G:");
+		c = getopt(argc, argv, "b:Bde:f:hKP:Ttu:vg:G:");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -588,6 +611,10 @@ int main(int argc, char *argv[])
 			bss_config = tmp_bss;
 			bss_config[num_bss_configs++] = optarg;
 			break;
+#ifdef CONFIG_WPS
+		case 'u':
+			return gen_uuid(optarg);
+#endif /* CONFIG_WPS */
 		default:
 			usage();
 			break;
