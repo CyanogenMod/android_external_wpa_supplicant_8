@@ -1106,34 +1106,6 @@ static int wpas_ctrl_nfc_get_handover_sel(struct wpa_supplicant *wpa_s,
 }
 
 
-static int wpas_ctrl_nfc_rx_handover_req(struct wpa_supplicant *wpa_s,
-					 char *cmd, char *reply,
-					 size_t max_len)
-{
-	size_t len;
-	struct wpabuf *buf;
-	int ret;
-
-	len = os_strlen(cmd);
-	if (len & 0x01)
-		return -1;
-	len /= 2;
-
-	buf = wpabuf_alloc(len);
-	if (buf == NULL)
-		return -1;
-	if (hexstr2bin(cmd, wpabuf_put(buf, len), len) < 0) {
-		wpabuf_free(buf);
-		return -1;
-	}
-
-	ret = wpas_wps_nfc_rx_handover_req(wpa_s, buf);
-	wpabuf_free(buf);
-
-	return ret;
-}
-
-
 static int wpas_ctrl_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 					 char *cmd)
 {
@@ -5489,7 +5461,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_sm_set_param(wpa_s->wpa, RSNA_SA_TIMEOUT, 60);
 	eapol_sm_notify_logoff(wpa_s->eapol, FALSE);
 
-	radio_remove_unstarted_work(wpa_s, NULL);
+	radio_remove_works(wpa_s, NULL, 1);
 }
 
 
@@ -5541,6 +5513,10 @@ static void wpas_ctrl_radio_work_cb(struct wpa_radio_work *work, int deinit)
 	struct wpa_external_work *ework = work->ctx;
 
 	if (deinit) {
+		if (work->started)
+			eloop_cancel_timeout(wpas_ctrl_radio_work_timeout,
+					     work, NULL);
+
 		os_free(ework);
 		return;
 	}
@@ -5924,9 +5900,6 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "NFC_GET_HANDOVER_SEL ", 21) == 0) {
 		reply_len = wpas_ctrl_nfc_get_handover_sel(
 			wpa_s, buf + 21, reply, reply_size);
-	} else if (os_strncmp(buf, "NFC_RX_HANDOVER_REQ ", 20) == 0) {
-		reply_len = wpas_ctrl_nfc_rx_handover_req(
-			wpa_s, buf + 20, reply, reply_size);
 	} else if (os_strncmp(buf, "NFC_RX_HANDOVER_SEL ", 20) == 0) {
 		if (wpas_ctrl_nfc_rx_handover_sel(wpa_s, buf + 20))
 			reply_len = -1;

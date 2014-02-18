@@ -6723,7 +6723,8 @@ wpa_driver_nl80211_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 		nl80211_cmd(drv, msg, 0, NL80211_CMD_GET_WIPHY);
 
 	NLA_PUT_FLAG(msg, NL80211_ATTR_SPLIT_WIPHY_DUMP);
-	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
+	if (nl80211_set_iface_id(msg, bss) < 0)
+		goto nla_put_failure;
 
 	if (send_and_recv_msgs(drv, msg, phy_info_handler, &result) == 0) {
 		nl80211_set_regulatory_flags(drv, &result);
@@ -7349,6 +7350,12 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 		NLA_PUT(msg, NL80211_ATTR_VHT_CAPABILITY,
 			sizeof(*params->vht_capabilities),
 			params->vht_capabilities);
+	}
+
+	if (params->vht_opmode_enabled) {
+		wpa_printf(MSG_DEBUG, "  * opmode=%u", params->vht_opmode);
+		NLA_PUT_U8(msg, NL80211_ATTR_OPMODE_NOTIF,
+			   params->vht_opmode);
 	}
 
 	wpa_printf(MSG_DEBUG, "  * capability=0x%x", params->capability);
