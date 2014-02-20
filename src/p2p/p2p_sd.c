@@ -819,19 +819,6 @@ void * p2p_sd_request(struct p2p_data *p2p, const u8 *dst,
 		      const struct wpabuf *tlvs)
 {
 	struct p2p_sd_query *q;
-#ifdef ANDROID_P2P
-	/* Currently, supplicant doesn't support more than one pending broadcast SD request.
-	 * So reject if application is registering another one before cancelling the existing one.
-	 */
-	for (q = p2p->sd_queries; q; q = q->next) {
-		if( (q->for_all_peers == 1) && (!dst)) {
-				wpa_printf(MSG_ERROR, "P2P: Already one pending"
-					" Broadcast request. Please cancel the current one"
-					" before adding a new one");
-				return NULL;
-		}
-	}
-#endif
 
 	q = os_zalloc(sizeof(*q));
 	if (q == NULL)
