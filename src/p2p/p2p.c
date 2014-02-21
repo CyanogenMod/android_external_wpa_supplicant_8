@@ -1971,7 +1971,8 @@ p2p_reply_probe(struct p2p_data *p2p, const u8 *addr, const u8 *dst,
 
 	if (!p2p->in_listen || !p2p->drv_in_listen) {
 		/* not in Listen state - ignore Probe Request */
-		p2p_dbg(p2p, "Not in Listen state - ignore Probe Request");
+		p2p_dbg(p2p, "Not in Listen state (in_listen=%d drv_in_listen=%d) - ignore Probe Request",
+			p2p->in_listen, p2p->drv_in_listen);
 		return P2P_PREQ_NOT_LISTEN;
 	}
 
@@ -2142,6 +2143,7 @@ p2p_probe_req_rx(struct p2p_data *p2p, const u8 *addr, const u8 *dst,
 	    == 0) {
 		/* Received a Probe Request from Invite peer */
 		p2p_dbg(p2p, "Found Invite peer - try to start Invite from timeout");
+		eloop_cancel_timeout(p2p_invite_start, p2p, NULL);
 		eloop_register_timeout(0, 0, p2p_invite_start, p2p, NULL);
 		return P2P_PREQ_PROCESSED;
 	}
