@@ -360,7 +360,8 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 		struct wpabuf *hs20;
 		hs20 = wpabuf_alloc(20);
 		if (hs20) {
-			wpas_hs20_add_indication(hs20);
+			int pps_mo_id = hs20_get_pps_mo_id(wpa_s, ssid);
+			wpas_hs20_add_indication(hs20, pps_mo_id);
 			os_memcpy(wpa_s->sme.assoc_req_ie +
 				  wpa_s->sme.assoc_req_ie_len,
 				  wpabuf_head(hs20), wpabuf_len(hs20));
@@ -472,6 +473,11 @@ void sme_authenticate(struct wpa_supplicant *wpa_s,
 		return;
 	if (wpa_s->connect_work) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "SME: Reject sme_authenticate() call since connect_work exist");
+		return;
+	}
+
+	if (radio_work_pending(wpa_s, "sme-connect")) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "SME: Reject sme_authenticate() call since pending work exist");
 		return;
 	}
 
@@ -751,6 +757,10 @@ void sme_associate(struct wpa_supplicant *wpa_s, enum wpas_mode mode,
 		params.wpa_proto = WPA_PROTO_WPA;
 		wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, elems.wpa_ie - 2,
 					elems.wpa_ie_len + 2);
+	} else if (elems.osen) {
+		params.wpa_proto = WPA_PROTO_OSEN;
+		wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, elems.osen - 2,
+					elems.osen_len + 2);
 	} else
 		wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, NULL, 0);
 	if (wpa_s->current_ssid && wpa_s->current_ssid->p2p_group)

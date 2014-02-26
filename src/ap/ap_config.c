@@ -154,6 +154,8 @@ struct hostapd_config * hostapd_config_defaults(void)
 	conf->rts_threshold = -1; /* use driver default: 2347 */
 	conf->fragm_threshold = -1; /* user driver default: 2346 */
 	conf->send_probe_response = 1;
+	/* Set to invalid value means do not add Power Constraint IE */
+	conf->local_pwr_constraint = -1;
 
 	conf->wmm_ac_params[0] = ac_be;
 	conf->wmm_ac_params[1] = ac_bk;
@@ -526,6 +528,25 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->hs20_wan_metrics);
 	os_free(conf->hs20_connection_capability);
 	os_free(conf->hs20_operating_class);
+	os_free(conf->hs20_icons);
+	if (conf->hs20_osu_providers) {
+		size_t i;
+		for (i = 0; i < conf->hs20_osu_providers_count; i++) {
+			struct hs20_osu_provider *p;
+			size_t j;
+			p = &conf->hs20_osu_providers[i];
+			os_free(p->friendly_name);
+			os_free(p->server_uri);
+			os_free(p->method_list);
+			for (j = 0; j < p->icons_count; j++)
+				os_free(p->icons[j]);
+			os_free(p->icons);
+			os_free(p->osu_nai);
+			os_free(p->service_desc);
+		}
+		os_free(conf->hs20_osu_providers);
+	}
+	os_free(conf->subscr_remediation_url);
 #endif /* CONFIG_HS20 */
 
 	wpabuf_free(conf->vendor_elements);
@@ -829,6 +850,18 @@ int hostapd_config_check(struct hostapd_config *conf, int full_config)
 		return -1;
 	}
 
+	if (full_config && conf->local_pwr_constraint != -1 &&
+	    !conf->ieee80211d) {
+		wpa_printf(MSG_ERROR, "Cannot add Power Constraint element without Country element");
+		return -1;
+	}
+
+	if (full_config && conf->spectrum_mgmt_required &&
+	    conf->local_pwr_constraint == -1) {
+		wpa_printf(MSG_ERROR, "Cannot set Spectrum Management bit without Country and Power Constraint elements");
+		return -1;
+	}
+
 	for (i = 0; i < conf->num_bss; i++) {
 		if (hostapd_config_check_bss(conf->bss[i], conf, full_config))
 			return -1;
@@ -876,6 +909,11 @@ void hostapd_set_security_params(struct hostapd_bss_config *bss)
 		bss->wpa_group = cipher;
 		bss->wpa_pairwise = cipher;
 		bss->rsn_pairwise = cipher;
+	} else if (bss->osen) {
+		bss->ssid.security_policy = SECURITY_OSEN;
+		bss->wpa_group = WPA_CIPHER_CCMP;
+		bss->wpa_pairwise = 0;
+		bss->rsn_pairwise = WPA_CIPHER_CCMP;
 	} else {
 		bss->ssid.security_policy = SECURITY_PLAINTEXT;
 		bss->wpa_group = WPA_CIPHER_NONE;

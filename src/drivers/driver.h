@@ -847,6 +847,11 @@ struct wpa_driver_ap_params {
 	 * disable_dgaf - Whether group-addressed frames are disabled
 	 */
 	int disable_dgaf;
+
+	/**
+	 * osen - Whether OSEN security is enabled
+	 */
+	int osen;
 };
 
 /**
@@ -875,6 +880,7 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_CAPA_ENC_BIP_GMAC_128	0x00000200
 #define WPA_DRIVER_CAPA_ENC_BIP_GMAC_256	0x00000400
 #define WPA_DRIVER_CAPA_ENC_BIP_CMAC_256	0x00000800
+#define WPA_DRIVER_CAPA_ENC_GTK_NOT_USED	0x00001000
 	unsigned int enc;
 
 #define WPA_DRIVER_AUTH_OPEN		0x00000001

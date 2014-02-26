@@ -1554,6 +1554,9 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 {
 	char *pos, *end, tmp[30];
 	int res, verbose, wps, ret;
+#ifdef CONFIG_HS20
+	const u8 *hs20;
+#endif /* CONFIG_HS20 */
 
 	if (os_strcmp(params, "-DRIVER") == 0)
 		return wpa_drv_status(wpa_s, buf, buflen);
@@ -1692,10 +1695,16 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_HS20
 	if (wpa_s->current_bss &&
-	    wpa_bss_get_vendor_ie(wpa_s->current_bss, HS20_IE_VENDOR_TYPE) &&
+	    (hs20 = wpa_bss_get_vendor_ie(wpa_s->current_bss,
+					  HS20_IE_VENDOR_TYPE)) &&
 	    wpa_s->wpa_proto == WPA_PROTO_RSN &&
 	    wpa_key_mgmt_wpa_ieee8021x(wpa_s->key_mgmt)) {
-		ret = os_snprintf(pos, end - pos, "hs20=1\n");
+		int release = 1;
+		if (hs20[1] >= 5) {
+			u8 rel_num = (hs20[6] & 0xf0) >> 4;
+			release = rel_num + 1;
+		}
+		ret = os_snprintf(pos, end - pos, "hs20=%d\n", release);
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
 		pos += ret;
@@ -1711,15 +1720,38 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 			if (wpa_s->current_ssid->parent_cred != cred)
 				continue;
 
-			for (i = 0; cred->domain && i < cred->num_domain; i++) {
+			if (cred->provisioning_sp) {
 				ret = os_snprintf(pos, end - pos,
-						  "home_sp=%s\n",
-						  cred->domain[i]);
+						  "provisioning_sp=%s\n",
+						  cred->provisioning_sp);
 				if (ret < 0 || ret >= end - pos)
 					return pos - buf;
 				pos += ret;
 			}
 
+			if (!cred->domain)
+				goto no_domain;
+
+			i = 0;
+			if (wpa_s->current_bss && wpa_s->current_bss->anqp) {
+				struct wpabuf *names =
+					wpa_s->current_bss->anqp->domain_name;
+				for (i = 0; names && i < cred->num_domain; i++)
+				{
+					if (domain_name_list_contains(
+						    names, cred->domain[i], 1))
+						break;
+				}
+				if (i == cred->num_domain)
+					i = 0; /* show first entry by default */
+			}
+			ret = os_snprintf(pos, end - pos, "home_sp=%s\n",
+					  cred->domain[i]);
+			if (ret < 0 || ret >= end - pos)
+				return pos - buf;
+			pos += ret;
+
+		no_domain:
 			if (wpa_s->current_bss == NULL ||
 			    wpa_s->current_bss->anqp == NULL)
 				res = -1;
@@ -2686,7 +2718,8 @@ static int wpa_supplicant_ctrl_iface_remove_cred(struct wpa_supplicant *wpa_s,
 	int id;
 	struct wpa_cred *cred, *prev;
 
-	/* cmd: "<cred id>", "all", or "sp_fqdn=<FQDN>" */
+	/* cmd: "<cred id>", "all", "sp_fqdn=<FQDN>", or
+	 * "provisioning_sp=<FQDN> */
 	if (os_strcmp(cmd, "all") == 0) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: REMOVE_CRED all");
 		cred = wpa_s->conf->cred;
@@ -2715,6 +2748,20 @@ static int wpa_supplicant_ctrl_iface_remove_cred(struct wpa_supplicant *wpa_s,
 					break;
 				}
 			}
+		}
+		return 0;
+	}
+
+	if (os_strncmp(cmd, "provisioning_sp=", 16) == 0) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE: REMOVE_CRED provisioning SP FQDN '%s'",
+			   cmd + 16);
+		cred = wpa_s->conf->cred;
+		while (cred) {
+			prev = cred;
+			cred = cred->next;
+			if (prev->provisioning_sp &&
+			    os_strcmp(prev->provisioning_sp, cmd + 16) == 0)
+				wpas_ctrl_remove_cred(wpa_s, prev);
 		}
 		return 0;
 	}
@@ -3518,6 +3565,10 @@ static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 				   anqp->hs20_wan_metrics);
 		pos = anqp_add_hex(pos, end, "hs20_connection_capability",
 				   anqp->hs20_connection_capability);
+		pos = anqp_add_hex(pos, end, "hs20_operating_class",
+				   anqp->hs20_operating_class);
+		pos = anqp_add_hex(pos, end, "hs20_osu_providers_list",
+				   anqp->hs20_osu_providers_list);
 #endif /* CONFIG_HS20 */
 	}
 #endif /* CONFIG_INTERWORKING */
@@ -5169,6 +5220,26 @@ static int hs20_get_nai_home_realm_list(struct wpa_supplicant *wpa_s,
 	return ret;
 }
 
+
+static int hs20_icon_request(struct wpa_supplicant *wpa_s, char *cmd)
+{
+	u8 dst_addr[ETH_ALEN];
+	int used;
+	char *icon;
+
+	used = hwaddr_aton2(cmd, dst_addr);
+	if (used < 0)
+		return -1;
+
+	while (cmd[used] == ' ')
+		used++;
+	icon = &cmd[used];
+
+	wpa_s->fetch_osu_icon_in_progress = 0;
+	return hs20_anqp_send_req(wpa_s, dst_addr, BIT(HS20_STYPE_ICON_REQUEST),
+				  (u8 *) icon, os_strlen(icon));
+}
+
 #endif /* CONFIG_HS20 */
 
 
@@ -5454,7 +5525,6 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_config_flush_blobs(wpa_s->conf);
 	wpa_s->conf->auto_interworking = 0;
 	wpa_s->conf->okc = 0;
-	wpa_s->conf->pmf = 0;
 
 	wpa_sm_set_param(wpa_s->wpa, RSNA_PMK_LIFETIME, 43200);
 	wpa_sm_set_param(wpa_s->wpa, RSNA_PMK_REAUTH_THRESHOLD, 70);
@@ -5462,6 +5532,12 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	eapol_sm_notify_logoff(wpa_s->eapol, FALSE);
 
 	radio_remove_works(wpa_s, NULL, 1);
+
+	wpa_s->next_ssid = NULL;
+
+#ifdef CONFIG_INTERWORKING
+	hs20_cancel_fetch_osu(wpa_s);
+#endif /* CONFIG_INTERWORKING */
 }
 
 
@@ -6093,6 +6169,14 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "HS20_GET_NAI_HOME_REALM_LIST ", 29) == 0) {
 		if (hs20_get_nai_home_realm_list(wpa_s, buf + 29) < 0)
 			reply_len = -1;
+	} else if (os_strncmp(buf, "HS20_ICON_REQUEST ", 18) == 0) {
+		if (hs20_icon_request(wpa_s, buf + 18) < 0)
+			reply_len = -1;
+	} else if (os_strcmp(buf, "FETCH_OSU") == 0) {
+		if (hs20_fetch_osu(wpa_s) < 0)
+			reply_len = -1;
+	} else if (os_strcmp(buf, "CANCEL_FETCH_OSU") == 0) {
+		hs20_cancel_fetch_osu(wpa_s);
 #endif /* CONFIG_HS20 */
 	} else if (os_strncmp(buf, WPA_CTRL_RSP, os_strlen(WPA_CTRL_RSP)) == 0)
 	{

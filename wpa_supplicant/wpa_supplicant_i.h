@@ -308,6 +308,7 @@ void radio_work_done(struct wpa_radio_work *work);
 void radio_remove_works(struct wpa_supplicant *wpa_s,
 			const char *type, int remove_all);
 void radio_work_check_next(struct wpa_supplicant *wpa_s);
+int radio_work_pending(struct wpa_supplicant *wpa_s, const char *type);
 
 struct wpa_connect_work {
 	unsigned int sme:1;
@@ -418,6 +419,9 @@ struct wpa_supplicant {
 	size_t disallow_aps_ssid_count;
 
 	enum { WPA_SETBAND_AUTO, WPA_SETBAND_5G, WPA_SETBAND_2G } setband;
+
+	/* Preferred network for the next connection attempt */
+	struct wpa_ssid *next_ssid;
 
 	/* previous scan was wildcard when interleaving between
 	 * wildcard scans and specific SSID scan when max_ssids=1 */
@@ -767,7 +771,15 @@ struct wpa_supplicant {
 	unsigned int auto_select:1;
 	unsigned int auto_network_select:1;
 	unsigned int fetch_all_anqp:1;
+	unsigned int fetch_osu_info:1;
+	unsigned int fetch_osu_icon_in_progress:1;
 	struct wpa_bss *interworking_gas_bss;
+	unsigned int osu_icon_id;
+	struct osu_provider *osu_prov;
+	size_t osu_prov_count;
+	struct os_reltime osu_icon_fetch_start;
+	unsigned int num_osu_scans;
+	unsigned int num_prov_found;
 #endif /* CONFIG_INTERWORKING */
 	unsigned int drv_capa_known;
 

@@ -38,6 +38,7 @@
 #include "ap_drv_ops.h"
 #include "wnm_ap.h"
 #include "ieee802_11.h"
+#include "dfs.h"
 
 
 u8 * hostapd_eid_supp_rates(struct hostapd_data *hapd, u8 *eid)
@@ -137,6 +138,15 @@ u16 hostapd_own_capab_info(struct hostapd_data *hapd, struct sta_info *sta,
 {
 	int capab = WLAN_CAPABILITY_ESS;
 	int privacy;
+	int dfs;
+
+	/* Check if any of configured channels require DFS */
+	dfs = hostapd_is_dfs_required(hapd->iface);
+	if (dfs < 0) {
+		wpa_printf(MSG_WARNING, "Failed to check if DFS is required; ret=%d",
+			   dfs);
+		dfs = 0;
+	}
 
 	if (hapd->iface->num_sta_no_short_preamble == 0 &&
 	    hapd->iconf->preamble == SHORT_PREAMBLE)
@@ -151,6 +161,11 @@ u16 hostapd_own_capab_info(struct hostapd_data *hapd, struct sta_info *sta,
 
 	if (hapd->conf->wpa)
 		privacy = 1;
+
+#ifdef CONFIG_HS20
+	if (hapd->conf->osen)
+		privacy = 1;
+#endif /* CONFIG_HS20 */
 
 	if (sta) {
 		int policy, def_klen;
@@ -173,6 +188,17 @@ u16 hostapd_own_capab_info(struct hostapd_data *hapd, struct sta_info *sta,
 	    hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G &&
 	    hapd->iface->num_sta_no_short_slot_time == 0)
 		capab |= WLAN_CAPABILITY_SHORT_SLOT_TIME;
+
+	/*
+	 * Currently, Spectrum Management capability bit is set when directly
+	 * requested in configuration by spectrum_mgmt_required or when AP is
+	 * running on DFS channel.
+	 * TODO: Also consider driver support for TPC to set Spectrum Mgmt bit
+	 */
+	if (hapd->iface->current_mode &&
+	    hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211A &&
+	    (hapd->iconf->spectrum_mgmt_required || dfs))
+		capab |= WLAN_CAPABILITY_SPECTRUM_MGMT;
 
 	return capab;
 }
@@ -1068,6 +1094,29 @@ static u16 check_assoc_ies(struct hostapd_data *hapd, struct sta_info *sta,
 			return WLAN_STATUS_CIPHER_REJECTED_PER_POLICY;
 		}
 #endif /* CONFIG_IEEE80211N */
+#ifdef CONFIG_HS20
+	} else if (hapd->conf->osen) {
+		if (elems.osen == NULL) {
+			hostapd_logger(
+				hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
+				HOSTAPD_LEVEL_INFO,
+				"No HS 2.0 OSEN element in association request");
+			return WLAN_STATUS_INVALID_IE;
+		}
+
+		wpa_printf(MSG_DEBUG, "HS 2.0: OSEN association");
+		if (sta->wpa_sm == NULL)
+			sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth,
+							sta->addr, NULL);
+		if (sta->wpa_sm == NULL) {
+			wpa_printf(MSG_WARNING, "Failed to initialize WPA "
+				   "state machine");
+			return WLAN_STATUS_UNSPECIFIED_FAILURE;
+		}
+		if (wpa_validate_osen(hapd->wpa_auth, sta->wpa_sm,
+				      elems.osen - 2, elems.osen_len + 2) < 0)
+			return WLAN_STATUS_INVALID_IE;
+#endif /* CONFIG_HS20 */
 	} else
 		wpa_auth_sta_no_wpa(sta->wpa_sm);
 
@@ -1903,7 +1952,7 @@ static void handle_assoc_cb(struct hostapd_data *hapd,
 		new_assoc = 0;
 	sta->flags |= WLAN_STA_ASSOC;
 	sta->flags &= ~WLAN_STA_WNM_SLEEP_MODE;
-	if ((!hapd->conf->ieee802_1x && !hapd->conf->wpa) ||
+	if ((!hapd->conf->ieee802_1x && !hapd->conf->wpa && !hapd->conf->osen) ||
 	    sta->auth_alg == WLAN_AUTH_FT) {
 		/*
 		 * Open, static WEP, or FT protocol; no separate authorization

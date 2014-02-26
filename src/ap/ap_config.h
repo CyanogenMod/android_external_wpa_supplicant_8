@@ -45,7 +45,8 @@ typedef enum hostap_security_policy {
 	SECURITY_STATIC_WEP = 1,
 	SECURITY_IEEE_802_1X = 2,
 	SECURITY_WPA_PSK = 3,
-	SECURITY_WPA = 4
+	SECURITY_WPA = 4,
+	SECURITY_OSEN = 5
 } secpolicy;
 
 struct hostapd_ssid {
@@ -125,6 +126,7 @@ struct hostapd_eap_user {
 	unsigned int wildcard_prefix:1;
 	unsigned int password_hash:1; /* whether password is hashed with
 				       * nt_password_hash() */
+	unsigned int remediation:1;
 	int ttls_auth; /* EAP_TTLS_AUTH_* bitfield */
 };
 
@@ -452,9 +454,11 @@ struct hostapd_bss_config {
 	u8 qos_map_set[16 + 2 * 21];
 	unsigned int qos_map_set_len;
 
+	int osen;
 #ifdef CONFIG_HS20
 	int hs20;
 	int disable_dgaf;
+	u16 anqp_domain_id;
 	unsigned int hs20_oper_friendly_name_count;
 	struct hostapd_lang_string *hs20_oper_friendly_name;
 	u8 *hs20_wan_metrics;
@@ -462,6 +466,32 @@ struct hostapd_bss_config {
 	size_t hs20_connection_capability_len;
 	u8 *hs20_operating_class;
 	u8 hs20_operating_class_len;
+	struct hs20_icon {
+		u16 width;
+		u16 height;
+		char language[3];
+		char type[256];
+		char name[256];
+		char file[256];
+	} *hs20_icons;
+	size_t hs20_icons_count;
+	u8 osu_ssid[HOSTAPD_MAX_SSID_LEN];
+	size_t osu_ssid_len;
+	struct hs20_osu_provider {
+		unsigned int friendly_name_count;
+		struct hostapd_lang_string *friendly_name;
+		char *server_uri;
+		int *method_list;
+		char **icons;
+		size_t icons_count;
+		char *osu_nai;
+		unsigned int service_desc_count;
+		struct hostapd_lang_string *service_desc;
+	} *hs20_osu_providers, *last_osu;
+	size_t hs20_osu_providers_count;
+	unsigned int hs20_deauth_req_timeout;
+	char *subscr_remediation_url;
+	u8 subscr_remediation_method;
 #endif /* CONFIG_HS20 */
 
 	u8 wps_rf_bands; /* RF bands for WPS (WPS_RF_*) */
@@ -518,6 +548,16 @@ struct hostapd_config {
 	int ieee80211d;
 
 	int ieee80211h; /* DFS */
+
+	/*
+	 * Local power constraint is an octet encoded as an unsigned integer in
+	 * units of decibels. Invalid value -1 indicates that Power Constraint
+	 * element will not be added.
+	 */
+	int local_pwr_constraint;
+
+	/* Control Spectrum Management bit */
+	int spectrum_mgmt_required;
 
 	struct hostapd_tx_queue_params tx_queue[NUM_TX_QUEUES];
 

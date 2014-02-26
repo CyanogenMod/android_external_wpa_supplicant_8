@@ -324,8 +324,6 @@ static void web_connection_parse_get(struct upnp_wps_device_sm *sm,
 	 * It is not required that filenames be case insensitive but it is
 	 * allowed and cannot hurt here.
 	 */
-	if (filename == NULL)
-		filename = "(null)"; /* just in case */
 	if (os_strcasecmp(filename, UPNP_WPS_DEVICE_XML_FILE) == 0) {
 		wpa_printf(MSG_DEBUG, "WPS UPnP: HTTP GET for device XML");
 		req = GET_DEVICE_XML_FILE;
@@ -1173,7 +1171,6 @@ static void web_connection_parse_unsubscribe(struct upnp_wps_device_sm *sm,
 			.....
 		}
 #endif
-		/* SID is only for renewal */
 		match = "SID:";
 		match_len = os_strlen(match);
 		if (os_strncasecmp(h, match, match_len) == 0) {
@@ -1196,6 +1193,20 @@ static void web_connection_parse_unsubscribe(struct upnp_wps_device_sm *sm,
 			got_uuid = 1;
 			continue;
 		}
+
+		match = "NT:";
+		match_len = os_strlen(match);
+		if (os_strncasecmp(h, match, match_len) == 0) {
+			ret = HTTP_BAD_REQUEST;
+			goto send_msg;
+		}
+
+		match = "CALLBACK:";
+		match_len = os_strlen(match);
+		if (os_strncasecmp(h, match, match_len) == 0) {
+			ret = HTTP_BAD_REQUEST;
+			goto send_msg;
+		}
 	}
 
 	if (got_uuid) {
@@ -1209,6 +1220,10 @@ static void web_connection_parse_unsubscribe(struct upnp_wps_device_sm *sm,
 				   sa->domain_and_port : "-null-");
 			dl_list_del(&s->list);
 			subscription_destroy(s);
+		} else {
+			wpa_printf(MSG_INFO, "WPS UPnP: Could not find matching subscription to unsubscribe");
+			ret = HTTP_PRECONDITION_FAILED;
+			goto send_msg;
 		}
 	} else {
 		wpa_printf(MSG_INFO, "WPS UPnP: Unsubscribe fails (not "

@@ -796,6 +796,41 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 			fprintf(f, "\n");
 		}
 	}
+	if (cred->roaming_partner) {
+		for (i = 0; i < cred->num_roaming_partner; i++) {
+			struct roaming_partner *p = &cred->roaming_partner[i];
+			fprintf(f, "\troaming_partner=\"%s,%d,%u,%s\"\n",
+				p->fqdn, p->exact_match, p->priority,
+				p->country);
+		}
+	}
+	if (cred->update_identifier)
+		fprintf(f, "\tupdate_identifier=%d\n", cred->update_identifier);
+
+	if (cred->provisioning_sp)
+		fprintf(f, "\tprovisioning_sp=%s\n", cred->provisioning_sp);
+	if (cred->sp_priority)
+		fprintf(f, "\tsp_priority=%d\n", cred->sp_priority);
+
+	if (cred->min_dl_bandwidth_home)
+		fprintf(f, "\tmin_dl_bandwidth_home=%u\n",
+			cred->min_dl_bandwidth_home);
+	if (cred->min_ul_bandwidth_home)
+		fprintf(f, "\tmin_ul_bandwidth_home=%u\n",
+			cred->min_ul_bandwidth_home);
+	if (cred->min_dl_bandwidth_roaming)
+		fprintf(f, "\tmin_dl_bandwidth_roaming=%u\n",
+			cred->min_dl_bandwidth_roaming);
+	if (cred->min_ul_bandwidth_roaming)
+		fprintf(f, "\tmin_ul_bandwidth_roaming=%u\n",
+			cred->min_ul_bandwidth_roaming);
+
+	if (cred->max_bss_load)
+		fprintf(f, "\tmax_bss_load=%u\n",
+			cred->max_bss_load);
+
+	if (cred->ocsp)
+		fprintf(f, "\tocsp=%d\n", cred->ocsp);
 }
 
 

@@ -405,6 +405,8 @@ static int wpa_config_parse_proto(const struct parse_data *data,
 		else if (os_strcmp(start, "RSN") == 0 ||
 			 os_strcmp(start, "WPA2") == 0)
 			val |= WPA_PROTO_RSN;
+		else if (os_strcmp(start, "OSEN") == 0)
+			val |= WPA_PROTO_OSEN;
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid proto '%s'",
 				   line, start);
@@ -516,6 +518,10 @@ static int wpa_config_parse_key_mgmt(const struct parse_data *data,
 		else if (os_strcmp(start, "FT-SAE") == 0)
 			val |= WPA_KEY_MGMT_FT_SAE;
 #endif /* CONFIG_SAE */
+#ifdef CONFIG_HS20
+		else if (os_strcmp(start, "OSEN") == 0)
+			val |= WPA_KEY_MGMT_OSEN;
+#endif /* CONFIG_HS20 */
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -1923,6 +1929,12 @@ void wpa_config_free_cred(struct wpa_cred *cred)
 	os_free(cred->phase1);
 	os_free(cred->phase2);
 	os_free(cred->excluded_ssid);
+	os_free(cred->roaming_partner);
+	os_free(cred->provisioning_sp);
+	for (i = 0; i < cred->num_req_conn_capab; i++)
+		os_free(cred->req_conn_capab_port[i]);
+	os_free(cred->req_conn_capab_port);
+	os_free(cred->req_conn_capab_proto);
 	os_free(cred);
 }
 
@@ -1998,6 +2010,7 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->ext_password_backend);
 	os_free(config->sae_groups);
 	wpabuf_free(config->ap_vendor_elements);
+	os_free(config->osu_dir);
 	os_free(config);
 }
 
@@ -2393,6 +2406,69 @@ void wpa_config_update_psk(struct wpa_ssid *ssid)
 }
 
 
+static int wpa_config_set_cred_req_conn_capab(struct wpa_cred *cred,
+					      const char *value)
+{
+	u8 *proto;
+	int **port;
+	int *ports, *nports;
+	const char *pos;
+	unsigned int num_ports;
+
+	proto = os_realloc_array(cred->req_conn_capab_proto,
+				 cred->num_req_conn_capab + 1, sizeof(u8));
+	if (proto == NULL)
+		return -1;
+	cred->req_conn_capab_proto = proto;
+
+	port = os_realloc_array(cred->req_conn_capab_port,
+				cred->num_req_conn_capab + 1, sizeof(int *));
+	if (port == NULL)
+		return -1;
+	cred->req_conn_capab_port = port;
+
+	proto[cred->num_req_conn_capab] = atoi(value);
+
+	pos = os_strchr(value, ':');
+	if (pos == NULL) {
+		port[cred->num_req_conn_capab] = NULL;
+		cred->num_req_conn_capab++;
+		return 0;
+	}
+	pos++;
+
+	ports = NULL;
+	num_ports = 0;
+
+	while (*pos) {
+		nports = os_realloc_array(ports, num_ports + 1, sizeof(int));
+		if (nports == NULL) {
+			os_free(ports);
+			return -1;
+		}
+		ports = nports;
+		ports[num_ports++] = atoi(pos);
+
+		pos = os_strchr(pos, ',');
+		if (pos == NULL)
+			break;
+		pos++;
+	}
+
+	nports = os_realloc_array(ports, num_ports + 1, sizeof(int));
+	if (nports == NULL) {
+		os_free(ports);
+		return -1;
+	}
+	ports = nports;
+	ports[num_ports] = -1;
+
+	port[cred->num_req_conn_capab] = ports;
+	cred->num_req_conn_capab++;
+	return 0;
+}
+
+
 int wpa_config_set_cred(struct wpa_cred *cred, const char *var,
 			const char *value, int line)
 {
@@ -2406,6 +2482,14 @@ int wpa_config_set_cred(struct wpa_cred *cred, const char *var,
 
 	if (os_strcmp(var, "priority") == 0) {
 		cred->priority = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "sp_priority") == 0) {
+		int prio = atoi(value);
+		if (prio < 0 || prio > 255)
+			return -1;
+		cred->sp_priority = prio;
 		return 0;
 	}
 
@@ -2436,6 +2520,44 @@ int wpa_config_set_cred(struct wpa_cred *cred, const char *var,
 		os_free(cred->password);
 		cred->password = os_strdup(value);
 		cred->ext_password = 1;
+		return 0;
+	}
+
+	if (os_strcmp(var, "update_identifier") == 0) {
+		cred->update_identifier = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "min_dl_bandwidth_home") == 0) {
+		cred->min_dl_bandwidth_home = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "min_ul_bandwidth_home") == 0) {
+		cred->min_ul_bandwidth_home = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "min_dl_bandwidth_roaming") == 0) {
+		cred->min_dl_bandwidth_roaming = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "min_ul_bandwidth_roaming") == 0) {
+		cred->min_ul_bandwidth_roaming = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "max_bss_load") == 0) {
+		cred->max_bss_load = atoi(value);
+		return 0;
+	}
+
+	if (os_strcmp(var, "req_conn_capab") == 0)
+		return wpa_config_set_cred_req_conn_capab(cred, value);
+
+	if (os_strcmp(var, "ocsp") == 0) {
+		cred->ocsp = atoi(value);
 		return 0;
 	}
 
@@ -2587,6 +2709,69 @@ int wpa_config_set_cred(struct wpa_cred *cred, const char *var,
 
 		os_free(val);
 
+		return 0;
+	}
+
+	if (os_strcmp(var, "roaming_partner") == 0) {
+		struct roaming_partner *p;
+		char *pos;
+
+		p = os_realloc_array(cred->roaming_partner,
+				     cred->num_roaming_partner + 1,
+				     sizeof(struct roaming_partner));
+		if (p == NULL) {
+			os_free(val);
+			return -1;
+		}
+		cred->roaming_partner = p;
+
+		p = &cred->roaming_partner[cred->num_roaming_partner];
+
+		pos = os_strchr(val, ',');
+		if (pos == NULL) {
+			os_free(val);
+			return -1;
+		}
+		*pos++ = '\0';
+		if (pos - val - 1 >= (int) sizeof(p->fqdn)) {
+			os_free(val);
+			return -1;
+		}
+		os_memcpy(p->fqdn, val, pos - val);
+
+		p->exact_match = atoi(pos);
+
+		pos = os_strchr(pos, ',');
+		if (pos == NULL) {
+			os_free(val);
+			return -1;
+		}
+		*pos++ = '\0';
+
+		p->priority = atoi(pos);
+
+		pos = os_strchr(pos, ',');
+		if (pos == NULL) {
+			os_free(val);
+			return -1;
+		}
+		*pos++ = '\0';
+
+		if (os_strlen(pos) >= sizeof(p->country)) {
+			os_free(val);
+			return -1;
+		}
+		os_memcpy(p->country, pos, os_strlen(pos) + 1);
+
+		cred->num_roaming_partner++;
+		os_free(val);
+
+		return 0;
+	}
+
+	if (os_strcmp(var, "provisioning_sp") == 0) {
+		os_free(cred->provisioning_sp);
+		cred->provisioning_sp = val;
 		return 0;
 	}
 
@@ -3401,6 +3586,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(scan_cur_freq), 0 },
 	{ INT(sched_scan_interval), 0 },
 	{ INT(tdls_external_control), 0},
+	{ STR(osu_dir), 0 },
 };
 
 #undef FUNC

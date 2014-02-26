@@ -2298,6 +2298,37 @@ static int wpa_cli_cmd_get_nai_home_realm_list(struct wpa_ctrl *ctrl, int argc,
 	return wpa_ctrl_command(ctrl, cmd);
 }
 
+
+static int wpa_cli_cmd_hs20_icon_request(struct wpa_ctrl *ctrl, int argc,
+					 char *argv[])
+{
+	char cmd[512];
+
+	if (argc < 2) {
+		printf("Command needs two arguments (dst mac addr and "
+		       "icon name)\n");
+		return -1;
+	}
+
+	if (write_cmd(cmd, sizeof(cmd), "HS20_ICON_REQUEST", argc, argv) < 0)
+		return -1;
+
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
+static int wpa_cli_cmd_fetch_osu(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "FETCH_OSU");
+}
+
+
+static int wpa_cli_cmd_cancel_fetch_osu(struct wpa_ctrl *ctrl, int argc,
+					char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "CANCEL_FETCH_OSU");
+}
+
 #endif /* CONFIG_HS20 */
 
 
@@ -2831,6 +2862,14 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "nai_home_realm_list", wpa_cli_cmd_get_nai_home_realm_list,
 	  wpa_cli_complete_bss, cli_cmd_flag_none,
 	  "<addr> <home realm> = get HS20 nai home realm list" },
+	{ "hs20_icon_request", wpa_cli_cmd_hs20_icon_request,
+	  wpa_cli_complete_bss, cli_cmd_flag_none,
+	  "<addr> <icon name> = get Hotspot 2.0 OSU icon" },
+	{ "fetch_osu", wpa_cli_cmd_fetch_osu, NULL, cli_cmd_flag_none,
+	  "= fetch OSU provider information from all APs" },
+	{ "cancel_fetch_osu", wpa_cli_cmd_cancel_fetch_osu, NULL,
+	  cli_cmd_flag_none,
+	  "= cancel fetch_osu command" },
 #endif /* CONFIG_HS20 */
 	{ "sta_autoconnect", wpa_cli_cmd_sta_autoconnect, NULL,
 	  cli_cmd_flag_none,
@@ -3180,6 +3219,10 @@ static void wpa_cli_action_process(const char *msg)
 	} else if (str_match(pos, AP_STA_DISCONNECTED)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, ESS_DISASSOC_IMMINENT)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, HS20_SUBSCRIPTION_REMEDIATION)) {
+		wpa_cli_exec(action_file, ctrl_ifname, pos);
+	} else if (str_match(pos, HS20_DEAUTH_IMMINENT_NOTICE)) {
 		wpa_cli_exec(action_file, ctrl_ifname, pos);
 	} else if (str_match(pos, WPA_EVENT_TERMINATING)) {
 		printf("wpa_supplicant is terminating - stop monitoring\n");

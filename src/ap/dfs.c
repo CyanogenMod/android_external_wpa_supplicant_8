@@ -78,6 +78,11 @@ static int dfs_is_chan_allowed(struct hostapd_channel_data *chan, int n_chans)
 	 * 42, 58, 106, 122, 138, 155
 	 */
 	int allowed_80[] = { 36, 52, 100, 116, 132, 149 };
+	/*
+	 * VHT160 valid channels based on center frequency:
+	 * 50, 114
+	 */
+	int allowed_160[] = { 36, 100 };
 	int *allowed = allowed_40;
 	unsigned int i, allowed_no = 0;
 
@@ -89,6 +94,10 @@ static int dfs_is_chan_allowed(struct hostapd_channel_data *chan, int n_chans)
 	case 4:
 		allowed = allowed_80;
 		allowed_no = ARRAY_SIZE(allowed_80);
+		break;
+	case 8:
+		allowed = allowed_160;
+		allowed_no = ARRAY_SIZE(allowed_160);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown width for %d channels", n_chans);
@@ -294,8 +303,15 @@ static int dfs_check_chans_available(struct hostapd_iface *iface,
 
 	mode = iface->current_mode;
 
-	for(i = 0; i < n_chans; i++) {
+	for (i = 0; i < n_chans; i++) {
 		channel = &mode->channels[start_chan_idx + i];
+
+		if (channel->flag & HOSTAPD_CHAN_DISABLED)
+			break;
+
+		if (!(channel->flag & HOSTAPD_CHAN_RADAR))
+			continue;
+
 		if ((channel->flag & HOSTAPD_CHAN_DFS_MASK) !=
 		    HOSTAPD_CHAN_DFS_AVAILABLE)
 			break;
@@ -316,7 +332,7 @@ static int dfs_check_chans_unavailable(struct hostapd_iface *iface,
 
 	mode = iface->current_mode;
 
-	for(i = 0; i < n_chans; i++) {
+	for (i = 0; i < n_chans; i++) {
 		channel = &mode->channels[start_chan_idx + i];
 		if (channel->flag & HOSTAPD_CHAN_DISABLED)
 			res++;
@@ -800,4 +816,24 @@ int hostapd_dfs_nop_finished(struct hostapd_iface *iface, int freq,
 	set_dfs_state(iface, freq, ht_enabled, chan_offset, chan_width,
 		      cf1, cf2, HOSTAPD_CHAN_DFS_USABLE);
 	return 0;
+}
+
+
+int hostapd_is_dfs_required(struct hostapd_iface *iface)
+{
+	int n_chans, start_chan_idx;
+
+	if (!iface->current_mode)
+		return -1;
+
+	/* Get start (first) channel for current configuration */
+	start_chan_idx = dfs_get_start_chan_idx(iface);
+	if (start_chan_idx == -1)
+		return -1;
+
+	/* Get number of used channels, depend on width */
+	n_chans = dfs_get_used_n_chans(iface);
+
+	/* Check if any of configured channels require DFS */
+	return dfs_check_chans_radar(iface, start_chan_idx, n_chans);
 }

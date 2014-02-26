@@ -27,6 +27,7 @@
 #include "ap_drv_ops.h"
 #include "beacon.h"
 #include "hs20.h"
+#include "dfs.h"
 
 
 #ifdef NEED_AP_MLME
@@ -99,6 +100,70 @@ static u8 * hostapd_eid_erp_info(struct hostapd_data *hapd, u8 *eid)
 	*eid++ = ieee802_11_erp_info(hapd);
 
 	return eid;
+}
+
+
+static u8 * hostapd_eid_pwr_constraint(struct hostapd_data *hapd, u8 *eid)
+{
+	u8 *pos = eid;
+	u8 local_pwr_constraint = 0;
+	int dfs;
+
+	if (hapd->iface->current_mode == NULL ||
+	    hapd->iface->current_mode->mode != HOSTAPD_MODE_IEEE80211A)
+		return eid;
+
+	/*
+	 * There is no DFS support and power constraint was not directly
+	 * requested by config option.
+	 */
+	if (!hapd->iconf->ieee80211h &&
+	    hapd->iconf->local_pwr_constraint == -1)
+		return eid;
+
+	/* Check if DFS is required by regulatory. */
+	dfs = hostapd_is_dfs_required(hapd->iface);
+	if (dfs < 0) {
+		wpa_printf(MSG_WARNING, "Failed to check if DFS is required; ret=%d",
+			   dfs);
+		dfs = 0;
+	}
+
+	if (dfs == 0 && hapd->iconf->local_pwr_constraint == -1)
+		return eid;
+
+	/*
+	 * ieee80211h (DFS) is enabled so Power Constraint element shall
+	 * be added when running on DFS channel whenever local_pwr_constraint
+	 * is configured or not. In order to meet regulations when TPC is not
+	 * implemented using a transmit power that is below the legal maximum
+	 * (including any mitigation factor) should help. In this case,
+	 * indicate 3 dB below maximum allowed transmit power.
+	 */
+	if (hapd->iconf->local_pwr_constraint == -1)
+		local_pwr_constraint = 3;
+
+	/*
+	 * A STA that is not an AP shall use a transmit power less than or
+	 * equal to the local maximum transmit power level for the channel.
+	 * The local maximum transmit power can be calculated from the formula:
+	 * local max TX pwr = max TX pwr - local pwr constraint
+	 * Where max TX pwr is maximum transmit power level specified for
+	 * channel in Country element and local pwr constraint is specified
+	 * for channel in this Power Constraint element.
+	 */
+
+	/* Element ID */
+	*pos++ = WLAN_EID_PWR_CONSTRAINT;
+	/* Length */
+	*pos++ = 1;
+	/* Local Power Constraint */
+	if (local_pwr_constraint)
+		*pos++ = local_pwr_constraint;
+	else
+		*pos++ = hapd->iconf->local_pwr_constraint;
+
+	return pos;
 }
 
 
@@ -315,6 +380,9 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 
 	pos = hostapd_eid_country(hapd, pos, epos - pos);
 
+	/* Power Constraint element */
+	pos = hostapd_eid_pwr_constraint(hapd, pos);
+
 	/* ERP Information element */
 	pos = hostapd_eid_erp_info(hapd, pos);
 
@@ -374,6 +442,7 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 
 #ifdef CONFIG_HS20
 	pos = hostapd_eid_hs20_indication(hapd, pos);
+	pos = hostapd_eid_osen(hapd, pos);
 #endif /* CONFIG_HS20 */
 
 	if (hapd->conf->vendor_elements) {
@@ -721,6 +790,9 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	tailpos = hostapd_eid_country(hapd, tailpos,
 				      tail + BEACON_TAIL_BUF_SIZE - tailpos);
 
+	/* Power Constraint element */
+	tailpos = hostapd_eid_pwr_constraint(hapd, tailpos);
+
 	/* ERP Information element */
 	tailpos = hostapd_eid_erp_info(hapd, tailpos);
 
@@ -783,6 +855,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 
 #ifdef CONFIG_HS20
 	tailpos = hostapd_eid_hs20_indication(hapd, tailpos);
+	tailpos = hostapd_eid_osen(hapd, tailpos);
 #endif /* CONFIG_HS20 */
 
 	if (hapd->conf->vendor_elements) {
@@ -854,6 +927,10 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	params->ap_max_inactivity = hapd->conf->ap_max_inactivity;
 #ifdef CONFIG_HS20
 	params->disable_dgaf = hapd->conf->disable_dgaf;
+	if (hapd->conf->osen) {
+		params->privacy = 1;
+		params->osen = 1;
+	}
 #endif /* CONFIG_HS20 */
 	return 0;
 }

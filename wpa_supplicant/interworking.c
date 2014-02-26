@@ -46,9 +46,28 @@
 
 static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s);
 static struct wpa_cred * interworking_credentials_available_realm(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss);
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded);
 static struct wpa_cred * interworking_credentials_available_3gpp(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss);
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded);
+
+
+static int cred_prio_cmp(const struct wpa_cred *a, const struct wpa_cred *b)
+{
+	if (a->priority > b->priority)
+		return 1;
+	if (a->priority < b->priority)
+		return -1;
+	if (a->provisioning_sp == NULL || b->provisioning_sp == NULL ||
+	    os_strcmp(a->provisioning_sp, b->provisioning_sp) != 0)
+		return 0;
+	if (a->sp_priority < b->sp_priority)
+		return 1;
+	if (a->sp_priority > b->sp_priority)
+		return -1;
+	return 0;
+}
 
 
 static void interworking_reconnect(struct wpa_supplicant *wpa_s)
@@ -102,6 +121,9 @@ static void interworking_anqp_resp_cb(void *ctx, const u8 *dst,
 {
 	struct wpa_supplicant *wpa_s = ctx;
 
+	wpa_printf(MSG_DEBUG, "ANQP: Response callback dst=" MACSTR
+		   " dialog_token=%u result=%d status_code=%u",
+		   MAC2STR(dst), dialog_token, result, status_code);
 	anqp_resp_cb(wpa_s, dst, dialog_token, result, adv_proto, resp,
 		     status_code);
 	interworking_next_anqp_fetch(wpa_s);
@@ -155,11 +177,43 @@ static int cred_with_domain(struct wpa_supplicant *wpa_s)
 	struct wpa_cred *cred;
 
 	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
-		if (cred->domain || cred->pcsc || cred->imsi)
+		if (cred->domain || cred->pcsc || cred->imsi ||
+		    cred->roaming_partner)
 			return 1;
 	}
 	return 0;
 }
+
+
+#ifdef CONFIG_HS20
+
+static int cred_with_min_backhaul(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_cred *cred;
+
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		if (cred->min_dl_bandwidth_home ||
+		    cred->min_ul_bandwidth_home ||
+		    cred->min_dl_bandwidth_roaming ||
+		    cred->min_ul_bandwidth_roaming)
+			return 1;
+	}
+	return 0;
+}
+
+
+static int cred_with_conn_capab(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_cred *cred;
+
+	for (cred = wpa_s->conf->cred; cred; cred = cred->next) {
+		if (cred->num_req_conn_capab)
+			return 1;
+	}
+	return 0;
+}
+
+#endif /* CONFIG_HS20 */
 
 
 static int additional_roaming_consortiums(struct wpa_bss *bss)
@@ -227,13 +281,17 @@ static int interworking_anqp_send_req(struct wpa_supplicant *wpa_s,
 		wpabuf_put_u8(extra, HS20_STYPE_QUERY_LIST);
 		wpabuf_put_u8(extra, 0); /* Reserved */
 		wpabuf_put_u8(extra, HS20_STYPE_CAPABILITY_LIST);
-		if (all) {
+		if (all)
 			wpabuf_put_u8(extra,
 				      HS20_STYPE_OPERATOR_FRIENDLY_NAME);
+		if (all || cred_with_min_backhaul(wpa_s))
 			wpabuf_put_u8(extra, HS20_STYPE_WAN_METRICS);
+		if (all || cred_with_conn_capab(wpa_s))
 			wpabuf_put_u8(extra, HS20_STYPE_CONNECTION_CAPABILITY);
+		if (all)
 			wpabuf_put_u8(extra, HS20_STYPE_OPERATING_CLASS);
-		}
+		if (all)
+			wpabuf_put_u8(extra, HS20_STYPE_OSU_PROVIDERS_LIST);
 		gas_anqp_set_element_len(extra, len_pos);
 	}
 #endif /* CONFIG_HS20 */
@@ -918,6 +976,7 @@ static int interworking_connect_3gpp(struct wpa_supplicant *wpa_s,
 	    wpa_config_set_quoted(ssid, "password", cred->password) < 0)
 		goto fail;
 
+	wpa_s->next_ssid = ssid;
 	wpa_config_update_prio_list(wpa_s->conf);
 	interworking_reconnect(wpa_s);
 
@@ -1046,11 +1105,164 @@ static int cred_excluded_ssid(struct wpa_cred *cred, struct wpa_bss *bss)
 }
 
 
+static int cred_below_min_backhaul(struct wpa_supplicant *wpa_s,
+				   struct wpa_cred *cred, struct wpa_bss *bss)
+{
+	int res;
+	unsigned int dl_bandwidth, ul_bandwidth;
+	const u8 *wan;
+	u8 wan_info, dl_load, ul_load;
+	u16 lmd;
+	u32 ul_speed, dl_speed;
+
+	if (!cred->min_dl_bandwidth_home &&
+	    !cred->min_ul_bandwidth_home &&
+	    !cred->min_dl_bandwidth_roaming &&
+	    !cred->min_ul_bandwidth_roaming)
+		return 0; /* No bandwidth constraint specified */
+
+	if (bss->anqp == NULL || bss->anqp->hs20_wan_metrics == NULL)
+		return 0; /* No WAN Metrics known - ignore constraint */
+
+	wan = wpabuf_head(bss->anqp->hs20_wan_metrics);
+	wan_info = wan[0];
+	if (wan_info & BIT(3))
+		return 1; /* WAN link at capacity */
+	lmd = WPA_GET_LE16(wan + 11);
+	if (lmd == 0)
+		return 0; /* Downlink/Uplink Load was not measured */
+	dl_speed = WPA_GET_LE32(wan + 1);
+	ul_speed = WPA_GET_LE32(wan + 5);
+	dl_load = wan[9];
+	ul_load = wan[10];
+
+	if (dl_speed >= 0xffffff)
+		dl_bandwidth = dl_speed / 255 * (255 - dl_load);
+	else
+		dl_bandwidth = dl_speed * (255 - dl_load) / 255;
+
+	if (ul_speed >= 0xffffff)
+		ul_bandwidth = ul_speed / 255 * (255 - ul_load);
+	else
+		ul_bandwidth = ul_speed * (255 - ul_load) / 255;
+
+	res = interworking_home_sp_cred(wpa_s, cred, bss->anqp ?
+					bss->anqp->domain_name : NULL);
+	if (res > 0) {
+		if (cred->min_dl_bandwidth_home > dl_bandwidth)
+			return 1;
+		if (cred->min_ul_bandwidth_home > ul_bandwidth)
+			return 1;
+	} else {
+		if (cred->min_dl_bandwidth_roaming > dl_bandwidth)
+			return 1;
+		if (cred->min_ul_bandwidth_roaming > ul_bandwidth)
+			return 1;
+	}
+
+	return 0;
+}
+
+
+static int cred_over_max_bss_load(struct wpa_supplicant *wpa_s,
+				  struct wpa_cred *cred, struct wpa_bss *bss)
+{
+	const u8 *ie;
+	int res;
+
+	if (!cred->max_bss_load)
+		return 0; /* No BSS Load constraint specified */
+
+	ie = wpa_bss_get_ie(bss, WLAN_EID_BSS_LOAD);
+	if (ie == NULL || ie[1] < 3)
+		return 0; /* No BSS Load advertised */
+
+	res = interworking_home_sp_cred(wpa_s, cred, bss->anqp ?
+					bss->anqp->domain_name : NULL);
+	if (res <= 0)
+		return 0; /* Not a home network */
+
+	return ie[4] > cred->max_bss_load;
+}
+
+
+static int has_proto_match(const u8 *pos, const u8 *end, u8 proto)
+{
+	while (pos + 4 <= end) {
+		if (pos[0] == proto && pos[3] == 1 /* Open */)
+			return 1;
+		pos += 4;
+	}
+
+	return 0;
+}
+
+
+static int has_proto_port_match(const u8 *pos, const u8 *end, u8 proto,
+				u16 port)
+{
+	while (pos + 4 <= end) {
+		if (pos[0] == proto && WPA_GET_LE16(&pos[1]) == port &&
+		    pos[3] == 1 /* Open */)
+			return 1;
+		pos += 4;
+	}
+
+	return 0;
+}
+
+
+static int cred_conn_capab_missing(struct wpa_supplicant *wpa_s,
+				   struct wpa_cred *cred, struct wpa_bss *bss)
+{
+	int res;
+	const u8 *capab, *end;
+	unsigned int i, j;
+	int *ports;
+
+	if (!cred->num_req_conn_capab)
+		return 0; /* No connection capability constraint specified */
+
+	if (bss->anqp == NULL || bss->anqp->hs20_connection_capability == NULL)
+		return 0; /* No Connection Capability known - ignore constraint
+			   */
+
+	res = interworking_home_sp_cred(wpa_s, cred, bss->anqp ?
+					bss->anqp->domain_name : NULL);
+	if (res > 0)
+		return 0; /* No constraint in home network */
+
+	capab = wpabuf_head(bss->anqp->hs20_connection_capability);
+	end = capab + wpabuf_len(bss->anqp->hs20_connection_capability);
+
+	for (i = 0; i < cred->num_req_conn_capab; i++) {
+		ports = cred->req_conn_capab_port[i];
+		if (!ports) {
+			if (!has_proto_match(capab, end,
+					     cred->req_conn_capab_proto[i]))
+				return 1;
+		} else {
+			for (j = 0; ports[j] > -1; j++) {
+				if (!has_proto_port_match(
+					    capab, end,
+					    cred->req_conn_capab_proto[i],
+					    ports[j]))
+					return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+
 static struct wpa_cred * interworking_credentials_available_roaming_consortium(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded)
 {
 	struct wpa_cred *cred, *selected = NULL;
 	const u8 *ie;
+	int is_excluded = 0;
 
 	ie = wpa_bss_get_ie(bss, WLAN_EID_ROAMING_CONSORTIUM);
 
@@ -1073,15 +1285,32 @@ static struct wpa_cred * interworking_credentials_available_roaming_consortium(
 					      cred->roaming_consortium_len))
 			continue;
 
-		if (cred_excluded_ssid(cred, bss))
-			continue;
 		if (cred_no_required_oi_match(cred, bss))
 			continue;
-
-		if (selected == NULL ||
-		    selected->priority < cred->priority)
-			selected = cred;
+		if (!ignore_bw && cred_below_min_backhaul(wpa_s, cred, bss))
+			continue;
+		if (!ignore_bw && cred_over_max_bss_load(wpa_s, cred, bss))
+			continue;
+		if (!ignore_bw && cred_conn_capab_missing(wpa_s, cred, bss))
+			continue;
+		if (cred_excluded_ssid(cred, bss)) {
+			if (excluded == NULL)
+				continue;
+			if (selected == NULL) {
+				selected = cred;
+				is_excluded = 1;
+			}
+		} else {
+			if (selected == NULL || is_excluded ||
+			    cred_prio_cmp(selected, cred) < 0) {
+				selected = cred;
+				is_excluded = 0;
+			}
+		}
 	}
+
+	if (excluded)
+		*excluded = is_excluded;
 
 	return selected;
 }
@@ -1191,6 +1420,8 @@ static int interworking_set_eap_params(struct wpa_ssid *ssid,
 				  cred->domain_suffix_match) < 0)
 		return -1;
 
+	ssid->eap.ocsp = cred->ocsp;
+
 	return 0;
 }
 
@@ -1241,6 +1472,7 @@ static int interworking_connect_roaming_consortium(
 		    cred->eap_method->method == EAP_TYPE_TTLS) < 0)
 		goto fail;
 
+	wpa_s->next_ssid = ssid;
 	wpa_config_update_prio_list(wpa_s->conf);
 	interworking_reconnect(wpa_s);
 
@@ -1253,7 +1485,8 @@ fail:
 }
 
 
-int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+static int interworking_connect_helper(struct wpa_supplicant *wpa_s,
+				       struct wpa_bss *bss, int allow_excluded)
 {
 	struct wpa_cred *cred, *cred_rc, *cred_3gpp;
 	struct wpa_ssid *ssid;
@@ -1261,6 +1494,7 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 	struct nai_realm_eap *eap = NULL;
 	u16 count, i;
 	char buf[100];
+	int excluded = 0, *excl = allow_excluded ? &excluded : NULL;
 
 	if (wpa_s->conf->cred == NULL || bss == NULL)
 		return -1;
@@ -1270,6 +1504,10 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 			   MACSTR, MAC2STR(bss->bssid));
 		return -1;
 	}
+
+	wpa_printf(MSG_DEBUG, "Interworking: Considering BSS " MACSTR
+		   " for connection (allow_excluded=%d)",
+		   MAC2STR(bss->bssid), allow_excluded);
 
 	if (!wpa_bss_get_ie(bss, WLAN_EID_RSN)) {
 		/*
@@ -1281,35 +1519,80 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 		return -1;
 	}
 
-	cred_rc = interworking_credentials_available_roaming_consortium(wpa_s,
-									bss);
+	cred_rc = interworking_credentials_available_roaming_consortium(
+		wpa_s, bss, 0, excl);
 	if (cred_rc) {
 		wpa_printf(MSG_DEBUG, "Interworking: Highest roaming "
-			   "consortium matching credential priority %d",
-			   cred_rc->priority);
+			   "consortium matching credential priority %d "
+			   "sp_priority %d",
+			   cred_rc->priority, cred_rc->sp_priority);
+		if (allow_excluded && excl && !(*excl))
+			excl = NULL;
 	}
 
-	cred = interworking_credentials_available_realm(wpa_s, bss);
+	cred = interworking_credentials_available_realm(wpa_s, bss, 0, excl);
 	if (cred) {
 		wpa_printf(MSG_DEBUG, "Interworking: Highest NAI Realm list "
-			   "matching credential priority %d",
-			   cred->priority);
+			   "matching credential priority %d sp_priority %d",
+			   cred->priority, cred->sp_priority);
+		if (allow_excluded && excl && !(*excl))
+			excl = NULL;
 	}
 
-	cred_3gpp = interworking_credentials_available_3gpp(wpa_s, bss);
+	cred_3gpp = interworking_credentials_available_3gpp(wpa_s, bss, 0,
+							    excl);
 	if (cred_3gpp) {
 		wpa_printf(MSG_DEBUG, "Interworking: Highest 3GPP matching "
-			   "credential priority %d", cred_3gpp->priority);
+			   "credential priority %d sp_priority %d",
+			   cred_3gpp->priority, cred_3gpp->sp_priority);
+		if (allow_excluded && excl && !(*excl))
+			excl = NULL;
+	}
+
+	if (!cred_rc && !cred && !cred_3gpp) {
+		wpa_printf(MSG_DEBUG, "Interworking: No full credential matches - consider options without BW(etc.) limits");
+		cred_rc = interworking_credentials_available_roaming_consortium(
+			wpa_s, bss, 1, excl);
+		if (cred_rc) {
+			wpa_printf(MSG_DEBUG, "Interworking: Highest roaming "
+				   "consortium matching credential priority %d "
+				   "sp_priority %d (ignore BW)",
+				   cred_rc->priority, cred_rc->sp_priority);
+			if (allow_excluded && excl && !(*excl))
+				excl = NULL;
+		}
+
+		cred = interworking_credentials_available_realm(wpa_s, bss, 1,
+								excl);
+		if (cred) {
+			wpa_printf(MSG_DEBUG, "Interworking: Highest NAI Realm "
+				   "list matching credential priority %d "
+				   "sp_priority %d (ignore BW)",
+				   cred->priority, cred->sp_priority);
+			if (allow_excluded && excl && !(*excl))
+				excl = NULL;
+		}
+
+		cred_3gpp = interworking_credentials_available_3gpp(wpa_s, bss,
+								    1, excl);
+		if (cred_3gpp) {
+			wpa_printf(MSG_DEBUG, "Interworking: Highest 3GPP "
+				   "matching credential priority %d "
+				   "sp_priority %d (ignore BW)",
+				   cred_3gpp->priority, cred_3gpp->sp_priority);
+			if (allow_excluded && excl && !(*excl))
+				excl = NULL;
+		}
 	}
 
 	if (cred_rc &&
-	    (cred == NULL || cred_rc->priority >= cred->priority) &&
-	    (cred_3gpp == NULL || cred_rc->priority >= cred_3gpp->priority))
+	    (cred == NULL || cred_prio_cmp(cred_rc, cred) >= 0) &&
+	    (cred_3gpp == NULL || cred_prio_cmp(cred_rc, cred_3gpp) >= 0))
 		return interworking_connect_roaming_consortium(wpa_s, cred_rc,
 							       bss);
 
 	if (cred_3gpp &&
-	    (cred == NULL || cred_3gpp->priority >= cred->priority)) {
+	    (cred == NULL || cred_prio_cmp(cred_3gpp, cred) >= 0)) {
 		return interworking_connect_3gpp(wpa_s, cred_3gpp, bss);
 	}
 
@@ -1443,6 +1726,7 @@ int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 
 	nai_realm_free(realm, count);
 
+	wpa_s->next_ssid = ssid;
 	wpa_config_update_prio_list(wpa_s->conf);
 	interworking_reconnect(wpa_s);
 
@@ -1456,13 +1740,21 @@ fail:
 }
 
 
+int interworking_connect(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+{
+	return interworking_connect_helper(wpa_s, bss, 1);
+}
+
+
 static struct wpa_cred * interworking_credentials_available_3gpp(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded)
 {
 	struct wpa_cred *selected = NULL;
 #ifdef INTERWORKING_3GPP
 	struct wpa_cred *cred;
 	int ret;
+	int is_excluded = 0;
 
 	if (bss->anqp == NULL || bss->anqp->anqp_3gpp == NULL)
 		return NULL;
@@ -1534,26 +1826,49 @@ static struct wpa_cred * interworking_credentials_available_3gpp(
 		ret = plmn_id_match(bss->anqp->anqp_3gpp, imsi, mnc_len);
 		wpa_printf(MSG_DEBUG, "PLMN match %sfound", ret ? "" : "not ");
 		if (ret) {
-			if (cred_excluded_ssid(cred, bss))
-				continue;
 			if (cred_no_required_oi_match(cred, bss))
 				continue;
-			if (selected == NULL ||
-			    selected->priority < cred->priority)
-				selected = cred;
+			if (!ignore_bw &&
+			    cred_below_min_backhaul(wpa_s, cred, bss))
+				continue;
+			if (!ignore_bw &&
+			    cred_over_max_bss_load(wpa_s, cred, bss))
+				continue;
+			if (!ignore_bw &&
+			    cred_conn_capab_missing(wpa_s, cred, bss))
+				continue;
+			if (cred_excluded_ssid(cred, bss)) {
+				if (excluded == NULL)
+					continue;
+				if (selected == NULL) {
+					selected = cred;
+					is_excluded = 1;
+				}
+			} else {
+				if (selected == NULL || is_excluded ||
+				    cred_prio_cmp(selected, cred) < 0) {
+					selected = cred;
+					is_excluded = 0;
+				}
+			}
 		}
 	}
+
+	if (excluded)
+		*excluded = is_excluded;
 #endif /* INTERWORKING_3GPP */
 	return selected;
 }
 
 
 static struct wpa_cred * interworking_credentials_available_realm(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded)
 {
 	struct wpa_cred *cred, *selected = NULL;
 	struct nai_realm *realm;
 	u16 count, i;
+	int is_excluded = 0;
 
 	if (bss->anqp == NULL || bss->anqp->nai_realm == NULL)
 		return NULL;
@@ -1578,13 +1893,32 @@ static struct wpa_cred * interworking_credentials_available_realm(
 			if (!nai_realm_match(&realm[i], cred->realm))
 				continue;
 			if (nai_realm_find_eap(cred, &realm[i])) {
-				if (cred_excluded_ssid(cred, bss))
-					continue;
 				if (cred_no_required_oi_match(cred, bss))
 					continue;
-				if (selected == NULL ||
-				    selected->priority < cred->priority)
-					selected = cred;
+				if (!ignore_bw &&
+				    cred_below_min_backhaul(wpa_s, cred, bss))
+					continue;
+				if (!ignore_bw &&
+				    cred_over_max_bss_load(wpa_s, cred, bss))
+					continue;
+				if (!ignore_bw &&
+				    cred_conn_capab_missing(wpa_s, cred, bss))
+					continue;
+				if (cred_excluded_ssid(cred, bss)) {
+					if (excluded == NULL)
+						continue;
+					if (selected == NULL) {
+						selected = cred;
+						is_excluded = 1;
+					}
+				} else {
+					if (selected == NULL || is_excluded ||
+					    cred_prio_cmp(selected, cred) < 0)
+					{
+						selected = cred;
+						is_excluded = 0;
+					}
+				}
 				break;
 			}
 		}
@@ -1592,14 +1926,19 @@ static struct wpa_cred * interworking_credentials_available_realm(
 
 	nai_realm_free(realm, count);
 
+	if (excluded)
+		*excluded = is_excluded;
+
 	return selected;
 }
 
 
-static struct wpa_cred * interworking_credentials_available(
-	struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
+static struct wpa_cred * interworking_credentials_available_helper(
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int ignore_bw,
+	int *excluded)
 {
 	struct wpa_cred *cred, *cred2;
+	int excluded1, excluded2;
 
 	if (disallowed_bssid(wpa_s, bss->bssid) ||
 	    disallowed_ssid(wpa_s, bss->ssid, bss->ssid_len)) {
@@ -1608,26 +1947,56 @@ static struct wpa_cred * interworking_credentials_available(
 		return NULL;
 	}
 
-	cred = interworking_credentials_available_realm(wpa_s, bss);
-	cred2 = interworking_credentials_available_3gpp(wpa_s, bss);
-	if (cred && cred2 && cred2->priority >= cred->priority)
+	cred = interworking_credentials_available_realm(wpa_s, bss, ignore_bw,
+							&excluded1);
+	cred2 = interworking_credentials_available_3gpp(wpa_s, bss, ignore_bw,
+							&excluded2);
+	if (cred && cred2 &&
+	    (cred_prio_cmp(cred2, cred) >= 0 || (!excluded2 && excluded1))) {
 		cred = cred2;
-	if (!cred)
+		excluded1 = excluded2;
+	}
+	if (!cred) {
 		cred = cred2;
+		excluded1 = excluded2;
+	}
 
-	cred2 = interworking_credentials_available_roaming_consortium(wpa_s,
-								      bss);
-	if (cred && cred2 && cred2->priority >= cred->priority)
+	cred2 = interworking_credentials_available_roaming_consortium(
+		wpa_s, bss, ignore_bw, &excluded2);
+	if (cred && cred2 &&
+	    (cred_prio_cmp(cred2, cred) >= 0 || (!excluded2 && excluded1))) {
 		cred = cred2;
-	if (!cred)
+		excluded1 = excluded2;
+	}
+	if (!cred) {
 		cred = cred2;
+		excluded1 = excluded2;
+	}
 
+	if (excluded)
+		*excluded = excluded1;
 	return cred;
 }
 
 
-static int domain_name_list_contains(struct wpabuf *domain_names,
-				     const char *domain)
+static struct wpa_cred * interworking_credentials_available(
+	struct wpa_supplicant *wpa_s, struct wpa_bss *bss, int *excluded)
+{
+	struct wpa_cred *cred;
+
+	if (excluded)
+		*excluded = 0;
+	cred = interworking_credentials_available_helper(wpa_s, bss, 0,
+							 excluded);
+	if (cred)
+		return cred;
+	return interworking_credentials_available_helper(wpa_s, bss, 1,
+							 excluded);
+}
+
+
+int domain_name_list_contains(struct wpabuf *domain_names,
+			      const char *domain, int exact_match)
 {
 	const u8 *pos, *end;
 	size_t len;
@@ -1645,6 +2014,12 @@ static int domain_name_list_contains(struct wpabuf *domain_names,
 		if (pos[0] == len &&
 		    os_strncasecmp(domain, (const char *) (pos + 1), len) == 0)
 			return 1;
+		if (!exact_match && pos[0] > len && pos[pos[0] - len] == '.') {
+			const char *ap = (const char *) (pos + 1);
+			int offset = pos[0] - len;
+			if (os_strncasecmp(domain, ap + offset, len) == 0)
+				return 1;
+		}
 
 		pos += 1 + pos[0];
 	}
@@ -1687,7 +2062,7 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "Interworking: Search for match "
 			   "with SIM/USIM domain %s", realm);
 		if (realm &&
-		    domain_name_list_contains(domain_names, realm))
+		    domain_name_list_contains(domain_names, realm, 1))
 			return 1;
 		if (realm)
 			ret = 0;
@@ -1700,7 +2075,7 @@ int interworking_home_sp_cred(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < cred->num_domain; i++) {
 		wpa_printf(MSG_DEBUG, "Interworking: Search for match with "
 			   "home SP FQDN %s", cred->domain[i]);
-		if (domain_name_list_contains(domain_names, cred->domain[i]))
+		if (domain_name_list_contains(domain_names, cred->domain[i], 1))
 			return 1;
 	}
 
@@ -1752,19 +2127,127 @@ static int interworking_find_network_match(struct wpa_supplicant *wpa_s)
 }
 
 
+static int roaming_partner_match(struct wpa_supplicant *wpa_s,
+				 struct roaming_partner *partner,
+				 struct wpabuf *domain_names)
+{
+	wpa_printf(MSG_DEBUG, "Interworking: Comparing roaming_partner info fqdn='%s' exact_match=%d priority=%u country='%s'",
+		   partner->fqdn, partner->exact_match, partner->priority,
+		   partner->country);
+	wpa_hexdump_ascii(MSG_DEBUG, "Interworking: Domain names",
+			  wpabuf_head(domain_names),
+			  wpabuf_len(domain_names));
+	if (!domain_name_list_contains(domain_names, partner->fqdn,
+				       partner->exact_match))
+		return 0;
+	/* TODO: match Country */
+	return 1;
+}
+
+
+static u8 roaming_prio(struct wpa_supplicant *wpa_s, struct wpa_cred *cred,
+		       struct wpa_bss *bss)
+{
+	size_t i;
+
+	if (bss->anqp == NULL || bss->anqp->domain_name == NULL) {
+		wpa_printf(MSG_DEBUG, "Interworking: No ANQP domain name info -> use default roaming partner priority 128");
+		return 128; /* cannot check preference with domain name */
+	}
+
+	if (interworking_home_sp_cred(wpa_s, cred, bss->anqp->domain_name) > 0)
+	{
+		wpa_printf(MSG_DEBUG, "Interworking: Determined to be home SP -> use maximum preference 0 as roaming partner priority");
+		return 0; /* max preference for home SP network */
+	}
+
+	for (i = 0; i < cred->num_roaming_partner; i++) {
+		if (roaming_partner_match(wpa_s, &cred->roaming_partner[i],
+					  bss->anqp->domain_name)) {
+			wpa_printf(MSG_DEBUG, "Interworking: Roaming partner preference match - priority %u",
+				   cred->roaming_partner[i].priority);
+			return cred->roaming_partner[i].priority;
+		}
+	}
+
+	wpa_printf(MSG_DEBUG, "Interworking: No roaming partner preference match - use default roaming partner priority 128");
+	return 128;
+}
+
+
+static struct wpa_bss * pick_best_roaming_partner(struct wpa_supplicant *wpa_s,
+						  struct wpa_bss *selected,
+						  struct wpa_cred *cred)
+{
+	struct wpa_bss *bss;
+	u8 best_prio, prio;
+	struct wpa_cred *cred2;
+
+	/*
+	 * Check if any other BSS is operated by a more preferred roaming
+	 * partner.
+	 */
+
+	best_prio = roaming_prio(wpa_s, cred, selected);
+	wpa_printf(MSG_DEBUG, "Interworking: roaming_prio=%u for selected BSS "
+		   MACSTR " (cred=%d)", best_prio, MAC2STR(selected->bssid),
+		   cred->id);
+
+	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
+		if (bss == selected)
+			continue;
+		cred2 = interworking_credentials_available(wpa_s, bss, NULL);
+		if (!cred2)
+			continue;
+		if (!wpa_bss_get_ie(bss, WLAN_EID_RSN))
+			continue;
+		prio = roaming_prio(wpa_s, cred2, bss);
+		wpa_printf(MSG_DEBUG, "Interworking: roaming_prio=%u for BSS "
+			   MACSTR " (cred=%d)", prio, MAC2STR(bss->bssid),
+			   cred2->id);
+		if (prio < best_prio) {
+			int bh1, bh2, load1, load2, conn1, conn2;
+			bh1 = cred_below_min_backhaul(wpa_s, cred, selected);
+			load1 = cred_over_max_bss_load(wpa_s, cred, selected);
+			conn1 = cred_conn_capab_missing(wpa_s, cred, selected);
+			bh2 = cred_below_min_backhaul(wpa_s, cred2, bss);
+			load2 = cred_over_max_bss_load(wpa_s, cred2, bss);
+			conn2 = cred_conn_capab_missing(wpa_s, cred2, bss);
+			wpa_printf(MSG_DEBUG, "Interworking: old: %d %d %d  new: %d %d %d",
+				   bh1, load1, conn1, bh2, load2, conn2);
+			if (bh1 || load1 || conn1 || !(bh2 || load2 || conn2)) {
+				wpa_printf(MSG_DEBUG, "Interworking: Better roaming partner " MACSTR " selected", MAC2STR(bss->bssid));
+				best_prio = prio;
+				selected = bss;
+			}
+		}
+	}
+
+	return selected;
+}
+
+
 static void interworking_select_network(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_bss *bss, *selected = NULL, *selected_home = NULL;
-	int selected_prio = -999999, selected_home_prio = -999999;
+	struct wpa_bss *selected2 = NULL, *selected2_home = NULL;
 	unsigned int count = 0;
 	const char *type;
 	int res;
-	struct wpa_cred *cred;
+	struct wpa_cred *cred, *selected_cred = NULL;
+	struct wpa_cred *selected_home_cred = NULL;
+	struct wpa_cred *selected2_cred = NULL;
+	struct wpa_cred *selected2_home_cred = NULL;
 
 	wpa_s->network_select = 0;
 
+	wpa_printf(MSG_DEBUG, "Interworking: Select network (auto_select=%d)",
+		   wpa_s->auto_select);
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
-		cred = interworking_credentials_available(wpa_s, bss);
+		int excluded = 0;
+		int bh, bss_load, conn_capab;
+		cred = interworking_credentials_available(wpa_s, bss,
+							  &excluded);
 		if (!cred)
 			continue;
 		if (!wpa_bss_get_ie(bss, WLAN_EID_RSN)) {
@@ -1777,7 +2260,8 @@ static void interworking_select_network(struct wpa_supplicant *wpa_s)
 				   "RSN", MAC2STR(bss->bssid));
 			continue;
 		}
-		count++;
+		if (!excluded)
+			count++;
 		res = interworking_home_sp(wpa_s, bss->anqp ?
 					   bss->anqp->domain_name : NULL);
 		if (res > 0)
@@ -1786,29 +2270,75 @@ static void interworking_select_network(struct wpa_supplicant *wpa_s)
 			type = "roaming";
 		else
 			type = "unknown";
-		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_AP MACSTR " type=%s",
-			MAC2STR(bss->bssid), type);
+		bh = cred_below_min_backhaul(wpa_s, cred, bss);
+		bss_load = cred_over_max_bss_load(wpa_s, cred, bss);
+		conn_capab = cred_conn_capab_missing(wpa_s, cred, bss);
+		wpa_msg(wpa_s, MSG_INFO, "%s" MACSTR " type=%s%s%s%s id=%d priority=%d sp_priority=%d",
+			excluded ? INTERWORKING_BLACKLISTED : INTERWORKING_AP,
+			MAC2STR(bss->bssid), type,
+			bh ? " below_min_backhaul=1" : "",
+			bss_load ? " over_max_bss_load=1" : "",
+			conn_capab ? " conn_capab_missing=1" : "",
+			cred->id, cred->priority, cred->sp_priority);
+		if (excluded)
+			continue;
 		if (wpa_s->auto_select ||
 		    (wpa_s->conf->auto_interworking &&
 		     wpa_s->auto_network_select)) {
-			if (selected == NULL ||
-			    cred->priority > selected_prio) {
-				selected = bss;
-				selected_prio = cred->priority;
-			}
-			if (res > 0 &&
-			    (selected_home == NULL ||
-			     cred->priority > selected_home_prio)) {
-				selected_home = bss;
-				selected_home_prio = cred->priority;
+			if (bh || bss_load || conn_capab) {
+				if (selected2_cred == NULL ||
+				    cred_prio_cmp(cred, selected2_cred) > 0) {
+					wpa_printf(MSG_DEBUG, "Interworking: Mark as selected2");
+					selected2 = bss;
+					selected2_cred = cred;
+				}
+				if (res > 0 &&
+				    (selected2_home_cred == NULL ||
+				     cred_prio_cmp(cred, selected2_home_cred) >
+				     0)) {
+					wpa_printf(MSG_DEBUG, "Interworking: Mark as selected2_home");
+					selected2_home = bss;
+					selected2_home_cred = cred;
+				}
+			} else {
+				if (selected_cred == NULL ||
+				    cred_prio_cmp(cred, selected_cred) > 0) {
+					wpa_printf(MSG_DEBUG, "Interworking: Mark as selected");
+					selected = bss;
+					selected_cred = cred;
+				}
+				if (res > 0 &&
+				    (selected_home_cred == NULL ||
+				     cred_prio_cmp(cred, selected_home_cred) >
+				     0)) {
+					wpa_printf(MSG_DEBUG, "Interworking: Mark as selected_home");
+					selected_home = bss;
+					selected_home_cred = cred;
+				}
 			}
 		}
 	}
 
 	if (selected_home && selected_home != selected &&
-	    selected_home_prio >= selected_prio) {
+	    selected_home_cred &&
+	    (selected_cred == NULL ||
+	     cred_prio_cmp(selected_home_cred, selected_cred) >= 0)) {
 		/* Prefer network operated by the Home SP */
+		wpa_printf(MSG_DEBUG, "Interworking: Overrided selected with selected_home");
 		selected = selected_home;
+		selected_cred = selected_home_cred;
+	}
+
+	if (!selected) {
+		if (selected2_home) {
+			wpa_printf(MSG_DEBUG, "Interworking: Use home BSS with BW limit mismatch since no other network could be selected");
+			selected = selected2_home;
+			selected_cred = selected2_home_cred;
+		} else if (selected2) {
+			wpa_printf(MSG_DEBUG, "Interworking: Use visited BSS with BW limit mismatch since no other network could be selected");
+			selected = selected2;
+			selected_cred = selected2_cred;
+		}
 	}
 
 	if (count == 0) {
@@ -1837,8 +2367,18 @@ static void interworking_select_network(struct wpa_supplicant *wpa_s)
 			"with matching credentials found");
 	}
 
-	if (selected)
+	if (selected) {
+		wpa_printf(MSG_DEBUG, "Interworking: Selected " MACSTR,
+			   MAC2STR(selected->bssid));
+		selected = pick_best_roaming_partner(wpa_s, selected,
+						     selected_cred);
+		wpa_printf(MSG_DEBUG, "Interworking: Selected " MACSTR
+			   " (after best roaming partner selection)",
+			   MAC2STR(selected->bssid));
+		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_SELECTED MACSTR,
+			MAC2STR(selected->bssid));
 		interworking_connect(wpa_s, selected);
+	}
 }
 
 
@@ -1885,8 +2425,21 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 	int found = 0;
 	const u8 *ie;
 
-	if (eloop_terminated() || !wpa_s->fetch_anqp_in_progress)
+	wpa_printf(MSG_DEBUG, "Interworking: next_anqp_fetch - "
+		   "fetch_anqp_in_progress=%d fetch_osu_icon_in_progress=%d",
+		   wpa_s->fetch_anqp_in_progress,
+		   wpa_s->fetch_osu_icon_in_progress);
+
+	if (eloop_terminated() || !wpa_s->fetch_anqp_in_progress) {
+		wpa_printf(MSG_DEBUG, "Interworking: Stop next-ANQP-fetch");
 		return;
+	}
+
+	if (wpa_s->fetch_osu_icon_in_progress) {
+		wpa_printf(MSG_DEBUG, "Interworking: Next icon (in progress)");
+		hs20_next_osu_icon(wpa_s);
+		return;
+	}
 
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
 		if (!(bss->caps & IEEE80211_CAP_ESS))
@@ -1920,6 +2473,17 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 	}
 
 	if (found == 0) {
+		if (wpa_s->fetch_osu_info) {
+			if (wpa_s->num_prov_found == 0 &&
+			    wpa_s->num_osu_scans < 3) {
+				wpa_printf(MSG_DEBUG, "HS 2.0: No OSU providers seen - try to scan again");
+				hs20_start_osu_scan(wpa_s);
+				return;
+			}
+			wpa_printf(MSG_DEBUG, "Interworking: Next icon");
+			hs20_osu_icon_fetch(wpa_s);
+			return;
+		}
 		wpa_msg(wpa_s, MSG_INFO, "ANQP fetch completed");
 		wpa_s->fetch_anqp_in_progress = 0;
 		if (wpa_s->network_select)
@@ -1947,6 +2511,7 @@ int interworking_fetch_anqp(struct wpa_supplicant *wpa_s)
 
 	wpa_s->network_select = 0;
 	wpa_s->fetch_all_anqp = 1;
+	wpa_s->fetch_osu_info = 0;
 
 	interworking_start_fetch_anqp(wpa_s);
 
@@ -2144,14 +2709,22 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	u16 slen;
 	struct wpa_bss *bss = NULL, *tmp;
 
-	if (result != GAS_QUERY_SUCCESS)
+	wpa_printf(MSG_DEBUG, "Interworking: anqp_resp_cb dst=" MACSTR
+		   " dialog_token=%u result=%d status_code=%u",
+		   MAC2STR(dst), dialog_token, result, status_code);
+	if (result != GAS_QUERY_SUCCESS) {
+		if (wpa_s->fetch_osu_icon_in_progress)
+			hs20_icon_fetch_failed(wpa_s);
 		return;
+	}
 
 	pos = wpabuf_head(adv_proto);
 	if (wpabuf_len(adv_proto) < 4 || pos[0] != WLAN_EID_ADV_PROTO ||
 	    pos[1] < 2 || pos[3] != ACCESS_NETWORK_QUERY_PROTOCOL) {
 		wpa_printf(MSG_DEBUG, "ANQP: Unexpected Advertisement "
 			   "Protocol in response");
+		if (wpa_s->fetch_osu_icon_in_progress)
+			hs20_icon_fetch_failed(wpa_s);
 		return;
 	}
 
@@ -2191,6 +2764,8 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 						slen);
 		pos += slen;
 	}
+
+	hs20_notify_parse_done(wpa_s);
 }
 
 
@@ -2211,6 +2786,7 @@ int interworking_select(struct wpa_supplicant *wpa_s, int auto_select,
 	wpa_s->auto_network_select = 0;
 	wpa_s->auto_select = !!auto_select;
 	wpa_s->fetch_all_anqp = 0;
+	wpa_s->fetch_osu_info = 0;
 	wpa_printf(MSG_DEBUG, "Interworking: Start scan for network "
 		   "selection");
 	wpa_s->scan_res_handler = interworking_scan_res_handler;

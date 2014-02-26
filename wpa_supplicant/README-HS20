@@ -213,6 +213,63 @@ Credentials can be pre-configured for automatic network selection:
 #	matching with the network. Multiple entries can be used to specify more
 #	than one SSID.
 #
+# roaming_partner: Roaming partner information
+#	This optional field can be used to configure preferences between roaming
+#	partners. The field is a string in following format:
+#	<FQDN>,<0/1 exact match>,<priority>,<* or country code>
+#	(non-exact match means any subdomain matches the entry; priority is in
+#	0..255 range with 0 being the highest priority)
+#
+# update_identifier: PPS MO ID
+#	(Hotspot 2.0 PerProviderSubscription/UpdateIdentifier)
+#
+# provisioning_sp: FQDN of the SP that provisioned the credential
+#	This optional field can be used to keep track of the SP that provisioned
+#	the credential to find the PPS MO (./Wi-Fi/<provisioning_sp>).
+#
+# sp_priority: Credential priority within a provisioning SP
+#	This is the priority of the credential among all credentials
+#	provisionined by the same SP (i.e., for entries that have identical
+#	provisioning_sp value). The range of this priority is 0-255 with 0
+#	being the highest and 255 the lower priority.
+#
+# Minimum backhaul threshold (PPS/<X+>/Policy/MinBackhauldThreshold/*)
+#	These fields can be used to specify minimum download/upload backhaul
+#	bandwidth that is preferred for the credential. This constraint is
+#	ignored if the AP does not advertise WAN Metrics information or if the
+#	limit would prevent any connection. Values are in kilobits per second.
+# min_dl_bandwidth_home
+# min_ul_bandwidth_home
+# min_dl_bandwidth_roaming
+# min_ul_bandwidth_roaming
+#
+# max_bss_load: Maximum BSS Load Channel Utilization (1..255)
+#	(PPS/<X+>/Policy/MaximumBSSLoadValue)
+#	This value is used as the maximum channel utilization for network
+#	selection purposes for home networks. If the AP does not advertise
+#	BSS Load or if the limit would prevent any connection, this constraint
+#	will be ignored.
+#
+# req_conn_capab: Required connection capability
+#	(PPS/<X+>/Policy/RequiredProtoPortTuple)
+#	This value is used to configure set of required protocol/port pairs that
+#	a roaming network shall support (include explicitly in Connection
+#	Capability ANQP element). This constraint is ignored if the AP does not
+#	advertise Connection Capability or if this constraint would prevent any
+#	network connection. This policy is not used in home networks.
+#	Format: <protocol>[:<comma-separated list of ports]
+#	Multiple entries can be used to list multiple requirements.
+#	For example, number of common TCP protocols:
+#	req_conn_capab=6,22,80,443
+#	For example, IPSec/IKE:
+#	req_conn_capab=17:500
+#	req_conn_capab=50
+#
+# ocsp: Whether to use/require OCSP to check server certificate
+#	0 = do not use OCSP stapling (TLS certificate status extension)
+#	1 = try to use OCSP stapling, but not require response
+#	2 = require valid OCSP stapling response
+#
 # for example:
 #
 #cred={

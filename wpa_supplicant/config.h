@@ -236,6 +236,58 @@ struct wpa_cred {
 		size_t ssid_len;
 	} *excluded_ssid;
 	size_t num_excluded_ssid;
+
+	struct roaming_partner {
+		char fqdn[128];
+		int exact_match;
+		u8 priority;
+		char country[3];
+	} *roaming_partner;
+	size_t num_roaming_partner;
+
+	int update_identifier;
+
+	/**
+	 * provisioning_sp - FQDN of the SP that provisioned the credential
+	 */
+	char *provisioning_sp;
+
+	/**
+	 * sp_priority - Credential priority within a provisioning SP
+	 *
+	 * This is the priority of the credential among all credentials
+	 * provisionined by the same SP (i.e., for entries that have identical
+	 * provisioning_sp value). The range of this priority is 0-255 with 0
+	 * being the highest and 255 the lower priority.
+	 */
+	int sp_priority;
+
+	unsigned int min_dl_bandwidth_home;
+	unsigned int min_ul_bandwidth_home;
+	unsigned int min_dl_bandwidth_roaming;
+	unsigned int min_ul_bandwidth_roaming;
+
+	/**
+	 * max_bss_load - Maximum BSS Load Channel Utilization (1..255)
+	 * This value is used as the maximum channel utilization for network
+	 * selection purposes for home networks. If the AP does not advertise
+	 * BSS Load or if the limit would prevent any connection, this
+	 * constraint will be ignored.
+	 */
+	unsigned int max_bss_load;
+
+	unsigned int num_req_conn_capab;
+	u8 *req_conn_capab_proto;
+	int **req_conn_capab_port;
+
+	/**
+	 * ocsp - Whether to use/require OCSP to check server certificate
+	 *
+	 * 0 = do not use OCSP stapling (TLS certificate status extension)
+	 * 1 = try to use OCSP stapling, but not require response
+	 * 2 = require valid OCSP stapling response
+	 */
+	int ocsp;
 };
 
 
@@ -953,6 +1005,15 @@ struct wpa_config {
 	u8 ip_addr_mask[4];
 	u8 ip_addr_start[4];
 	u8 ip_addr_end[4];
+
+	/**
+	 * osu_dir - OSU provider information directory
+	 *
+	 * If set, allow FETCH_OSU control interface command to be used to fetch
+	 * OSU provider information into all APs and store the results in this
+	 * directory.
+	 */
+	char *osu_dir;
 };
 
 

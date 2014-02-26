@@ -30,6 +30,7 @@
 #include "ap/wps_hostapd.h"
 #include "ap/ctrl_iface_ap.h"
 #include "ap/ap_drv_ops.h"
+#include "ap/hs20.h"
 #include "ap/wnm_ap.h"
 #include "ap/wpa_auth.h"
 #include "wps/wps_defs.h"
@@ -617,6 +618,82 @@ static int hostapd_ctrl_iface_wps_get_status(struct hostapd_data *hapd,
 
 #endif /* CONFIG_WPS */
 
+#ifdef CONFIG_HS20
+
+static int hostapd_ctrl_iface_hs20_wnm_notif(struct hostapd_data *hapd,
+					     const char *cmd)
+{
+	u8 addr[ETH_ALEN];
+	const char *url;
+
+	if (hwaddr_aton(cmd, addr))
+		return -1;
+	url = cmd + 17;
+	if (*url == '\0') {
+		url = NULL;
+	} else {
+		if (*url != ' ')
+			return -1;
+		url++;
+		if (*url == '\0')
+			url = NULL;
+	}
+
+	return hs20_send_wnm_notification(hapd, addr, 1, url);
+}
+
+
+static int hostapd_ctrl_iface_hs20_deauth_req(struct hostapd_data *hapd,
+					      const char *cmd)
+{
+	u8 addr[ETH_ALEN];
+	int code, reauth_delay, ret;
+	const char *pos;
+	size_t url_len;
+	struct wpabuf *req;
+
+	/* <STA MAC Addr> <Code(0/1)> <Re-auth-Delay(sec)> [URL] */
+	if (hwaddr_aton(cmd, addr))
+		return -1;
+
+	pos = os_strchr(cmd, ' ');
+	if (pos == NULL)
+		return -1;
+	pos++;
+	code = atoi(pos);
+
+	pos = os_strchr(pos, ' ');
+	if (pos == NULL)
+		return -1;
+	pos++;
+	reauth_delay = atoi(pos);
+
+	url_len = 0;
+	pos = os_strchr(pos, ' ');
+	if (pos) {
+		pos++;
+		url_len = os_strlen(pos);
+	}
+
+	req = wpabuf_alloc(4 + url_len);
+	if (req == NULL)
+		return -1;
+	wpabuf_put_u8(req, code);
+	wpabuf_put_le16(req, reauth_delay);
+	wpabuf_put_u8(req, url_len);
+	if (pos)
+		wpabuf_put_data(req, pos, url_len);
+
+	wpa_printf(MSG_DEBUG, "HS 2.0: Send WNM-Notification to " MACSTR
+		   " to indicate imminent deauthentication (code=%d "
+		   "reauth_delay=%d)", MAC2STR(addr), code, reauth_delay);
+	ret = hs20_send_wnm_notification_deauth_req(hapd, addr, req);
+	wpabuf_free(req);
+	return ret;
+}
+
+#endif /* CONFIG_HS20 */
+
 
 #ifdef CONFIG_INTERWORKING
 
@@ -983,7 +1060,37 @@ static int hostapd_ctrl_iface_set(struct hostapd_data *hapd, char *cmd)
 		hapd->ext_mgmt_frame_handling = atoi(value);
 #endif /* CONFIG_TESTING_OPTIONS */
 	} else {
+		struct sta_info *sta;
+		int vlan_id;
+
 		ret = hostapd_set_iface(hapd->iconf, hapd->conf, cmd, value);
+		if (ret)
+			return ret;
+
+		if (os_strcasecmp(cmd, "deny_mac_file") == 0) {
+			for (sta = hapd->sta_list; sta; sta = sta->next) {
+				if (hostapd_maclist_found(
+					    hapd->conf->deny_mac,
+					    hapd->conf->num_deny_mac, sta->addr,
+					    &vlan_id) &&
+				    (!vlan_id || vlan_id == sta->vlan_id))
+					ap_sta_deauthenticate(
+						hapd, sta,
+						WLAN_REASON_UNSPECIFIED);
+			}
+		} else if (hapd->conf->macaddr_acl == DENY_UNLESS_ACCEPTED &&
+			   os_strcasecmp(cmd, "accept_mac_file") == 0) {
+			for (sta = hapd->sta_list; sta; sta = sta->next) {
+				if (!hostapd_maclist_found(
+					    hapd->conf->accept_mac,
+					    hapd->conf->num_accept_mac,
+					    sta->addr, &vlan_id) ||
+				    (vlan_id && vlan_id != sta->vlan_id))
+					ap_sta_deauthenticate(
+						hapd, sta,
+						WLAN_REASON_UNSPECIFIED);
+			}
+		}
 	}
 
 	return ret;
@@ -1318,6 +1425,14 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 		if (hostapd_ctrl_iface_send_qos_map_conf(hapd, buf + 18))
 			reply_len = -1;
 #endif /* CONFIG_INTERWORKING */
+#ifdef CONFIG_HS20
+	} else if (os_strncmp(buf, "HS20_WNM_NOTIF ", 15) == 0) {
+		if (hostapd_ctrl_iface_hs20_wnm_notif(hapd, buf + 15))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "HS20_DEAUTH_REQ ", 16) == 0) {
+		if (hostapd_ctrl_iface_hs20_deauth_req(hapd, buf + 16))
+			reply_len = -1;
+#endif /* CONFIG_HS20 */
 #ifdef CONFIG_WNM
 	} else if (os_strncmp(buf, "DISASSOC_IMMINENT ", 18) == 0) {
 		if (hostapd_ctrl_iface_disassoc_imminent(hapd, buf + 18))
