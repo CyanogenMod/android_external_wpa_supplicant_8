@@ -558,8 +558,9 @@ int wpa_parse_wpa_ie_rsn(const u8 *rsn_ie, size_t rsn_ie_len,
 #endif /* CONFIG_IEEE80211W */
 
 	if (left > 0) {
-		wpa_printf(MSG_DEBUG, "%s: ie has %u trailing bytes - ignored",
-			   __func__, left);
+		wpa_hexdump(MSG_DEBUG,
+			    "wpa_parse_wpa_ie_rsn: ignore trailing bytes",
+			    pos, left);
 	}
 
 	return 0;
@@ -696,8 +697,9 @@ int wpa_parse_wpa_ie_wpa(const u8 *wpa_ie, size_t wpa_ie_len,
 	}
 
 	if (left > 0) {
-		wpa_printf(MSG_DEBUG, "%s: ie has %u trailing bytes - ignored",
-			   __func__, left);
+		wpa_hexdump(MSG_DEBUG,
+			    "wpa_parse_wpa_ie_wpa: ignore trailing bytes",
+			    pos, left);
 	}
 
 	return 0;
@@ -1195,66 +1197,57 @@ u32 wpa_cipher_to_suite(int proto, int cipher)
 }
 
 
-int rsn_cipher_put_suites(u8 *pos, int ciphers)
+int rsn_cipher_put_suites(u8 *start, int ciphers)
 {
-	int num_suites = 0;
+	u8 *pos = start;
 
 	if (ciphers & WPA_CIPHER_CCMP_256) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_CCMP_256);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_GCMP_256) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_GCMP_256);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_CCMP) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_CCMP);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_GCMP) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_GCMP);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_TKIP) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_TKIP);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_NONE) {
 		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_NONE);
 		pos += RSN_SELECTOR_LEN;
-		num_suites++;
 	}
 
-	return num_suites;
+	return (pos - start) / RSN_SELECTOR_LEN;
 }
 
 
-int wpa_cipher_put_suites(u8 *pos, int ciphers)
+int wpa_cipher_put_suites(u8 *start, int ciphers)
 {
-	int num_suites = 0;
+	u8 *pos = start;
 
 	if (ciphers & WPA_CIPHER_CCMP) {
 		RSN_SELECTOR_PUT(pos, WPA_CIPHER_SUITE_CCMP);
 		pos += WPA_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_TKIP) {
 		RSN_SELECTOR_PUT(pos, WPA_CIPHER_SUITE_TKIP);
 		pos += WPA_SELECTOR_LEN;
-		num_suites++;
 	}
 	if (ciphers & WPA_CIPHER_NONE) {
 		RSN_SELECTOR_PUT(pos, WPA_CIPHER_SUITE_NONE);
 		pos += WPA_SELECTOR_LEN;
-		num_suites++;
 	}
 
-	return num_suites;
+	return (pos - start) / RSN_SELECTOR_LEN;
 }
 
 

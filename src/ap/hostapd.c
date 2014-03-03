@@ -1807,6 +1807,7 @@ int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
 			if (start_ctrl_iface_bss(hapd) < 0 ||
 			    (hapd_iface->state == HAPD_IFACE_ENABLED &&
 			     hostapd_setup_bss(hapd, -1))) {
+				hapd_iface->bss[hapd_iface->num_bss - 1] = NULL;
 				hapd_iface->conf->num_bss--;
 				hapd_iface->num_bss--;
 				wpa_printf(MSG_DEBUG, "%s: free hapd %p %s",
@@ -1876,14 +1877,17 @@ fail:
 		if (hapd_iface->bss) {
 			for (i = 0; i < hapd_iface->num_bss; i++) {
 				hapd = hapd_iface->bss[i];
-				if (hapd && hapd_iface->interfaces &&
+				if (!hapd)
+					continue;
+				if (hapd_iface->interfaces &&
 				    hapd_iface->interfaces->ctrl_iface_deinit)
 					hapd_iface->interfaces->
 						ctrl_iface_deinit(hapd);
 				wpa_printf(MSG_DEBUG, "%s: free hapd %p (%s)",
 					   __func__, hapd_iface->bss[i],
-					hapd_iface->bss[i]->conf->iface);
-				os_free(hapd_iface->bss[i]);
+					   hapd->conf->iface);
+				os_free(hapd);
+				hapd_iface->bss[i] = NULL;
 			}
 			os_free(hapd_iface->bss);
 		}
