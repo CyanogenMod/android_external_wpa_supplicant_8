@@ -573,12 +573,16 @@ static void wpa_supplicant_start_bgscan(struct wpa_supplicant *wpa_s)
 		name = wpa_s->current_ssid->bgscan;
 	else
 		name = wpa_s->conf->bgscan;
-	if (name == NULL)
+	if (name == NULL || name[0] == '\0')
 		return;
 	if (wpas_driver_bss_selection(wpa_s))
 		return;
 	if (wpa_s->current_ssid == wpa_s->bgscan_ssid)
 		return;
+#ifdef CONFIG_P2P
+	if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)
+		return;
+#endif /* CONFIG_P2P */
 
 	bgscan_deinit(wpa_s);
 	if (wpa_s->current_ssid) {
@@ -2669,7 +2673,8 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 			wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
 			interface_count = 0;
 		}
-		if (wpa_supplicant_delayed_sched_scan(wpa_s, interface_count,
+		if (!wpa_s->p2p_mgmt &&
+		    wpa_supplicant_delayed_sched_scan(wpa_s, interface_count,
 						      100000))
 			wpa_supplicant_req_scan(wpa_s, interface_count,
 						100000);

@@ -1239,6 +1239,16 @@ static void wpa_driver_nl80211_event_rtm_newlink(void *ctx,
 			drv->if_disabled = 1;
 			wpa_supplicant_event(drv->ctx,
 					     EVENT_INTERFACE_DISABLED, NULL);
+
+			/*
+			 * Try to get drv again, since it may be removed as
+			 * part of the EVENT_INTERFACE_DISABLED handling for
+			 * dynamic interfaces
+			 */
+			drv = nl80211_find_drv(global, ifi->ifi_index,
+					       buf, len);
+			if (!drv)
+				return;
 		}
 	}
 
@@ -3807,6 +3817,15 @@ static int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	drv->capa.flags |= WPA_DRIVER_FLAGS_SANE_ERROR_CODES;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_SET_KEYS_AFTER_ASSOC_DONE;
 	drv->capa.flags |= WPA_DRIVER_FLAGS_EAPOL_TX_STATUS;
+
+	/*
+	 * As all cfg80211 drivers must support cases where the AP interface is
+	 * removed without the knowledge of wpa_supplicant/hostapd, e.g., in
+	 * case that the user space daemon has crashed, they must be able to
+	 * cleanup all stations and key entries in the AP tear down flow. Thus,
+	 * this flag can/should always be set for cfg80211 drivers.
+	 */
+	drv->capa.flags |= WPA_DRIVER_FLAGS_AP_TEARDOWN_SUPPORT;
 
 	if (!info.device_ap_sme) {
 		drv->capa.flags |= WPA_DRIVER_FLAGS_DEAUTH_TX_STATUS;
@@ -9431,8 +9450,8 @@ static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
 					name);
 
 		i802_set_sta_vlan(priv, addr, bss->ifname, 0);
-		return wpa_driver_nl80211_if_remove(priv, WPA_IF_AP_VLAN,
-						    name);
+		nl80211_remove_iface(drv, if_nametoindex(name));
+		return 0;
 	}
 }
 
@@ -11710,6 +11729,106 @@ error:
 }
 
 
+#ifdef CONFIG_TESTING_OPTIONS
+static int cmd_reply_handler(struct nl_msg *msg, void *arg)
+{
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	struct wpabuf *buf = arg;
+
+	if (!buf)
+		return NL_SKIP;
+
+	if ((size_t) genlmsg_attrlen(gnlh, 0) > wpabuf_tailroom(buf)) {
+		wpa_printf(MSG_INFO, "nl80211: insufficient buffer space for reply");
+		return NL_SKIP;
+	}
+
+	wpabuf_put_data(buf, genlmsg_attrdata(gnlh, 0),
+			genlmsg_attrlen(gnlh, 0));
+
+	return NL_SKIP;
+}
+#endif /* CONFIG_TESTING_OPTIONS */
+
+
+static int vendor_reply_handler(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+	struct nlattr *nl_vendor_reply, *nl;
+	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
+	struct wpabuf *buf = arg;
+	int rem;
+
+	if (!buf)
+		return NL_SKIP;
+
+	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+		  genlmsg_attrlen(gnlh, 0), NULL);
+	nl_vendor_reply = tb[NL80211_ATTR_VENDOR_DATA];
+
+	if (!nl_vendor_reply)
+		return NL_SKIP;
+
+	if ((size_t) nla_len(nl_vendor_reply) > wpabuf_tailroom(buf)) {
+		wpa_printf(MSG_INFO, "nl80211: Vendor command: insufficient buffer space for reply");
+		return NL_SKIP;
+	}
+
+	nla_for_each_nested(nl, nl_vendor_reply, rem) {
+		wpabuf_put_data(buf, nla_data(nl), nla_len(nl));
+	}
+
+	return NL_SKIP;
+}
+
+
+static int nl80211_vendor_cmd(void *priv, unsigned int vendor_id,
+			      unsigned int subcmd, const u8 *data,
+			      size_t data_len, struct wpabuf *buf)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	struct nl_msg *msg;
+	int ret;
+
+	msg = nlmsg_alloc();
+	if (!msg)
+		return -ENOMEM;
+
+#ifdef CONFIG_TESTING_OPTIONS
+	if (vendor_id == 0xffffffff) {
+		nl80211_cmd(drv, msg, 0, subcmd);
+		if (nlmsg_append(msg, (void *) data, data_len, NLMSG_ALIGNTO) <
+		    0)
+			goto nla_put_failure;
+		ret = send_and_recv_msgs(drv, msg, cmd_reply_handler, buf);
+		if (ret)
+			wpa_printf(MSG_DEBUG, "nl80211: command failed err=%d",
+				   ret);
+		return ret;
+	}
+#endif /* CONFIG_TESTING_OPTIONS */
+
+	nl80211_cmd(drv, msg, 0, NL80211_CMD_VENDOR);
+	if (nl80211_set_iface_id(msg, bss) < 0)
+		goto nla_put_failure;
+	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_ID, vendor_id);
+	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_SUBCMD, subcmd);
+	if (data)
+		NLA_PUT(msg, NL80211_ATTR_VENDOR_DATA, data_len, data);
+
+	ret = send_and_recv_msgs(drv, msg, vendor_reply_handler, buf);
+	if (ret)
+		wpa_printf(MSG_DEBUG, "nl80211: vendor command failed err=%d",
+			   ret);
+	return ret;
+
+nla_put_failure:
+	nlmsg_free(msg);
+	return -ENOBUFS;
+}
+
+
 static int nl80211_set_qos_map(void *priv, const u8 *qos_map_set,
 			       u8 qos_map_set_len)
 {
@@ -11829,5 +11948,6 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 #ifdef ANDROID
 	.driver_cmd = wpa_driver_nl80211_driver_cmd,
 #endif /* ANDROID */
+	.vendor_cmd = nl80211_vendor_cmd,
 	.set_qos_map = nl80211_set_qos_map,
 };
