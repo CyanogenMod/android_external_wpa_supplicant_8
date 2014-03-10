@@ -81,6 +81,7 @@ static int hostapd_radius_get_eap_user(void *ctx, const u8 *identity,
 	user->force_version = eap_user->force_version;
 	user->ttls_auth = eap_user->ttls_auth;
 	user->remediation = eap_user->remediation;
+	user->accept_attr = eap_user->accept_attr;
 
 	return 0;
 }
@@ -114,6 +115,7 @@ static int hostapd_setup_radius_srv(struct hostapd_data *hapd)
 	srv.eap_req_id_text_len = conf->eap_req_id_text_len;
 	srv.pwd_group = conf->pwd_group;
 	srv.server_id = conf->server_id ? conf->server_id : "hostapd";
+	srv.sqlite_file = conf->eap_user_sqlite;
 #ifdef CONFIG_RADIUS_TEST
 	srv.dump_msk_file = conf->dump_msk_file;
 #endif /* CONFIG_RADIUS_TEST */

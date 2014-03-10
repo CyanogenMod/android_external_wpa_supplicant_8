@@ -1,6 +1,6 @@
 /*
  * TLS v1.0/v1.1/v1.2 server (RFC 2246, RFC 4346, RFC 5246)
- * Copyright (c) 2006-2011, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2006-2014, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -19,6 +19,31 @@
 /* TODO:
  * Support for a message fragmented across several records (RFC 2246, 6.2.1)
  */
+
+
+void tlsv1_server_log(struct tlsv1_server *conn, const char *fmt, ...)
+{
+	va_list ap;
+	char *buf;
+	int buflen;
+
+	va_start(ap, fmt);
+	buflen = vsnprintf(NULL, 0, fmt, ap) + 1;
+	va_end(ap);
+
+	buf = os_malloc(buflen);
+	if (buf == NULL)
+		return;
+	va_start(ap, fmt);
+	vsnprintf(buf, buflen, fmt, ap);
+	va_end(ap);
+
+	wpa_printf(MSG_DEBUG, "TLSv1: %s", buf);
+	if (conn->log_cb)
+		conn->log_cb(conn->log_cb_ctx, buf);
+
+	os_free(buf);
+}
 
 
 void tlsv1_server_alert(struct tlsv1_server *conn, u8 level, u8 description)
@@ -250,8 +275,7 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 		used = tlsv1_record_receive(&conn->rl, pos, in_end - pos,
 					    out_pos, &olen, &alert);
 		if (used < 0) {
-			wpa_printf(MSG_DEBUG, "TLSv1: Record layer processing "
-				   "failed");
+			tlsv1_server_log(conn, "Record layer processing failed");
 			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL, alert);
 			return -1;
 		}
@@ -265,14 +289,13 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 
 		if (ct == TLS_CONTENT_TYPE_ALERT) {
 			if (olen < 2) {
-				wpa_printf(MSG_DEBUG, "TLSv1: Alert "
-					   "underflow");
+				tlsv1_server_log(conn, "Alert underflow");
 				tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
 						   TLS_ALERT_DECODE_ERROR);
 				return -1;
 			}
-			wpa_printf(MSG_DEBUG, "TLSv1: Received alert %d:%d",
-				   out_pos[0], out_pos[1]);
+			tlsv1_server_log(conn, "Received alert %d:%d",
+					 out_pos[0], out_pos[1]);
 			if (out_pos[0] == TLS_ALERT_LEVEL_WARNING) {
 				/* Continue processing */
 				pos += used;
@@ -285,12 +308,22 @@ int tlsv1_server_decrypt(struct tlsv1_server *conn,
 		}
 
 		if (ct != TLS_CONTENT_TYPE_APPLICATION_DATA) {
-			wpa_printf(MSG_DEBUG, "TLSv1: Unexpected content type "
-				   "0x%x", pos[0]);
+			tlsv1_server_log(conn, "Unexpected content type 0x%x",
+					 pos[0]);
 			tlsv1_server_alert(conn, TLS_ALERT_LEVEL_FATAL,
 					   TLS_ALERT_UNEXPECTED_MESSAGE);
 			return -1;
 		}
+
+#ifdef CONFIG_TESTING_OPTIONS
+		if ((conn->test_flags &&
+		     (TLS_BREAK_VERIFY_DATA | TLS_BREAK_SRV_KEY_X_HASH |
+		      TLS_BREAK_SRV_KEY_X_SIGNATURE)) &&
+		    !conn->test_failure_reported) {
+			tlsv1_server_log(conn, "TEST-FAILURE: Client ApplData received after invalid handshake");
+			conn->test_failure_reported = 1;
+		}
+#endif /* CONFIG_TESTING_OPTIONS */
 
 		out_pos += olen;
 		if (out_pos > out_end) {
@@ -361,8 +394,15 @@ struct tlsv1_server * tlsv1_server_init(struct tlsv1_credentials *cred)
 
 	count = 0;
 	suites = conn->cipher_suites;
+	suites[count++] = TLS_DHE_RSA_WITH_AES_256_CBC_SHA256;
+	suites[count++] = TLS_RSA_WITH_AES_256_CBC_SHA256;
+	suites[count++] = TLS_DHE_RSA_WITH_AES_256_CBC_SHA;
 	suites[count++] = TLS_RSA_WITH_AES_256_CBC_SHA;
+	suites[count++] = TLS_DHE_RSA_WITH_AES_128_CBC_SHA256;
+	suites[count++] = TLS_RSA_WITH_AES_128_CBC_SHA256;
+	suites[count++] = TLS_DHE_RSA_WITH_AES_128_CBC_SHA;
 	suites[count++] = TLS_RSA_WITH_AES_128_CBC_SHA;
+	suites[count++] = TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA;
 	suites[count++] = TLS_RSA_WITH_3DES_EDE_CBC_SHA;
 	suites[count++] = TLS_RSA_WITH_RC4_128_SHA;
 	suites[count++] = TLS_RSA_WITH_RC4_128_MD5;
@@ -618,3 +658,19 @@ void tlsv1_server_set_session_ticket_cb(struct tlsv1_server *conn,
 	conn->session_ticket_cb = cb;
 	conn->session_ticket_cb_ctx = ctx;
 }
+
+
+void tlsv1_server_set_log_cb(struct tlsv1_server *conn,
+			     void (*cb)(void *ctx, const char *msg), void *ctx)
+{
+	conn->log_cb = cb;
+	conn->log_cb_ctx = ctx;
+}
+
+
+#ifdef CONFIG_TESTING_OPTIONS
+void tlsv1_server_set_test_flags(struct tlsv1_server *conn, u32 flags)
+{
+	conn->test_flags = flags;
+}
+#endif /* CONFIG_TESTING_OPTIONS */

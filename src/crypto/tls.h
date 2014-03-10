@@ -537,4 +537,14 @@ int __must_check  tls_connection_set_session_ticket_cb(
 	void *tls_ctx, struct tls_connection *conn,
 	tls_session_ticket_cb cb, void *ctx);
 
+void tls_connection_set_log_cb(struct tls_connection *conn,
+			       void (*log_cb)(void *ctx, const char *msg),
+			       void *ctx);
+
+#define TLS_BREAK_VERIFY_DATA BIT(0)
+#define TLS_BREAK_SRV_KEY_X_HASH BIT(1)
+#define TLS_BREAK_SRV_KEY_X_SIGNATURE BIT(2)
+
+void tls_connection_set_test_flags(struct tls_connection *conn, u32 flags);
+
 #endif /* TLS_H */
