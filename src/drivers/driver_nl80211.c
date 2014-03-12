@@ -302,6 +302,7 @@ struct wpa_driver_nl80211_data {
 	unsigned int start_mode_ap:1;
 	unsigned int start_iface_up:1;
 	unsigned int test_use_roc_tx:1;
+	unsigned int ignore_deauth_event:1;
 
 	u64 remain_on_chan_cookie;
 	u64 send_action_cookie;
@@ -1681,10 +1682,11 @@ static void mlme_timeout_event(struct wpa_driver_nl80211_data *drv,
 }
 
 
-static void mlme_event_mgmt(struct wpa_driver_nl80211_data *drv,
+static void mlme_event_mgmt(struct i802_bss *bss,
 			    struct nlattr *freq, struct nlattr *sig,
 			    const u8 *frame, size_t len)
 {
+	struct wpa_driver_nl80211_data *drv = bss->drv;
 	const struct ieee80211_mgmt *mgmt;
 	union wpa_event_data event;
 	u16 fc, stype;
@@ -1715,6 +1717,7 @@ static void mlme_event_mgmt(struct wpa_driver_nl80211_data *drv,
 	event.rx_mgmt.frame = frame;
 	event.rx_mgmt.frame_len = len;
 	event.rx_mgmt.ssi_signal = ssi_signal;
+	event.rx_mgmt.drv_priv = bss;
 	wpa_supplicant_event(drv->ctx, EVENT_RX_MGMT, &event);
 }
 
@@ -1825,6 +1828,11 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				mgmt->u.disassoc.variable;
 		}
 	} else {
+		if (drv->ignore_deauth_event) {
+			wpa_printf(MSG_DEBUG, "nl80211: Ignore deauth event due to previous forced deauth-during-auth");
+			drv->ignore_deauth_event = 0;
+			return;
+		}
 		event.deauth_info.locally_generated =
 			!os_memcmp(mgmt->sa, drv->first_bss->addr, ETH_ALEN);
 		event.deauth_info.addr = bssid;
@@ -1939,7 +1947,7 @@ static void mlme_event(struct i802_bss *bss,
 					   nla_data(frame), nla_len(frame));
 		break;
 	case NL80211_CMD_FRAME:
-		mlme_event_mgmt(drv, freq, sig, nla_data(frame),
+		mlme_event_mgmt(bss, freq, sig, nla_data(frame),
 				nla_len(frame));
 		break;
 	case NL80211_CMD_FRAME_TX_STATUS:
@@ -4640,26 +4648,25 @@ wpa_driver_nl80211_finish_drv_init(struct wpa_driver_nl80211_data *drv,
 		return -1;
 	}
 
-	if (nlmode == NL80211_IFTYPE_P2P_DEVICE) {
-		int ret = nl80211_set_p2pdev(bss, 1);
-		if (ret < 0)
-			wpa_printf(MSG_ERROR, "nl80211: Could not start P2P device");
+	if (nlmode == NL80211_IFTYPE_P2P_DEVICE)
 		nl80211_get_macaddr(bss);
-		return ret;
-	}
 
-	if (linux_set_iface_flags(drv->global->ioctl_sock, bss->ifname, 1)) {
-		if (rfkill_is_blocked(drv->rfkill)) {
-			wpa_printf(MSG_DEBUG, "nl80211: Could not yet enable "
-				   "interface '%s' due to rfkill",
-				   bss->ifname);
-			drv->if_disabled = 1;
-			send_rfkill_event = 1;
-		} else {
+	if (!rfkill_is_blocked(drv->rfkill)) {
+		int ret = i802_set_iface_flags(bss, 1);
+		if (ret) {
 			wpa_printf(MSG_ERROR, "nl80211: Could not set "
 				   "interface '%s' UP", bss->ifname);
-			return -1;
+			return ret;
 		}
+		if (nlmode == NL80211_IFTYPE_P2P_DEVICE)
+			return ret;
+	} else {
+		wpa_printf(MSG_DEBUG, "nl80211: Could not yet enable "
+			   "interface '%s' due to rfkill", bss->ifname);
+		if (nlmode == NL80211_IFTYPE_P2P_DEVICE)
+			return 0;
+		drv->if_disabled = 1;
+		send_rfkill_event = 1;
 	}
 
 	if (!drv->hostapd)
@@ -5609,12 +5616,15 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	} else {
 		nl80211_cmd(drv, msg, 0, NL80211_CMD_NEW_KEY);
 		NLA_PUT(msg, NL80211_ATTR_KEY_DATA, key_len, key);
+		wpa_hexdump_key(MSG_DEBUG, "nl80211: KEY_DATA", key, key_len);
 		NLA_PUT_U32(msg, NL80211_ATTR_KEY_CIPHER,
 			    wpa_alg_to_cipher_suite(alg, key_len));
 	}
 
-	if (seq && seq_len)
+	if (seq && seq_len) {
 		NLA_PUT(msg, NL80211_ATTR_KEY_SEQ, seq_len, seq);
+		wpa_hexdump(MSG_DEBUG, "nl80211: KEY_SEQ", seq, seq_len);
+	}
 
 	if (addr && !is_broadcast_ether_addr(addr)) {
 		wpa_printf(MSG_DEBUG, "   addr=" MACSTR, MAC2STR(addr));
@@ -5922,6 +5932,7 @@ static int wpa_driver_nl80211_authenticate(
 
 	is_retry = drv->retry_auth;
 	drv->retry_auth = 0;
+	drv->ignore_deauth_event = 0;
 
 	nl80211_mark_disconnected(drv);
 	os_memset(drv->auth_bssid, 0, ETH_ALEN);
@@ -6023,6 +6034,7 @@ retry:
 			 */
 			wpa_printf(MSG_DEBUG, "nl80211: Retry authentication "
 				   "after forced deauthentication");
+			drv->ignore_deauth_event = 1;
 			wpa_driver_nl80211_deauthenticate(
 				bss, params->bssid,
 				WLAN_REASON_PREV_AUTH_NOT_VALID);
