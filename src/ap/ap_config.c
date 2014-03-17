@@ -73,6 +73,7 @@ void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 #ifdef CONFIG_IEEE80211W
 	bss->assoc_sa_query_max_timeout = 1000;
 	bss->assoc_sa_query_retry_timeout = 201;
+	bss->group_mgmt_cipher = WPA_CIPHER_AES_128_CMAC;
 #endif /* CONFIG_IEEE80211W */
 #ifdef EAP_SERVER_FAST
 	 /* both anonymous and authenticated provisioning */
@@ -106,9 +107,9 @@ struct hostapd_config * hostapd_config_defaults(void)
 	const struct hostapd_wmm_ac_params ac_be =
 		{ aCWmin, aCWmax, 3, 0, 0 }; /* best effort traffic */
 	const struct hostapd_wmm_ac_params ac_vi = /* video traffic */
-		{ aCWmin - 1, aCWmin, 2, 3000 / 32, 0 };
+		{ aCWmin - 1, aCWmin, 2, 3008 / 32, 0 };
 	const struct hostapd_wmm_ac_params ac_vo = /* voice traffic */
-		{ aCWmin - 2, aCWmin - 1, 2, 1500 / 32, 0 };
+		{ aCWmin - 2, aCWmin - 1, 2, 1504 / 32, 0 };
 	const struct hostapd_tx_queue_params txq_bk =
 		{ 7, ecw2cw(aCWmin), ecw2cw(aCWmax), 0 };
 	const struct hostapd_tx_queue_params txq_be =

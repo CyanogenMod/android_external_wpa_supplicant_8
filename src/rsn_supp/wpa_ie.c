@@ -201,7 +201,7 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 	}
 
 #ifdef CONFIG_IEEE80211W
-	if (mgmt_group_cipher == WPA_CIPHER_AES_128_CMAC) {
+	if (wpa_cipher_valid_mgmt_group(mgmt_group_cipher)) {
 		if (!sm->cur_pmksa) {
 			/* PMKID Count */
 			WPA_PUT_LE16(pos, 0);
@@ -209,7 +209,8 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 		}
 
 		/* Management Group Cipher Suite */
-		RSN_SELECTOR_PUT(pos, RSN_CIPHER_SUITE_AES_128_CMAC);
+		RSN_SELECTOR_PUT(pos, wpa_cipher_to_suite(WPA_PROTO_RSN,
+							  mgmt_group_cipher));
 		pos += RSN_SELECTOR_LEN;
 	}
 #endif /* CONFIG_IEEE80211W */
@@ -307,6 +308,42 @@ int wpa_gen_wpa_ie(struct wpa_sm *sm, u8 *wpa_ie, size_t wpa_ie_len)
 					  sm->pairwise_cipher,
 					  sm->group_cipher,
 					  sm->key_mgmt);
+}
+
+
+/**
+ * wpa_parse_vendor_specific - Parse Vendor Specific IEs
+ * @pos: Pointer to the IE header
+ * @end: Pointer to the end of the Key Data buffer
+ * @ie: Pointer to parsed IE data
+ * Returns: 0 on success, 1 if end mark is found, -1 on failure
+ */
+static int wpa_parse_vendor_specific(const u8 *pos, const u8 *end,
+				     struct wpa_eapol_ie_parse *ie)
+{
+	unsigned int oui;
+
+	if (pos[1] < 4) {
+		wpa_printf(MSG_MSGDUMP, "Too short vendor specific IE ignored (len=%u)",
+			   pos[1]);
+		return 1;
+	}
+
+	oui = WPA_GET_BE24(&pos[2]);
+	if (oui == OUI_MICROSOFT && pos[5] == WMM_OUI_TYPE && pos[1] > 4) {
+		if (pos[6] == WMM_OUI_SUBTYPE_INFORMATION_ELEMENT) {
+			ie->wmm = &pos[2];
+			ie->wmm_len = pos[1];
+			wpa_hexdump(MSG_DEBUG, "WPA: WMM IE",
+				    ie->wmm, ie->wmm_len);
+		} else if (pos[6] == WMM_OUI_SUBTYPE_PARAMETER_ELEMENT) {
+			ie->wmm = &pos[2];
+			ie->wmm_len = pos[1];
+			wpa_hexdump(MSG_DEBUG, "WPA: WMM Parameter Element",
+				    ie->wmm, ie->wmm_len);
+		}
+	}
+	return 0;
 }
 
 
@@ -534,6 +571,14 @@ int wpa_supplicant_parse_ies(const u8 *buf, size_t len,
 			}
 		} else if (*pos == WLAN_EID_VENDOR_SPECIFIC) {
 			ret = wpa_parse_generic(pos, end, ie);
+			if (ret < 0)
+				break;
+			if (ret > 0) {
+				ret = 0;
+				break;
+			}
+
+			ret = wpa_parse_vendor_specific(pos, end, ie);
 			if (ret < 0)
 				break;
 			if (ret > 0) {
