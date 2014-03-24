@@ -5301,6 +5301,10 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	    !is_broadcast_ether_addr(addr))
 		return ret;
 
+#ifdef MTK_MT6589
+	return ret;
+#endif
+
 	msg = nlmsg_alloc();
 	if (!msg)
 		return -ENOMEM;

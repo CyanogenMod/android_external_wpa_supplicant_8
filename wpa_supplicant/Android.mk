@@ -50,6 +50,10 @@ ifeq ($(BOARD_LEGACY_NL80211_STA_EVENTS),true)
 L_CFLAGS += -DLEGACY_STA_EVENTS
 endif
 
+ifeq ($(TARGET_BOARD_PLATFORM),mt6589)
+L_CFLAGS += -DMTK_MT6589
+endif
+
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
 L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"
