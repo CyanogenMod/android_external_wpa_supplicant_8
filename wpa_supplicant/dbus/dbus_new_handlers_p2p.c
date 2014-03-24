@@ -825,6 +825,11 @@ dbus_bool_t wpas_dbus_getter_p2p_device_config(DBusMessageIter *iter,
 					 wpa_s->conf->disassoc_low_ack))
 		goto err_no_mem;
 
+	/* No Group Iface */
+	if (!wpa_dbus_dict_append_bool(&dict_iter, "NoGroupIface",
+				       wpa_s->conf->p2p_no_group_iface))
+		goto err_no_mem;
+
 	if (!wpa_dbus_dict_close_write(&variant_iter, &dict_iter) ||
 	    !dbus_message_iter_close_container(iter, &variant_iter))
 		goto err_no_mem;
@@ -974,6 +979,9 @@ dbus_bool_t wpas_dbus_setter_p2p_device_config(DBusMessageIter *iter,
 		else if (os_strcmp(entry.key, "disassoc_low_ack") == 0 &&
 			 entry.type == DBUS_TYPE_UINT32)
 			wpa_s->conf->disassoc_low_ack = entry.uint32_value;
+		else if (os_strcmp(entry.key, "NoGroupIface") == 0 &&
+			 entry.type == DBUS_TYPE_BOOLEAN)
+			wpa_s->conf->p2p_no_group_iface = entry.bool_value;
 		else
 			goto error;
 
@@ -1470,12 +1478,46 @@ dbus_bool_t wpas_dbus_getter_p2p_peer_vendor_extension(DBusMessageIter *iter,
 dbus_bool_t wpas_dbus_getter_p2p_peer_ies(DBusMessageIter *iter,
 					  DBusError *error, void *user_data)
 {
-	dbus_bool_t success;
-	/* struct peer_handler_args *peer_args = user_data; */
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
 
-	success = wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_BYTE,
-							 NULL, 0, error);
-	return success;
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	if (info->wfd_subelems == NULL)
+		return wpas_dbus_simple_array_property_getter(iter,
+							      DBUS_TYPE_BYTE,
+							      NULL, 0, error);
+
+	return wpas_dbus_simple_array_property_getter(
+		iter, DBUS_TYPE_BYTE, (char *) info->wfd_subelems->buf,
+		info->wfd_subelems->used, error);
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_device_address(DBusMessageIter *iter,
+						     DBusError *error,
+						     void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED,
+			       "failed to find peer");
+		return FALSE;
+	}
+
+	return wpas_dbus_simple_array_property_getter(
+		iter, DBUS_TYPE_BYTE, (char *) peer_args->p2p_device_addr,
+		ETH_ALEN, error);
 }
 
 
@@ -2407,7 +2449,7 @@ DBusMessage * wpas_dbus_handler_p2p_service_sd_cancel_req(
 	if (req == 0)
 		goto error;
 
-	if (!wpas_p2p_sd_cancel_request(wpa_s, req))
+	if (wpas_p2p_sd_cancel_request(wpa_s, req) < 0)
 		goto error;
 
 	return NULL;

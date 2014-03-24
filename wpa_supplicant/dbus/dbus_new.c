@@ -2649,6 +2649,7 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 	  (WPADBusMethodHandler)wpas_dbus_handler_p2p_service_sd_req,
 	  {
 		  { "args", "a{sv}", ARG_IN },
+		  { "ref", "t", ARG_OUT },
 		  END_ARGS
 	  }
 	},
@@ -2669,13 +2670,6 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 	{ "ServiceUpdate", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 	  (WPADBusMethodHandler)wpas_dbus_handler_p2p_service_update,
 	  {
-		  END_ARGS
-	  }
-	},
-	{ "ServiceDiscoveryExternal", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
-	  (WPADBusMethodHandler)wpas_dbus_handler_p2p_serv_disc_external,
-	  {
-		  { "arg", "i", ARG_IN },
 		  END_ARGS
 	  }
 	},
@@ -3278,6 +3272,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_p2p_peer_properties[] = {
 	},
 	{ "IEs", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",
 	  wpas_dbus_getter_p2p_peer_ies,
+	  NULL
+	},
+	{ "DeviceAddress", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",
+	  wpas_dbus_getter_p2p_peer_device_address,
 	  NULL
 	},
 	{ NULL, NULL, NULL, NULL, NULL }

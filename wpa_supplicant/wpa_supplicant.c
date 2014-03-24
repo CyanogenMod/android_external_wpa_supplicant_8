@@ -460,6 +460,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->manual_scan_freqs);
 	wpa_s->manual_scan_freqs = NULL;
 
+	os_free(wpa_s->manual_sched_scan_freqs);
+	wpa_s->manual_sched_scan_freqs = NULL;
+
 	gas_query_deinit(wpa_s->gas);
 	wpa_s->gas = NULL;
 
@@ -3204,15 +3207,13 @@ static void radio_remove_interface(struct wpa_supplicant *wpa_s)
 	wpa_printf(MSG_DEBUG, "Remove interface %s from radio %s",
 		   wpa_s->ifname, radio->name);
 	dl_list_del(&wpa_s->radio_list);
-	if (!dl_list_empty(&radio->ifaces)) {
-		wpa_s->radio = NULL;
+	radio_remove_works(wpa_s, NULL, 0);
+	wpa_s->radio = NULL;
+	if (!dl_list_empty(&radio->ifaces))
 		return; /* Interfaces remain for this radio */
-	}
 
 	wpa_printf(MSG_DEBUG, "Remove radio %s", radio->name);
-	radio_remove_works(wpa_s, NULL, 0);
 	eloop_cancel_timeout(radio_start_next_work, radio, NULL);
-	wpa_s->radio = NULL;
 	os_free(radio);
 }
 
@@ -3361,10 +3362,7 @@ next_driver:
 		os_strlcpy(wpa_s->ifname, ifname, sizeof(wpa_s->ifname));
 	}
 
-	if (wpa_s->driver->get_radio_name)
-		rn = wpa_s->driver->get_radio_name(wpa_s->drv_priv);
-	else
-		rn = NULL;
+	rn = wpa_driver_get_radio_name(wpa_s);
 	if (rn && rn[0] == '\0')
 		rn = NULL;
 
@@ -4534,7 +4532,7 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 	}
 
 	/* If get_radio_name is not supported, use only the local freq */
-	if (!wpa_s->driver->get_radio_name) {
+	if (!wpa_driver_get_radio_name(wpa_s)) {
 		freq = wpa_drv_shared_freq(wpa_s);
 		if (freq > 0 && idx < len &&
 		    (idx == 0 || freq_array[0] != freq))

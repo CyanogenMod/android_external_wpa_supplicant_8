@@ -1208,10 +1208,25 @@ static void p2p_prepare_channel_best(struct p2p_data *p2p)
 		   0) {
 		p2p_dbg(p2p, "Select possible 5 GHz channel (op_class %u channel %u) as operating channel preference",
 			p2p->op_reg_class, p2p->op_channel);
-	} else {
+	} else if (p2p_channels_includes(&p2p->cfg->channels,
+					 p2p->cfg->op_reg_class,
+					 p2p->cfg->op_channel)) {
 		p2p_dbg(p2p, "Select pre-configured channel as operating channel preference");
 		p2p->op_reg_class = p2p->cfg->op_reg_class;
 		p2p->op_channel = p2p->cfg->op_channel;
+	} else if (p2p_channel_random_social(&p2p->cfg->channels,
+					     &p2p->op_reg_class,
+					     &p2p->op_channel) == 0) {
+		p2p_dbg(p2p, "Select random available social channel %d from 2.4 GHz band as operating channel preference",
+			p2p->op_channel);
+	} else {
+		/* Select any random available channel from the first available
+		 * operating class */
+		p2p_channel_select(&p2p->cfg->channels, NULL,
+				   &p2p->op_reg_class,
+				   &p2p->op_channel);
+		p2p_dbg(p2p, "Select random available channel %d from operating class %d as operating channel preference",
+			p2p->op_channel, p2p->op_reg_class);
 	}
 
 	os_memcpy(&p2p->channels, &p2p->cfg->channels,
