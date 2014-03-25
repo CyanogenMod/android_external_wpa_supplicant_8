@@ -2163,10 +2163,8 @@ static char * wpa_supplicant_wps_ie_txt_buf(struct wpa_supplicant *wpa_s,
 		return pos;
 	if (wps_is_selected_pbc_registrar(wps_ie))
 		txt = "[WPS-PBC]";
-#ifdef CONFIG_WPS2
 	else if (wps_is_addr_authorized(wps_ie, wpa_s->own_addr, 0))
 		txt = "[WPS-AUTH]";
-#endif /* CONFIG_WPS2 */
 	else if (wps_is_selected_pin_registrar(wps_ie))
 		txt = "[WPS-PIN]";
 	else
@@ -4947,15 +4945,27 @@ static int get_anqp(struct wpa_supplicant *wpa_s, char *dst)
 #define MAX_ANQP_INFO_ID 100
 	u16 id[MAX_ANQP_INFO_ID];
 	size_t num_id = 0;
+	u32 subtypes = 0;
 
 	used = hwaddr_aton2(dst, dst_addr);
 	if (used < 0)
 		return -1;
 	pos = dst + used;
 	while (num_id < MAX_ANQP_INFO_ID) {
-		id[num_id] = atoi(pos);
-		if (id[num_id])
-			num_id++;
+		if (os_strncmp(pos, "hs20:", 5) == 0) {
+#ifdef CONFIG_HS20
+			int num = atoi(pos + 5);
+			if (num <= 0 || num > 31)
+				return -1;
+			subtypes |= BIT(num);
+#else /* CONFIG_HS20 */
+			return -1;
+#endif /* CONFIG_HS20 */
+		} else {
+			id[num_id] = atoi(pos);
+			if (id[num_id])
+				num_id++;
+		}
 		pos = os_strchr(pos + 1, ',');
 		if (pos == NULL)
 			break;
@@ -4965,7 +4975,7 @@ static int get_anqp(struct wpa_supplicant *wpa_s, char *dst)
 	if (num_id == 0)
 		return -1;
 
-	return anqp_send_req(wpa_s, dst_addr, id, num_id);
+	return anqp_send_req(wpa_s, dst_addr, id, num_id, subtypes);
 }
 
 
