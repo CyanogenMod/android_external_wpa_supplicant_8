@@ -1090,8 +1090,8 @@ static int hostapd_ctrl_iface_set(struct hostapd_data *hapd, char *cmd)
 					    hapd->conf->num_deny_mac, sta->addr,
 					    &vlan_id) &&
 				    (!vlan_id || vlan_id == sta->vlan_id))
-					ap_sta_deauthenticate(
-						hapd, sta,
+					ap_sta_disconnect(
+						hapd, sta, sta->addr,
 						WLAN_REASON_UNSPECIFIED);
 			}
 		} else if (hapd->conf->macaddr_acl == DENY_UNLESS_ACCEPTED &&
@@ -1102,8 +1102,8 @@ static int hostapd_ctrl_iface_set(struct hostapd_data *hapd, char *cmd)
 					    hapd->conf->num_accept_mac,
 					    sta->addr, &vlan_id) ||
 				    (vlan_id && vlan_id != sta->vlan_id))
-					ap_sta_deauthenticate(
-						hapd, sta,
+					ap_sta_disconnect(
+						hapd, sta, sta->addr,
 						WLAN_REASON_UNSPECIFIED);
 			}
 		}
@@ -1278,6 +1278,63 @@ static int hostapd_ctrl_iface_mib(struct hostapd_data *hapd, char *reply,
 	}
 #endif /* RADIUS_SERVER */
 	return -1;
+}
+
+
+static int hostapd_ctrl_iface_vendor(struct hostapd_data *hapd, char *cmd,
+				     char *buf, size_t buflen)
+{
+	int ret;
+	char *pos;
+	u8 *data = NULL;
+	unsigned int vendor_id, subcmd;
+	struct wpabuf *reply;
+	size_t data_len = 0;
+
+	/* cmd: <vendor id> <subcommand id> [<hex formatted data>] */
+	vendor_id = strtoul(cmd, &pos, 16);
+	if (!isblank(*pos))
+		return -EINVAL;
+
+	subcmd = strtoul(pos, &pos, 10);
+
+	if (*pos != '\0') {
+		if (!isblank(*pos++))
+			return -EINVAL;
+		data_len = os_strlen(pos);
+	}
+
+	if (data_len) {
+		data_len /= 2;
+		data = os_malloc(data_len);
+		if (!data)
+			return -ENOBUFS;
+
+		if (hexstr2bin(pos, data, data_len)) {
+			wpa_printf(MSG_DEBUG,
+				   "Vendor command: wrong parameter format");
+			os_free(data);
+			return -EINVAL;
+		}
+	}
+
+	reply = wpabuf_alloc((buflen - 1) / 2);
+	if (!reply) {
+		os_free(data);
+		return -ENOBUFS;
+	}
+
+	ret = hostapd_drv_vendor_cmd(hapd, vendor_id, subcmd, data, data_len,
+				     reply);
+
+	if (ret == 0)
+		ret = wpa_snprintf_hex(buf, buflen, wpabuf_head_u8(reply),
+				       wpabuf_len(reply));
+
+	wpabuf_free(reply);
+	os_free(data);
+
+	return ret;
 }
 
 
@@ -1486,6 +1543,10 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {
 		if (hostapd_ctrl_iface_chan_switch(hapd, buf + 12))
 			reply_len = -1;
+	} else if (os_strncmp(buf, "VENDOR ", 7) == 0) {
+		reply_len = hostapd_ctrl_iface_vendor(hapd, buf + 7, reply,
+						      reply_size);
+
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;

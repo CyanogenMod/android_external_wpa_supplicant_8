@@ -6200,6 +6200,7 @@ static void phy_info_freq(struct hostapd_hw_modes *mode,
 	u8 channel;
 	chan->freq = nla_get_u32(tb_freq[NL80211_FREQUENCY_ATTR_FREQ]);
 	chan->flag = 0;
+	chan->dfs_cac_ms = 0;
 	if (ieee80211_freq_to_chan(chan->freq, &channel) != NUM_HOSTAPD_MODES)
 		chan->chan = channel;
 
@@ -6225,6 +6226,11 @@ static void phy_info_freq(struct hostapd_hw_modes *mode,
 			chan->flag |= HOSTAPD_CHAN_DFS_UNAVAILABLE;
 			break;
 		}
+	}
+
+	if (tb_freq[NL80211_FREQUENCY_ATTR_DFS_CAC_TIME]) {
+		chan->dfs_cac_ms = nla_get_u32(
+			tb_freq[NL80211_FREQUENCY_ATTR_DFS_CAC_TIME]);
 	}
 }
 
@@ -7660,6 +7666,16 @@ static int nl80211_create_iface(struct wpa_driver_nl80211_data *drv,
 		if (use_existing) {
 			wpa_printf(MSG_DEBUG, "nl80211: Continue using existing interface %s",
 				   ifname);
+			if (addr && iftype != NL80211_IFTYPE_MONITOR &&
+			    linux_set_ifhwaddr(drv->global->ioctl_sock, ifname,
+					       addr) < 0 &&
+			    (linux_set_iface_flags(drv->global->ioctl_sock,
+						   ifname, 0) < 0 ||
+			     linux_set_ifhwaddr(drv->global->ioctl_sock, ifname,
+						addr) < 0 ||
+			     linux_set_iface_flags(drv->global->ioctl_sock,
+						   ifname, 1) < 0))
+					return -1;
 			return -ENFILE;
 		}
 		wpa_printf(MSG_INFO, "Try to remove and re-create %s", ifname);
@@ -9446,6 +9462,29 @@ static int i802_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr,
 }
 
 
+static void dump_ifidx(struct wpa_driver_nl80211_data *drv)
+{
+	char buf[200], *pos, *end;
+	int i, res;
+
+	pos = buf;
+	end = pos + sizeof(buf);
+
+	for (i = 0; i < drv->num_if_indices; i++) {
+		if (!drv->if_indices[i])
+			continue;
+		res = os_snprintf(pos, end - pos, " %d", drv->if_indices[i]);
+		if (res < 0 || res >= end - pos)
+			break;
+		pos += res;
+	}
+	*pos = '\0';
+
+	wpa_printf(MSG_DEBUG, "nl80211: if_indices[%d]:%s",
+		   drv->num_if_indices, buf);
+}
+
+
 static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 {
 	int i;
@@ -9453,9 +9492,15 @@ static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 
 	wpa_printf(MSG_DEBUG, "nl80211: Add own interface ifindex %d",
 		   ifidx);
+	if (have_ifidx(drv, ifidx)) {
+		wpa_printf(MSG_DEBUG, "nl80211: ifindex %d already in the list",
+			   ifidx);
+		return;
+	}
 	for (i = 0; i < drv->num_if_indices; i++) {
 		if (drv->if_indices[i] == 0) {
 			drv->if_indices[i] = ifidx;
+			dump_ifidx(drv);
 			return;
 		}
 	}
@@ -9481,6 +9526,7 @@ static void add_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 			  sizeof(drv->default_if_indices));
 	drv->if_indices[drv->num_if_indices] = ifidx;
 	drv->num_if_indices++;
+	dump_ifidx(drv);
 }
 
 
@@ -9494,6 +9540,7 @@ static void del_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 			break;
 		}
 	}
+	dump_ifidx(drv);
 }
 
 
@@ -9929,6 +9976,9 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 	if (drv->global)
 		drv->global->if_add_ifindex = ifidx;
 
+	if (ifidx > 0)
+		add_ifidx(drv, ifidx);
+
 	return 0;
 }
 
@@ -9944,6 +9994,8 @@ static int wpa_driver_nl80211_if_remove(struct i802_bss *bss,
 		   __func__, type, ifname, ifindex, bss->added_if);
 	if (ifindex > 0 && (bss->added_if || bss->ifindex != ifindex))
 		nl80211_remove_iface(drv, ifindex);
+	else if (ifindex > 0 && !bss->added_if)
+		del_ifidx(drv, ifindex);
 
 	if (type != WPA_IF_AP_BSS)
 		return 0;
@@ -9972,6 +10024,8 @@ static int wpa_driver_nl80211_if_remove(struct i802_bss *bss,
 				/* Unsubscribe management frames */
 				nl80211_teardown_ap(bss);
 				nl80211_destroy_bss(bss);
+				if (!bss->added_if)
+					i802_set_iface_flags(bss, 0);
 				os_free(bss);
 				bss = NULL;
 				break;
@@ -11176,7 +11230,7 @@ nla_put_failure:
 
 static int nl80211_send_tdls_mgmt(void *priv, const u8 *dst, u8 action_code,
 				  u8 dialog_token, u16 status_code,
-				  const u8 *buf, size_t len)
+				  u32 peer_capab, const u8 *buf, size_t len)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
@@ -11198,6 +11252,15 @@ static int nl80211_send_tdls_mgmt(void *priv, const u8 *dst, u8 action_code,
 	NLA_PUT_U8(msg, NL80211_ATTR_TDLS_ACTION, action_code);
 	NLA_PUT_U8(msg, NL80211_ATTR_TDLS_DIALOG_TOKEN, dialog_token);
 	NLA_PUT_U16(msg, NL80211_ATTR_STATUS_CODE, status_code);
+	if (peer_capab) {
+		/*
+		 * The internal enum tdls_peer_capability definition is
+		 * currently identical with the nl80211 enum
+		 * nl80211_tdls_peer_capability, so no conversion is needed
+		 * here.
+		 */
+		NLA_PUT_U32(msg, NL80211_ATTR_TDLS_PEER_CAPABILITY, peer_capab);
+	}
 	NLA_PUT(msg, NL80211_ATTR_IE, len, buf);
 
 	return send_and_recv_msgs(drv, msg, NULL, NULL);

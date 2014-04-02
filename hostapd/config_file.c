@@ -366,6 +366,10 @@ static int hostapd_config_read_eap_user(const char *fname,
 						EAP_TTLS_AUTH_MSCHAPV2;
 					goto skip_eap;
 				}
+				if (os_strcmp(start, "MACACL") == 0) {
+					user->macacl = 1;
+					goto skip_eap;
+				}
 				wpa_printf(MSG_ERROR, "Unsupported EAP type "
 					   "'%s' on line %d in '%s'",
 					   start, line, fname);
@@ -380,7 +384,7 @@ static int hostapd_config_read_eap_user(const char *fname,
 				break;
 			start = pos3;
 		}
-		if (num_methods == 0 && user->ttls_auth == 0) {
+		if (num_methods == 0 && user->ttls_auth == 0 && !user->macacl) {
 			wpa_printf(MSG_ERROR, "No EAP types configured on "
 				   "line %d in '%s'", line, fname);
 			goto failed;
@@ -1089,8 +1093,6 @@ static int hostapd_config_vht_capab(struct hostapd_config *conf,
 		conf->vht_capab |= VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
 	if (os_strstr(capab, "[VHT160-80PLUS80]"))
 		conf->vht_capab |= VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ;
-	if (os_strstr(capab, "[VHT160-80PLUS80]"))
-		conf->vht_capab |= VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ;
 	if (os_strstr(capab, "[RXLDPC]"))
 		conf->vht_capab |= VHT_CAP_RXLDPC;
 	if (os_strstr(capab, "[SHORT-GI-80]"))
@@ -1258,7 +1260,7 @@ static int parse_3gpp_cell_net(struct hostapd_bss_config *bss, char *buf,
 
 	count = 1;
 	for (pos = buf; *pos; pos++) {
-		if ((*pos < '0' && *pos > '9') && *pos != ';' && *pos != ',')
+		if ((*pos < '0' || *pos > '9') && *pos != ';' && *pos != ',')
 			goto fail;
 		if (*pos == ';')
 			count++;
@@ -1600,7 +1602,7 @@ static int hs20_parse_wan_metrics(struct hostapd_bss_config *bss, char *buf,
 
 fail:
 	wpa_printf(MSG_ERROR, "Line %d: Invalid hs20_wan_metrics '%s'",
-		   line, pos);
+		   line, buf);
 	os_free(wan_metrics);
 	return -1;
 }

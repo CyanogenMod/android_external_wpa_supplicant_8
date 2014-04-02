@@ -303,11 +303,11 @@ int wpa_supplicant_scard_init(struct wpa_supplicant *wpa_s,
 #ifdef PCSC_FUNCS
 	int aka = 0, sim = 0;
 
-	if (ssid->eap.pcsc == NULL || wpa_s->scard != NULL ||
-	    wpa_s->conf->external_sim)
+	if ((ssid != NULL && ssid->eap.pcsc == NULL) ||
+	    wpa_s->scard != NULL || wpa_s->conf->external_sim)
 		return 0;
 
-	if (ssid->eap.eap_methods == NULL) {
+	if (ssid == NULL || ssid->eap.eap_methods == NULL) {
 		sim = 1;
 		aka = 1;
 	} else {
@@ -1069,8 +1069,12 @@ int wpa_supplicant_connect(struct wpa_supplicant *wpa_s,
 		wpa_msg(wpa_s, MSG_INFO, WPS_EVENT_OVERLAP
 			"PBC session overlap");
 #ifdef CONFIG_P2P
-		if (wpas_p2p_notif_pbc_overlap(wpa_s) == 1)
+		if (wpa_s->p2p_group_interface == P2P_GROUP_INTERFACE_CLIENT ||
+		    wpa_s->p2p_in_provisioning) {
+			eloop_register_timeout(0, 0, wpas_p2p_pbc_overlap_cb,
+					       wpa_s, NULL);
 			return -1;
+		}
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS
@@ -3278,6 +3282,12 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		wpa_dbg(wpa_s, MSG_DEBUG, "Interface was enabled");
 		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
 			wpa_supplicant_update_mac_addr(wpa_s);
+			if (wpa_s->p2p_mgmt) {
+				wpa_supplicant_set_state(wpa_s,
+							 WPA_DISCONNECTED);
+				break;
+			}
+
 #ifdef CONFIG_AP
 			if (!wpa_s->ap_iface) {
 				wpa_supplicant_set_state(wpa_s,
