@@ -2305,9 +2305,10 @@ static int wpa_supplicant_ctrl_iface_select_network(
 {
 	int id;
 	struct wpa_ssid *ssid;
+	char *pos;
 
 	/* cmd: "<network id>" or "any" */
-	if (os_strcmp(cmd, "any") == 0) {
+	if (os_strncmp(cmd, "any", 3) == 0) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: SELECT_NETWORK any");
 		ssid = NULL;
 	} else {
@@ -2324,6 +2325,16 @@ static int wpa_supplicant_ctrl_iface_select_network(
 			wpa_printf(MSG_DEBUG, "CTRL_IFACE: Cannot use "
 				   "SELECT_NETWORK with persistent P2P group");
 			return -1;
+		}
+	}
+
+	pos = os_strstr(cmd, " freq=");
+	if (pos) {
+		int *freqs = freq_range_to_channel_list(wpa_s, pos + 6);
+		if (freqs) {
+			wpa_s->scan_req = MANUAL_SCAN_REQ;
+			os_free(wpa_s->manual_scan_freqs);
+			wpa_s->manual_scan_freqs = freqs;
 		}
 	}
 
@@ -2660,6 +2671,8 @@ static int wpa_supplicant_ctrl_iface_add_cred(struct wpa_supplicant *wpa_s,
 	if (cred == NULL)
 		return -1;
 
+	wpa_msg(wpa_s, MSG_INFO, CRED_ADDED "%d", cred->id);
+
 	ret = os_snprintf(buf, buflen, "%d\n", cred->id);
 	if (ret < 0 || (size_t) ret >= buflen)
 		return -1;
@@ -2672,11 +2685,20 @@ static int wpas_ctrl_remove_cred(struct wpa_supplicant *wpa_s,
 {
 	struct wpa_ssid *ssid;
 	char str[20];
+	int id;
 
-	if (cred == NULL || wpa_config_remove_cred(wpa_s->conf, cred->id) < 0) {
+	if (cred == NULL) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Could not find cred");
 		return -1;
 	}
+
+	id = cred->id;
+	if (wpa_config_remove_cred(wpa_s->conf, id) < 0) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Could not find cred");
+		return -1;
+	}
+
+	wpa_msg(wpa_s, MSG_INFO, CRED_REMOVED "%d", id);
 
 	/* Remove any network entry created based on the removed credential */
 	ssid = wpa_s->conf->ssid;
@@ -2794,7 +2816,54 @@ static int wpa_supplicant_ctrl_iface_set_cred(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+	wpa_msg(wpa_s, MSG_INFO, CRED_MODIFIED "%d %s", cred->id, name);
+
 	return 0;
+}
+
+
+static int wpa_supplicant_ctrl_iface_get_cred(struct wpa_supplicant *wpa_s,
+					      char *cmd, char *buf,
+					      size_t buflen)
+{
+	int id;
+	size_t res;
+	struct wpa_cred *cred;
+	char *name, *value;
+
+	/* cmd: "<cred id> <variable name>" */
+	name = os_strchr(cmd, ' ');
+	if (name == NULL)
+		return -1;
+	*name++ = '\0';
+
+	id = atoi(cmd);
+	wpa_printf(MSG_DEBUG, "CTRL_IFACE: GET_CRED id=%d name='%s'",
+		   id, name);
+
+	cred = wpa_config_get_cred(wpa_s->conf, id);
+	if (cred == NULL) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Could not find cred id=%d",
+			   id);
+		return -1;
+	}
+
+	value = wpa_config_get_cred_no_key(cred, name);
+	if (value == NULL) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Failed to get cred variable '%s'",
+			   name);
+		return -1;
+	}
+
+	res = os_strlcpy(buf, value, buflen);
+	if (res >= buflen) {
+		os_free(value);
+		return -1;
+	}
+
+	os_free(value);
+
+	return res;
 }
 
 
@@ -6421,6 +6490,10 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "SET_CRED ", 9) == 0) {
 		if (wpa_supplicant_ctrl_iface_set_cred(wpa_s, buf + 9))
 			reply_len = -1;
+	} else if (os_strncmp(buf, "GET_CRED ", 9) == 0) {
+		reply_len = wpa_supplicant_ctrl_iface_get_cred(wpa_s, buf + 9,
+							       reply,
+							       reply_size);
 #ifndef CONFIG_NO_CONFIG_WRITE
 	} else if (os_strcmp(buf, "SAVE_CONFIG") == 0) {
 		if (wpa_supplicant_ctrl_iface_save_config(wpa_s))
