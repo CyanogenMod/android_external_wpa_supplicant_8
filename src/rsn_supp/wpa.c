@@ -1020,27 +1020,20 @@ static int wpa_supplicant_validate_ie(struct wpa_sm *sm,
  * @key: Pointer to the EAPOL-Key frame header
  * @ver: Version bits from EAPOL-Key Key Info
  * @key_info: Key Info
- * @kde: KDEs to include the EAPOL-Key frame
- * @kde_len: Length of KDEs
  * @ptk: PTK to use for keyed hash and encryption
  * Returns: 0 on success, -1 on failure
  */
 int wpa_supplicant_send_4_of_4(struct wpa_sm *sm, const unsigned char *dst,
 			       const struct wpa_eapol_key *key,
 			       u16 ver, u16 key_info,
-			       const u8 *kde, size_t kde_len,
 			       struct wpa_ptk *ptk)
 {
 	size_t rlen;
 	struct wpa_eapol_key *reply;
 	u8 *rbuf;
 
-	if (kde)
-		wpa_hexdump(MSG_DEBUG, "WPA: KDE for msg 4/4", kde, kde_len);
-
 	rbuf = wpa_sm_alloc_eapol(sm, IEEE802_1X_TYPE_EAPOL_KEY, NULL,
-				  sizeof(*reply) + kde_len,
-				  &rlen, (void *) &reply);
+				  sizeof(*reply), &rlen, (void *) &reply);
 	if (rbuf == NULL)
 		return -1;
 
@@ -1057,9 +1050,7 @@ int wpa_supplicant_send_4_of_4(struct wpa_sm *sm, const unsigned char *dst,
 	os_memcpy(reply->replay_counter, key->replay_counter,
 		  WPA_REPLAY_COUNTER_LEN);
 
-	WPA_PUT_BE16(reply->key_data_length, kde_len);
-	if (kde)
-		os_memcpy(reply + 1, kde, kde_len);
+	WPA_PUT_BE16(reply->key_data_length, 0);
 
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "WPA: Sending EAPOL-Key 4/4");
 	wpa_eapol_key_send(sm, ptk->kck, ver, dst, ETH_P_EAPOL,
@@ -1140,7 +1131,7 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 #endif /* CONFIG_P2P */
 
 	if (wpa_supplicant_send_4_of_4(sm, sm->bssid, key, ver, key_info,
-				       NULL, 0, &sm->ptk)) {
+				       &sm->ptk)) {
 		goto failed;
 	}
 
@@ -2396,44 +2387,6 @@ int wpa_sm_set_param(struct wpa_sm *sm, enum wpa_sm_conf_params param,
 
 
 /**
- * wpa_sm_get_param - Get WPA state machine parameters
- * @sm: Pointer to WPA state machine data from wpa_sm_init()
- * @param: Parameter field
- * Returns: Parameter value
- */
-unsigned int wpa_sm_get_param(struct wpa_sm *sm, enum wpa_sm_conf_params param)
-{
-	if (sm == NULL)
-		return 0;
-
-	switch (param) {
-	case RSNA_PMK_LIFETIME:
-		return sm->dot11RSNAConfigPMKLifetime;
-	case RSNA_PMK_REAUTH_THRESHOLD:
-		return sm->dot11RSNAConfigPMKReauthThreshold;
-	case RSNA_SA_TIMEOUT:
-		return sm->dot11RSNAConfigSATimeout;
-	case WPA_PARAM_PROTO:
-		return sm->proto;
-	case WPA_PARAM_PAIRWISE:
-		return sm->pairwise_cipher;
-	case WPA_PARAM_GROUP:
-		return sm->group_cipher;
-	case WPA_PARAM_KEY_MGMT:
-		return sm->key_mgmt;
-#ifdef CONFIG_IEEE80211W
-	case WPA_PARAM_MGMT_GROUP:
-		return sm->mgmt_group_cipher;
-#endif /* CONFIG_IEEE80211W */
-	case WPA_PARAM_RSN_ENABLED:
-		return sm->rsn_enabled;
-	default:
-		return 0;
-	}
-}
-
-
-/**
  * wpa_sm_get_status - Get WPA state machine
  * @sm: Pointer to WPA state machine data from wpa_sm_init()
  * @buf: Buffer for status information
@@ -2674,6 +2627,7 @@ int wpa_sm_pmksa_cache_list(struct wpa_sm *sm, char *buf, size_t len)
 }
 
 
+#ifdef CONFIG_TESTING_OPTIONS
 void wpa_sm_drop_sa(struct wpa_sm *sm)
 {
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "WPA: Clear old PMK and PTK");
@@ -2683,6 +2637,7 @@ void wpa_sm_drop_sa(struct wpa_sm *sm)
 	os_memset(&sm->ptk, 0, sizeof(sm->ptk));
 	os_memset(&sm->tptk, 0, sizeof(sm->tptk));
 }
+#endif /* CONFIG_TESTING_OPTIONS */
 
 
 int wpa_sm_has_ptk(struct wpa_sm *sm)

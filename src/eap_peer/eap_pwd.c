@@ -16,7 +16,8 @@
 
 struct eap_pwd_data {
 	enum {
-		PWD_ID_Req, PWD_Commit_Req, PWD_Confirm_Req, SUCCESS, FAILURE
+		PWD_ID_Req, PWD_Commit_Req, PWD_Confirm_Req,
+		SUCCESS_ON_FRAG_COMPLETION, SUCCESS, FAILURE
 	} state;
 	u8 *id_peer;
 	size_t id_peer_len;
@@ -57,6 +58,8 @@ static const char * eap_pwd_state_txt(int state)
 		return "PWD-Commit-Req";
         case PWD_Confirm_Req:
 		return "PWD-Confirm-Req";
+	case SUCCESS_ON_FRAG_COMPLETION:
+		return "SUCCESS_ON_FRAG_COMPLETION";
         case SUCCESS:
 		return "SUCCESS";
         case FAILURE:
@@ -161,6 +164,8 @@ static void eap_pwd_deinit(struct eap_sm *sm, void *priv)
 		BN_free(data->grp->prime);
 		os_free(data->grp);
 	}
+	wpabuf_free(data->inbuf);
+	wpabuf_free(data->outbuf);
 	os_free(data);
 }
 
@@ -658,13 +663,12 @@ fin:
 	os_free(cruft);
 	BN_free(x);
 	BN_free(y);
-	ret->methodState = METHOD_DONE;
 	if (data->outbuf == NULL) {
+		ret->methodState = METHOD_DONE;
 		ret->decision = DECISION_FAIL;
 		eap_pwd_state(data, FAILURE);
 	} else {
-		ret->decision = DECISION_UNCOND_SUCC;
-		eap_pwd_state(data, SUCCESS);
+		eap_pwd_state(data, SUCCESS_ON_FRAG_COMPLETION);
 	}
 }
 
@@ -741,6 +745,11 @@ eap_pwd_process(struct eap_sm *sm, void *priv, struct eap_method_ret *ret,
 		wpa_printf(MSG_DEBUG, "EAP-pwd: Send %s fragment of %d bytes",
 			   data->out_frag_pos == 0 ? "last" : "next",
 			   (int) len);
+		if (data->state == SUCCESS_ON_FRAG_COMPLETION) {
+			ret->methodState = METHOD_DONE;
+			ret->decision = DECISION_UNCOND_SUCC;
+			eap_pwd_state(data, SUCCESS);
+		}
 		return resp;
 	}
 
@@ -773,6 +782,7 @@ eap_pwd_process(struct eap_sm *sm, void *priv, struct eap_method_ret *ret,
 				   (int) data->in_frag_pos,
 				   (int) wpabuf_len(data->inbuf));
 			wpabuf_free(data->inbuf);
+			data->inbuf = NULL;
 			data->in_frag_pos = 0;
 			return NULL;
 		}
@@ -824,6 +834,7 @@ eap_pwd_process(struct eap_sm *sm, void *priv, struct eap_method_ret *ret,
 	 */
 	if (data->in_frag_pos) {
 		wpabuf_free(data->inbuf);
+		data->inbuf = NULL;
 		data->in_frag_pos = 0;
 	}
 
@@ -871,6 +882,11 @@ eap_pwd_process(struct eap_sm *sm, void *priv, struct eap_method_ret *ret,
 		wpabuf_free(data->outbuf);
 		data->outbuf = NULL;
 		data->out_frag_pos = 0;
+		if (data->state == SUCCESS_ON_FRAG_COMPLETION) {
+			ret->methodState = METHOD_DONE;
+			ret->decision = DECISION_UNCOND_SUCC;
+			eap_pwd_state(data, SUCCESS);
+		}
 	}
 
 	return resp;
