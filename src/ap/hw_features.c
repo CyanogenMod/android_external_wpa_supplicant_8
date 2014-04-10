@@ -308,8 +308,8 @@ static void ieee80211n_get_pri_sec_chan(struct wpa_scan_res *bss,
 	if (elems.ht_operation &&
 	    elems.ht_operation_len >= sizeof(*oper)) {
 		oper = (struct ieee80211_ht_operation *) elems.ht_operation;
-		*pri_chan = oper->control_chan;
-		if (oper->ht_param & HT_INFO_HT_PARAM_REC_TRANS_CHNL_WIDTH) {
+		*pri_chan = oper->primary_chan;
+		if (oper->ht_param & HT_INFO_HT_PARAM_STA_CHNL_WIDTH) {
 			int sec = oper->ht_param &
 				HT_INFO_HT_PARAM_SECONDARY_CHNL_OFF_MASK;
 			if (sec == HT_INFO_HT_PARAM_SECONDARY_CHNL_ABOVE)
@@ -676,12 +676,6 @@ static int ieee80211n_supported_ht_capab(struct hostapd_iface *iface)
 	    !(hw & HT_CAP_INFO_DSSS_CCK40MHZ)) {
 		wpa_printf(MSG_ERROR, "Driver does not support configured "
 			   "HT capability [DSSS_CCK-40]");
-		return 0;
-	}
-
-	if ((conf & HT_CAP_INFO_PSMP_SUPP) && !(hw & HT_CAP_INFO_PSMP_SUPP)) {
-		wpa_printf(MSG_ERROR, "Driver does not support configured "
-			   "HT capability [PSMP]");
 		return 0;
 	}
 
