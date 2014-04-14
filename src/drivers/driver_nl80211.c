@@ -297,6 +297,7 @@ struct wpa_driver_nl80211_data {
 	unsigned int retry_auth:1;
 	unsigned int use_monitor:1;
 	unsigned int ignore_next_local_disconnect:1;
+	unsigned int ignore_next_local_deauth:1;
 	unsigned int allow_p2p_device:1;
 	unsigned int hostapd:1;
 	unsigned int start_mode_ap:1;
@@ -1836,6 +1837,14 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 		}
 		event.deauth_info.locally_generated =
 			!os_memcmp(mgmt->sa, drv->first_bss->addr, ETH_ALEN);
+		if (drv->ignore_next_local_deauth) {
+			drv->ignore_next_local_deauth = 0;
+			if (event.deauth_info.locally_generated) {
+				wpa_printf(MSG_DEBUG, "nl80211: Ignore deauth event triggered due to own deauth request");
+				return;
+			}
+			wpa_printf(MSG_WARNING, "nl80211: Was expecting local deauth but got another disconnect event first");
+		}
 		event.deauth_info.addr = bssid;
 		event.deauth_info.reason_code = reason_code;
 		if (frame + len > mgmt->u.deauth.variable) {
@@ -2880,6 +2889,69 @@ static void nl80211_vendor_event(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static void nl80211_reg_change_event(struct wpa_driver_nl80211_data *drv,
+				     struct nlattr *tb[])
+{
+	union wpa_event_data data;
+	enum nl80211_reg_initiator init;
+
+	wpa_printf(MSG_DEBUG, "nl80211: Regulatory domain change");
+
+	if (tb[NL80211_ATTR_REG_INITIATOR] == NULL)
+		return;
+
+	os_memset(&data, 0, sizeof(data));
+	init = nla_get_u8(tb[NL80211_ATTR_REG_INITIATOR]);
+	wpa_printf(MSG_DEBUG, " * initiator=%d", init);
+	switch (init) {
+	case NL80211_REGDOM_SET_BY_CORE:
+		data.channel_list_changed.initiator = REGDOM_SET_BY_CORE;
+		break;
+	case NL80211_REGDOM_SET_BY_USER:
+		data.channel_list_changed.initiator = REGDOM_SET_BY_USER;
+		break;
+	case NL80211_REGDOM_SET_BY_DRIVER:
+		data.channel_list_changed.initiator = REGDOM_SET_BY_DRIVER;
+		break;
+	case NL80211_REGDOM_SET_BY_COUNTRY_IE:
+		data.channel_list_changed.initiator = REGDOM_SET_BY_COUNTRY_IE;
+		break;
+	}
+
+	if (tb[NL80211_ATTR_REG_TYPE]) {
+		enum nl80211_reg_type type;
+		type = nla_get_u8(tb[NL80211_ATTR_REG_TYPE]);
+		wpa_printf(MSG_DEBUG, " * type=%d", type);
+		switch (type) {
+		case NL80211_REGDOM_TYPE_COUNTRY:
+			data.channel_list_changed.type = REGDOM_TYPE_COUNTRY;
+			break;
+		case NL80211_REGDOM_TYPE_WORLD:
+			data.channel_list_changed.type = REGDOM_TYPE_WORLD;
+			break;
+		case NL80211_REGDOM_TYPE_CUSTOM_WORLD:
+			data.channel_list_changed.type =
+				REGDOM_TYPE_CUSTOM_WORLD;
+			break;
+		case NL80211_REGDOM_TYPE_INTERSECTION:
+			data.channel_list_changed.type =
+				REGDOM_TYPE_INTERSECTION;
+			break;
+		}
+	}
+
+	if (tb[NL80211_ATTR_REG_ALPHA2]) {
+		os_strlcpy(data.channel_list_changed.alpha2,
+			   nla_get_string(tb[NL80211_ATTR_REG_ALPHA2]),
+			   sizeof(data.channel_list_changed.alpha2));
+		wpa_printf(MSG_DEBUG, " * alpha2=%s",
+			   data.channel_list_changed.alpha2);
+	}
+
+	wpa_supplicant_event(drv->ctx, EVENT_CHANNEL_LIST_CHANGED, &data);
+}
+
+
 static void do_process_drv_event(struct i802_bss *bss, int cmd,
 				 struct nlattr **tb)
 {
@@ -2999,34 +3071,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 		nl80211_cqm_event(drv, tb);
 		break;
 	case NL80211_CMD_REG_CHANGE:
-		wpa_printf(MSG_DEBUG, "nl80211: Regulatory domain change");
-		if (tb[NL80211_ATTR_REG_INITIATOR] == NULL)
-			break;
-		os_memset(&data, 0, sizeof(data));
-		switch (nla_get_u8(tb[NL80211_ATTR_REG_INITIATOR])) {
-		case NL80211_REGDOM_SET_BY_CORE:
-			data.channel_list_changed.initiator =
-				REGDOM_SET_BY_CORE;
-			break;
-		case NL80211_REGDOM_SET_BY_USER:
-			data.channel_list_changed.initiator =
-				REGDOM_SET_BY_USER;
-			break;
-		case NL80211_REGDOM_SET_BY_DRIVER:
-			data.channel_list_changed.initiator =
-				REGDOM_SET_BY_DRIVER;
-			break;
-		case NL80211_REGDOM_SET_BY_COUNTRY_IE:
-			data.channel_list_changed.initiator =
-				REGDOM_SET_BY_COUNTRY_IE;
-			break;
-		default:
-			wpa_printf(MSG_DEBUG, "nl80211: Unknown reg change initiator %d received",
-				   nla_get_u8(tb[NL80211_ATTR_REG_INITIATOR]));
-			break;
-		}
-		wpa_supplicant_event(drv->ctx, EVENT_CHANNEL_LIST_CHANGED,
-				     &data);
+		nl80211_reg_change_event(drv, tb);
 		break;
 	case NL80211_CMD_REG_BEACON_HINT:
 		wpa_printf(MSG_DEBUG, "nl80211: Regulatory beacon hint");
@@ -5878,6 +5923,7 @@ static int wpa_driver_nl80211_deauthenticate(struct i802_bss *bss,
 					     const u8 *addr, int reason_code)
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
+	int ret;
 
 	if (drv->nlmode == NL80211_IFTYPE_ADHOC) {
 		nl80211_mark_disconnected(drv);
@@ -5888,8 +5934,14 @@ static int wpa_driver_nl80211_deauthenticate(struct i802_bss *bss,
 	wpa_printf(MSG_DEBUG, "%s(addr=" MACSTR " reason_code=%d)",
 		   __func__, MAC2STR(addr), reason_code);
 	nl80211_mark_disconnected(drv);
-	return wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DEAUTHENTICATE,
-				       reason_code, 0);
+	ret = wpa_driver_nl80211_mlme(drv, addr, NL80211_CMD_DEAUTHENTICATE,
+				      reason_code, 0);
+	/*
+	 * For locally generated deauthenticate, supplicant already generates a
+	 * DEAUTH event, so ignore the event from NL80211.
+	 */
+	drv->ignore_next_local_deauth = ret == 0;
+	return ret;
 }
 
 
@@ -7789,7 +7841,7 @@ static void handle_monitor_read(int sock, void *eloop_ctx, void *sock_ctx)
 		return;
 	}
 
-	if (ieee80211_radiotap_iterator_init(&iter, (void*)buf, len)) {
+	if (ieee80211_radiotap_iterator_init(&iter, (void*)buf, len, NULL)) {
 		wpa_printf(MSG_INFO, "nl80211: received invalid radiotap frame");
 		return;
 	}
@@ -7834,11 +7886,11 @@ static void handle_monitor_read(int sock, void *eloop_ctx, void *sock_ctx)
 		return;
 
 	if (!injected)
-		handle_frame(drv, buf + iter.max_length,
-			     len - iter.max_length, datarate, ssi_signal);
+		handle_frame(drv, buf + iter._max_length,
+			     len - iter._max_length, datarate, ssi_signal);
 	else
-		handle_tx_callback(drv->ctx, buf + iter.max_length,
-				   len - iter.max_length, !failed);
+		handle_tx_callback(drv->ctx, buf + iter._max_length,
+				   len - iter._max_length, !failed);
 }
 
 
@@ -11692,7 +11744,7 @@ static int wpa_driver_nl80211_status(void *priv, char *buf, size_t buflen)
 			  "monitor_refcount=%d\n"
 			  "last_mgmt_freq=%u\n"
 			  "eapol_tx_sock=%d\n"
-			  "%s%s%s%s%s%s%s%s%s%s%s%s%s",
+			  "%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
 			  drv->phyname,
 			  drv->ifindex,
 			  drv->operstate,
@@ -11726,6 +11778,8 @@ static int wpa_driver_nl80211_status(void *priv, char *buf, size_t buflen)
 			  drv->use_monitor ? "use_monitor=1\n" : "",
 			  drv->ignore_next_local_disconnect ?
 			  "ignore_next_local_disconnect=1\n" : "",
+			  drv->ignore_next_local_deauth ?
+			  "ignore_next_local_deauth=1\n" : "",
 			  drv->allow_p2p_device ? "allow_p2p_device=1\n" : "");
 	if (res < 0 || res >= end - pos)
 		return pos - buf;

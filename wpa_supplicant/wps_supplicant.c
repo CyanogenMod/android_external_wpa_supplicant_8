@@ -52,6 +52,25 @@ static void wpas_wps_clear_ap_info(struct wpa_supplicant *wpa_s)
 }
 
 
+static void wpas_wps_assoc_with_cred(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	int use_fast_assoc = timeout_ctx != NULL;
+
+	wpa_printf(MSG_DEBUG, "WPS: Continuing association after eapol_cb");
+	if (!use_fast_assoc ||
+	    wpa_supplicant_fast_associate(wpa_s) != 1)
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+}
+
+
+static void wpas_wps_assoc_with_cred_cancel(struct wpa_supplicant *wpa_s)
+{
+	eloop_cancel_timeout(wpas_wps_assoc_with_cred, wpa_s, (void *) 0);
+	eloop_cancel_timeout(wpas_wps_assoc_with_cred, wpa_s, (void *) 1);
+}
+
+
 int wpas_wps_eapol_cb(struct wpa_supplicant *wpa_s)
 {
 #ifdef CONFIG_P2P
@@ -124,9 +143,18 @@ int wpas_wps_eapol_cb(struct wpa_supplicant *wpa_s)
 			wpabuf_free(wps);
 		}
 
-		if (!use_fast_assoc ||
-		    wpa_supplicant_fast_associate(wpa_s) != 1)
-			wpa_supplicant_req_scan(wpa_s, 0, 0);
+		/*
+		 * Complete the next step from an eloop timeout to allow pending
+		 * driver events related to the disconnection to be processed
+		 * first. This makes it less likely for disconnection event to
+		 * cause problems with the following connection.
+		 */
+		wpa_printf(MSG_DEBUG, "WPS: Continue association from timeout");
+		wpas_wps_assoc_with_cred_cancel(wpa_s);
+		eloop_register_timeout(0, 10000,
+				       wpas_wps_assoc_with_cred, wpa_s,
+				       use_fast_assoc ? (void *) 1 :
+				       (void *) 0);
 		return 1;
 	}
 
@@ -370,6 +398,17 @@ static int wpa_supplicant_wps_cred(void *ctx,
 		ssid = wpa_config_add_network(wpa_s->conf);
 		if (ssid == NULL)
 			return -1;
+		if (wpa_s->current_ssid) {
+			/*
+			 * Should the GO issue multiple credentials for some
+			 * reason, each credential should be marked as a
+			 * temporary P2P group similarly to the one that gets
+			 * marked as such based on the pre-configured values
+			 * used for the WPS network block.
+			 */
+			ssid->p2p_group = wpa_s->current_ssid->p2p_group;
+			ssid->temporary = wpa_s->current_ssid->temporary;
+		}
 		wpas_notify_network_added(wpa_s, ssid);
 	}
 
@@ -1420,6 +1459,7 @@ static void wpas_wps_nfc_clear(struct wps_context *wps)
 
 void wpas_wps_deinit(struct wpa_supplicant *wpa_s)
 {
+	wpas_wps_assoc_with_cred_cancel(wpa_s);
 	eloop_cancel_timeout(wpas_wps_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_wps_clear_timeout, wpa_s, NULL);
 	eloop_cancel_timeout(wpas_wps_reenable_networks_cb, wpa_s, NULL);
