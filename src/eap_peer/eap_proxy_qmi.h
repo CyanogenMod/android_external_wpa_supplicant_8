@@ -36,7 +36,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "eloop.h"
 #include "qmi.h"
 #include "qmi_eap_srvc.h"
-#include "eapol_supp_sm.h"
+#include "eapol_supp/eapol_supp_sm.h"
 
 /*msec Response Timeout*/
 #define QMI_RESP_TIME_OUT 2000
