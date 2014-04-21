@@ -6802,7 +6802,6 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 #ifdef CONFIG_P2P
 	static const char * cmd[] = {
 		"LIST_NETWORKS",
-		"SAVE_CONFIG",
 		"P2P_FIND",
 		"P2P_STOP_FIND",
 		"P2P_LISTEN",
@@ -6822,7 +6821,6 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 #endif /* ANDROID */
 		"GET_NETWORK ",
 		"REMOVE_NETWORK ",
-		"SET ",
 		"P2P_FIND ",
 		"P2P_CONNECT ",
 		"P2P_LISTEN ",
@@ -6922,6 +6920,9 @@ static int wpas_global_ctrl_iface_set(struct wpa_global *global, char *cmd)
 	}
 #endif /* CONFIG_WIFI_DISPLAY */
 
+	/* Restore cmd to its original value to allow redirection */
+	value[-1] = ' ';
+
 	return -1;
 }
 
@@ -6929,7 +6930,7 @@ static int wpas_global_ctrl_iface_set(struct wpa_global *global, char *cmd)
 #ifndef CONFIG_NO_CONFIG_WRITE
 static int wpas_global_ctrl_iface_save_config(struct wpa_global *global)
 {
-	int ret = 0;
+	int ret = 0, saved = 0;
 	struct wpa_supplicant *wpa_s;
 
 	for (wpa_s = global->ifaces; wpa_s; wpa_s = wpa_s->next) {
@@ -6943,7 +6944,14 @@ static int wpas_global_ctrl_iface_save_config(struct wpa_global *global)
 			ret = 1;
 		} else {
 			wpa_dbg(wpa_s, MSG_DEBUG, "CTRL_IFACE: SAVE_CONFIG - Configuration updated");
+			saved++;
 		}
+	}
+
+	if (!saved && !ret) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"CTRL_IFACE: SAVE_CONFIG - No configuration files could be updated");
+		ret = 1;
 	}
 
 	return ret;
@@ -7058,8 +7066,19 @@ char * wpa_supplicant_global_ctrl_iface_process(struct wpa_global *global,
 	} else if (os_strcmp(buf, "RESUME") == 0) {
 		wpas_notify_resume(global);
 	} else if (os_strncmp(buf, "SET ", 4) == 0) {
-		if (wpas_global_ctrl_iface_set(global, buf + 4))
+		if (wpas_global_ctrl_iface_set(global, buf + 4)) {
+#ifdef CONFIG_P2P
+			if (global->p2p_init_wpa_s) {
+				os_free(reply);
+				/* Check if P2P redirection would work for this
+				 * command. */
+				return wpa_supplicant_ctrl_iface_process(
+					global->p2p_init_wpa_s,
+					buf, resp_len);
+			}
+#endif /* CONFIG_P2P */
 			reply_len = -1;
+		}
 #ifndef CONFIG_NO_CONFIG_WRITE
 	} else if (os_strcmp(buf, "SAVE_CONFIG") == 0) {
 		if (wpas_global_ctrl_iface_save_config(global))

@@ -2967,6 +2967,12 @@ void wpa_supplicant_apply_ht_overrides(
 	wpa_set_disable_ht40(wpa_s, htcaps, htcaps_mask, ssid->disable_ht40);
 	wpa_set_disable_sgi(wpa_s, htcaps, htcaps_mask, ssid->disable_sgi);
 	wpa_set_disable_ldpc(wpa_s, htcaps, htcaps_mask, ssid->disable_ldpc);
+
+	if (ssid->ht40_intolerant) {
+		u16 bit = host_to_le16(HT_CAP_INFO_40MHZ_INTOLERANT);
+		htcaps->ht_capabilities_info |= bit;
+		htcaps_mask->ht_capabilities_info |= bit;
+	}
 }
 
 #endif /* CONFIG_HT_OVERRIDES */
@@ -3679,6 +3685,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_cleanup(wpa_s);
 
 #ifdef CONFIG_P2P
+	if (wpa_s == wpa_s->parent)
+		wpas_p2p_group_remove(wpa_s, "*");
 	if (wpa_s == wpa_s->global->p2p_init_wpa_s && wpa_s->global->p2p) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Disable P2P since removing "
 			"the management interface is being removed");
