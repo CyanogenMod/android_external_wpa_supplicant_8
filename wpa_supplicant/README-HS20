@@ -197,6 +197,8 @@ Credentials can be pre-configured for automatic network selection:
 #	matching with the network. Multiple entries can be used to specify more
 #	than one SSID.
 #
+# sim_num: Identifier for which SIM to use in multi-SIM devices
+#
 # for example:
 #
 #cred={
