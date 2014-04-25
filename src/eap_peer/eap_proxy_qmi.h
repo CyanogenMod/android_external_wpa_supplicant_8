@@ -42,6 +42,12 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define QMI_RESP_TIME_OUT 650
 #define EAP_PROXY_KEYING_DATA_LEN 64
 
+#ifdef CONFIG_EAP_PROXY_DUAL_SIM
+#define MAX_NO_OF_SIM_SUPPORTED 2
+#else
+#define MAX_NO_OF_SIM_SUPPORTED 1
+#endif /* CONFIG_EAP_PROXY_DUAL_SIM */
+
 typedef enum {
   QMI_STATE_IDLE = 0x00,
   QMI_STATE_RESP_PENDING  = 0x01,
@@ -81,7 +87,7 @@ typedef enum {
 } eap_identity_format_e;
 
 struct eap_proxy_sm {
-   int qmihandle;
+   int qmihandle[MAX_NO_OF_SIM_SUPPORTED];
    int qmiTransactionId;
    qmi_state_e qmi_state;
    eap_proxy_qmi_srv_result srvc_result;
@@ -97,6 +103,7 @@ struct eap_proxy_sm {
    size_t eapReqDataLen;
    Boolean isEap;
    int eap_type;
+   int user_selected_sim;
 };
 
 int eap_proxy_allowed_method(struct eap_peer_config *config, int vendor,
