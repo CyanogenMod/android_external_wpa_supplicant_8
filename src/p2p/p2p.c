@@ -4210,7 +4210,7 @@ p2p_get_peer_found(struct p2p_data *p2p, const u8 *addr, int next)
 				dev = dl_list_first(&dev->list,
 						    struct p2p_device,
 						    list);
-				if (&dev->list == &p2p->devices)
+				if (!dev || &dev->list == &p2p->devices)
 					return NULL;
 			} while (dev->flags & P2P_DEV_PROBE_REQ_ONLY);
 		}
@@ -4222,7 +4222,7 @@ p2p_get_peer_found(struct p2p_data *p2p, const u8 *addr, int next)
 			dev = dl_list_first(&dev->list,
 					    struct p2p_device,
 					    list);
-			if (&dev->list == &p2p->devices)
+			if (!dev || &dev->list == &p2p->devices)
 				return NULL;
 		}
 	}
@@ -4463,12 +4463,24 @@ static struct wpabuf * p2p_build_nfc_handover(struct p2p_data *p2p,
 	p2p_buf_add_device_info(buf, p2p, NULL);
 
 	if (p2p->num_groups > 0) {
+		int freq = p2p_group_get_freq(p2p->groups[0]);
 		role = P2P_GO_IN_A_GROUP;
-		p2p_freq_to_channel(p2p_group_get_freq(p2p->groups[0]),
-				    &op_class, &channel);
+		if (p2p_freq_to_channel(freq, &op_class, &channel) < 0) {
+			p2p_dbg(p2p,
+				"Unknown GO operating frequency %d MHz for NFC handover",
+				freq);
+			wpabuf_free(buf);
+			return NULL;
+		}
 	} else if (client_freq > 0) {
 		role = P2P_CLIENT_IN_A_GROUP;
-		p2p_freq_to_channel(client_freq, &op_class, &channel);
+		if (p2p_freq_to_channel(client_freq, &op_class, &channel) < 0) {
+			p2p_dbg(p2p,
+				"Unknown client operating frequency %d MHz for NFC handover",
+				client_freq);
+			wpabuf_free(buf);
+			return NULL;
+		}
 	}
 
 	p2p_buf_add_oob_go_neg_channel(buf, p2p->cfg->country, op_class,

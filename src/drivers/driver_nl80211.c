@@ -29,6 +29,7 @@
 #include "eloop.h"
 #include "utils/list.h"
 #include "common/qca-vendor.h"
+#include "common/qca-vendor-attr.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "l2_packet/l2_packet.h"
@@ -235,6 +236,7 @@ struct i802_bss {
 	u8 addr[ETH_ALEN];
 
 	int freq;
+	int bandwidth;
 	int if_dynamic;
 
 	void *ctx;
@@ -385,8 +387,8 @@ static int wpa_driver_nl80211_if_remove(struct i802_bss *bss,
 					enum wpa_driver_if_type type,
 					const char *ifname);
 
-static int wpa_driver_nl80211_set_freq(struct i802_bss *bss,
-				       struct hostapd_freq_params *freq);
+static int nl80211_set_channel(struct i802_bss *bss,
+			       struct hostapd_freq_params *freq, int set_chan);
 static int nl80211_disable_11b_rates(struct wpa_driver_nl80211_data *drv,
 				     int ifindex, int disabled);
 
@@ -536,22 +538,22 @@ static enum chan_width convert2width(int width)
 
 static int is_ap_interface(enum nl80211_iftype nlmode)
 {
-	return (nlmode == NL80211_IFTYPE_AP ||
-		nlmode == NL80211_IFTYPE_P2P_GO);
+	return nlmode == NL80211_IFTYPE_AP ||
+		nlmode == NL80211_IFTYPE_P2P_GO;
 }
 
 
 static int is_sta_interface(enum nl80211_iftype nlmode)
 {
-	return (nlmode == NL80211_IFTYPE_STATION ||
-		nlmode == NL80211_IFTYPE_P2P_CLIENT);
+	return nlmode == NL80211_IFTYPE_STATION ||
+		nlmode == NL80211_IFTYPE_P2P_CLIENT;
 }
 
 
 static int is_p2p_net_interface(enum nl80211_iftype nlmode)
 {
-	return (nlmode == NL80211_IFTYPE_P2P_CLIENT ||
-		nlmode == NL80211_IFTYPE_P2P_GO);
+	return nlmode == NL80211_IFTYPE_P2P_CLIENT ||
+		nlmode == NL80211_IFTYPE_P2P_GO;
 }
 
 
@@ -3656,6 +3658,9 @@ static void wiphy_info_feature_flags(struct wiphy_info_data *info,
 
 	if (flags & NL80211_FEATURE_NEED_OBSS_SCAN)
 		capa->flags |= WPA_DRIVER_FLAGS_OBSS_SCAN;
+
+	if (flags & NL80211_FEATURE_AP_MODE_CHAN_WIDTH_CHANGE)
+		capa->flags |= WPA_DRIVER_FLAGS_HT_2040_COEX;
 }
 
 
@@ -4522,7 +4527,7 @@ static int nl80211_mgmt_subscribe_ap(struct i802_bss *bss)
  * it isn't per interface ... maybe just dump the scan
  * results periodically for OLBC?
  */
-//		WLAN_FC_STYPE_BEACON,
+		/* WLAN_FC_STYPE_BEACON, */
 	};
 	unsigned int i;
 
@@ -7299,6 +7304,30 @@ static int wpa_driver_nl80211_set_ap(void *priv,
 		nl80211_set_bss(bss, params->cts_protect, params->preamble,
 				params->short_slot_time, params->ht_opmode,
 				params->isolate, params->basic_rates);
+		if (beacon_set && params->freq &&
+		    params->freq->bandwidth != bss->bandwidth) {
+			wpa_printf(MSG_DEBUG,
+				   "nl80211: Update BSS %s bandwidth: %d -> %d",
+				   bss->ifname, bss->bandwidth,
+				   params->freq->bandwidth);
+			ret = nl80211_set_channel(bss, params->freq, 1);
+			if (ret) {
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Frequency set failed: %d (%s)",
+					   ret, strerror(-ret));
+			} else {
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Frequency set succeeded for ht2040 coex");
+				bss->bandwidth = params->freq->bandwidth;
+			}
+		} else if (!beacon_set) {
+			/*
+			 * cfg80211 updates the driver on frequence change in AP
+			 * mode only at the point when beaconing is started, so
+			 * set the initial value here.
+			 */
+			bss->bandwidth = params->freq->bandwidth;
+		}
 	}
 	return ret;
  nla_put_failure:
@@ -7363,8 +7392,8 @@ nla_put_failure:
 }
 
 
-static int wpa_driver_nl80211_set_freq(struct i802_bss *bss,
-				       struct hostapd_freq_params *freq)
+static int nl80211_set_channel(struct i802_bss *bss,
+			       struct hostapd_freq_params *freq, int set_chan)
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
@@ -7378,7 +7407,8 @@ static int wpa_driver_nl80211_set_freq(struct i802_bss *bss,
 	if (!msg)
 		return -1;
 
-	nl80211_cmd(drv, msg, 0, NL80211_CMD_SET_WIPHY);
+	nl80211_cmd(drv, msg, 0, set_chan ? NL80211_CMD_SET_CHANNEL :
+		    NL80211_CMD_SET_WIPHY);
 
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	if (nl80211_put_freq_params(msg, freq) < 0)
@@ -7841,7 +7871,7 @@ static void handle_monitor_read(int sock, void *eloop_ctx, void *sock_ctx)
 		return;
 	}
 
-	if (ieee80211_radiotap_iterator_init(&iter, (void*)buf, len, NULL)) {
+	if (ieee80211_radiotap_iterator_init(&iter, (void *) buf, len, NULL)) {
 		wpa_printf(MSG_INFO, "nl80211: received invalid radiotap frame");
 		return;
 	}
@@ -8395,7 +8425,7 @@ static int wpa_driver_nl80211_ap(struct wpa_driver_nl80211_data *drv,
 		return -1;
 	}
 
-	if (wpa_driver_nl80211_set_freq(drv->first_bss, &freq)) {
+	if (nl80211_set_channel(drv->first_bss, &freq, 0)) {
 		if (old_mode != nlmode)
 			wpa_driver_nl80211_set_mode(drv->first_bss, old_mode);
 		nl80211_remove_monitor_interface(drv);
@@ -9121,7 +9151,7 @@ static int wpa_driver_nl80211_set_supp_port(void *priv, int authorized)
 static int i802_set_freq(void *priv, struct hostapd_freq_params *freq)
 {
 	struct i802_bss *bss = priv;
-	return wpa_driver_nl80211_set_freq(bss, freq);
+	return nl80211_set_channel(bss, freq, 0);
 }
 
 
@@ -9620,7 +9650,7 @@ static int have_ifidx(struct wpa_driver_nl80211_data *drv, int ifidx)
 
 
 static int i802_set_wds_sta(void *priv, const u8 *addr, int aid, int val,
-                            const char *bridge_ifname, char *ifname_wds)
+			    const char *bridge_ifname, char *ifname_wds)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;

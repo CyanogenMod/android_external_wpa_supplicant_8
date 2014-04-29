@@ -62,7 +62,6 @@ u8 * hostapd_eid_supp_rates(struct hostapd_data *hapd, u8 *eid)
 	}
 
 	*pos++ = num;
-	count = 0;
 	for (i = 0, count = 0; i < hapd->iface->num_rates && count < num;
 	     i++) {
 		count++;
@@ -105,7 +104,6 @@ u8 * hostapd_eid_ext_supp_rates(struct hostapd_data *hapd, u8 *eid)
 
 	*pos++ = WLAN_EID_EXT_SUPP_RATES;
 	*pos++ = num;
-	count = 0;
 	for (i = 0, count = 0; i < hapd->iface->num_rates && count < num + 8;
 	     i++) {
 		count++;
@@ -565,7 +563,7 @@ static void handle_auth(struct hostapd_data *hapd,
 	}
 
 #ifdef CONFIG_TESTING_OPTIONS
-	if (hapd->iconf->ignore_auth_probability > 0.0d &&
+	if (hapd->iconf->ignore_auth_probability > 0.0 &&
 	    drand48() < hapd->iconf->ignore_auth_probability) {
 		wpa_printf(MSG_INFO,
 			   "TESTING: ignoring auth frame from " MACSTR,
@@ -1291,7 +1289,7 @@ static void handle_assoc(struct hostapd_data *hapd,
 
 #ifdef CONFIG_TESTING_OPTIONS
 	if (reassoc) {
-		if (hapd->iconf->ignore_reassoc_probability > 0.0d &&
+		if (hapd->iconf->ignore_reassoc_probability > 0.0 &&
 		    drand48() < hapd->iconf->ignore_reassoc_probability) {
 			wpa_printf(MSG_INFO,
 				   "TESTING: ignoring reassoc request from "
@@ -1299,7 +1297,7 @@ static void handle_assoc(struct hostapd_data *hapd,
 			return;
 		}
 	} else {
-		if (hapd->iconf->ignore_assoc_probability > 0.0d &&
+		if (hapd->iconf->ignore_assoc_probability > 0.0 &&
 		    drand48() < hapd->iconf->ignore_assoc_probability) {
 			wpa_printf(MSG_INFO,
 				   "TESTING: ignoring assoc request from "
@@ -1628,7 +1626,8 @@ static int handle_action(struct hostapd_data *hapd,
 	switch (mgmt->u.action.category) {
 #ifdef CONFIG_IEEE80211R
 	case WLAN_ACTION_FT:
-		if (wpa_ft_action_rx(sta->wpa_sm, (u8 *) &mgmt->u.action,
+		if (!sta ||
+		    wpa_ft_action_rx(sta->wpa_sm, (u8 *) &mgmt->u.action,
 				     len - IEEE80211_HDRLEN))
 			break;
 		return 1;
@@ -1647,6 +1646,15 @@ static int handle_action(struct hostapd_data *hapd,
 #endif /* CONFIG_WNM */
 	case WLAN_ACTION_PUBLIC:
 	case WLAN_ACTION_PROTECTED_DUAL:
+#ifdef CONFIG_IEEE80211N
+		if (mgmt->u.action.u.public_action.action ==
+		    WLAN_PA_20_40_BSS_COEX) {
+			wpa_printf(MSG_DEBUG,
+				   "HT20/40 coex mgmt frame received from STA "
+				   MACSTR, MAC2STR(mgmt->sa));
+			hostapd_2040_coex_action(hapd, mgmt, len);
+		}
+#endif /* CONFIG_IEEE80211N */
 		if (hapd->public_action_cb) {
 			hapd->public_action_cb(hapd->public_action_cb_ctx,
 					       (u8 *) mgmt, len,

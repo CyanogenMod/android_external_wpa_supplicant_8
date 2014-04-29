@@ -51,18 +51,9 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_AVOID_FREQUENCY = 10,
 	QCA_NL80211_VENDOR_SUBCMD_DFS_CAPABILITY =  11,
 	QCA_NL80211_VENDOR_SUBCMD_NAN =  12,
+	QCA_NL80211_VENDOR_SUBMCD_STATS_EXT = 13,
 };
 
-
-struct qca_avoid_freq_range {
-	u32 start_freq;
-	u32 end_freq;
-} STRUCT_PACKED;
-
-struct qca_avoid_freq_list {
-	u32 count;
-	struct qca_avoid_freq_range range[0];
-} STRUCT_PACKED;
 
 enum qca_wlan_vendor_attr {
 	QCA_WLAN_VENDOR_ATTR_INVALID = 0,
@@ -70,6 +61,8 @@ enum qca_wlan_vendor_attr {
 	QCA_WLAN_VENDOR_ATTR_DFS     = 1,
 	/* used by QCA_NL80211_VENDOR_SUBCMD_NAN */
 	QCA_WLAN_VENDOR_ATTR_NAN     = 2,
+	/* used by QCA_NL80211_VENDOR_SUBCMD_STATS_EXT */
+	QCA_WLAN_VENDOR_ATTR_STATS_EXT     = 3,
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_MAX	= QCA_WLAN_VENDOR_ATTR_AFTER_LAST - 1,

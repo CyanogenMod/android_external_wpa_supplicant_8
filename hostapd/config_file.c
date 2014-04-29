@@ -2445,8 +2445,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			wpa_printf(MSG_ERROR, "Line %d: tries to enable ACS but CONFIG_ACS disabled",
 				   line);
 			return 1;
-#endif /* CONFIG_ACS */
+#else /* CONFIG_ACS */
 			conf->channel = 0;
+#endif /* CONFIG_ACS */
 		} else
 			conf->channel = atoi(pos);
 	} else if (os_strcmp(buf, "chanlist") == 0) {
@@ -3074,8 +3075,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		char *end;					\
 								\
 		conf->_val = strtod(pos, &end);			\
-		if (*end || conf->_val < 0.0d ||		\
-		    conf->_val > 1.0d) {			\
+		if (*end || conf->_val < 0.0 ||			\
+		    conf->_val > 1.0) {				\
 			wpa_printf(MSG_ERROR,			\
 				   "Line %d: Invalid value '%s'", \
 				   line, pos);			\
