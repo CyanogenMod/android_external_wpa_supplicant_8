@@ -84,6 +84,8 @@ static void wpa_tdls_tpk_retry_timeout(void *eloop_ctx, void *timeout_ctx);
 static void wpa_tdls_peer_free(struct wpa_sm *sm, struct wpa_tdls_peer *peer);
 static void wpa_tdls_disable_peer_link(struct wpa_sm *sm,
 				       struct wpa_tdls_peer *peer);
+static int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr,
+				  u16 reason_code);
 
 
 #define TDLS_MAX_IE_LEN 80
@@ -230,9 +232,9 @@ static int wpa_tdls_tpk_send(struct wpa_sm *sm, const u8 *dest, u8 action_code,
 	struct wpa_tdls_peer *peer;
 
 	wpa_printf(MSG_DEBUG, "TDLS: TPK send dest=" MACSTR " action_code=%u "
-		   "dialog_token=%u status_code=%u msg_len=%u",
+		   "dialog_token=%u status_code=%u peer_capab=%u msg_len=%u",
 		   MAC2STR(dest), action_code, dialog_token, status_code,
-		   (unsigned int) msg_len);
+		   peer_capab, (unsigned int) msg_len);
 
 	if (wpa_tdls_send_tpk_msg(sm, dest, action_code, dialog_token,
 				  status_code, peer_capab, msg, msg_len)) {
@@ -677,7 +679,8 @@ static void wpa_tdls_linkid(struct wpa_sm *sm, struct wpa_tdls_peer *peer,
 }
 
 
-int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr, u16 reason_code)
+static int wpa_tdls_send_teardown(struct wpa_sm *sm, const u8 *addr,
+				  u16 reason_code)
 {
 	struct wpa_tdls_peer *peer;
 	struct wpa_tdls_ftie *ftie;
@@ -758,9 +761,6 @@ skip_ies:
 	wpa_tdls_tpk_send(sm, addr, WLAN_TDLS_TEARDOWN, 0,
 			  reason_code, 0, rbuf, pos - rbuf);
 	os_free(rbuf);
-
-	/* clear the Peerkey statemachine */
-	wpa_tdls_peer_free(sm, peer);
 
 	return 0;
 }
@@ -1310,14 +1310,15 @@ static int wpa_tdls_send_tpk_m3(struct wpa_sm *sm,
 	}
 #endif /* CONFIG_TDLS_TESTING */
 
+skip_ies:
+
 	if (peer->vht_capabilities)
 		peer_capab |= TDLS_PEER_VHT;
-	else if (peer->ht_capabilities)
+	if (peer->ht_capabilities)
 		peer_capab |= TDLS_PEER_HT;
-	else if (peer->wmm_capable)
+	if (peer->wmm_capable)
 		peer_capab |= TDLS_PEER_WMM;
 
-skip_ies:
 	status = wpa_tdls_tpk_send(sm, src_addr, WLAN_TDLS_SETUP_CONFIRM,
 				   dtoken, 0, peer_capab, rbuf, pos - rbuf);
 	os_free(rbuf);
@@ -2462,7 +2463,8 @@ void wpa_tdls_remove(struct wpa_sm *sm, const u8 *addr)
 		 * Disable previous link to allow renegotiation to be completed
 		 * on AP path.
 		 */
-		wpa_tdls_disable_peer_link(sm, peer);
+		wpa_tdls_do_teardown(sm, peer,
+				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
 	}
 }
 
@@ -2588,8 +2590,8 @@ void wpa_tdls_teardown_peers(struct wpa_sm *sm)
 		wpa_printf(MSG_DEBUG, "TDLS: Tear down peer " MACSTR,
 			   MAC2STR(peer->addr));
 		if (sm->tdls_external_setup)
-			wpa_tdls_send_teardown(sm, peer->addr,
-					       WLAN_REASON_DEAUTH_LEAVING);
+			wpa_tdls_do_teardown(sm, peer,
+					     WLAN_REASON_DEAUTH_LEAVING);
 		else
 			wpa_sm_tdls_oper(sm, TDLS_TEARDOWN, peer->addr);
 
