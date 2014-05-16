@@ -751,13 +751,13 @@ void wpa_supplicant_terminate_proc(struct wpa_global *global)
 	struct wpa_supplicant *wpa_s = global->ifaces;
 	while (wpa_s) {
 		struct wpa_supplicant *next = wpa_s->next;
+		if (wpas_wps_terminate_pending(wpa_s) == 1)
+			pending = 1;
 #ifdef CONFIG_P2P
 		if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE ||
 		    (wpa_s->current_ssid && wpa_s->current_ssid->p2p_group))
 			wpas_p2p_disconnect(wpa_s);
 #endif /* CONFIG_P2P */
-		if (wpas_wps_terminate_pending(wpa_s) == 1)
-			pending = 1;
 		wpa_s = next;
 	}
 #endif /* CONFIG_WPS */
@@ -4333,7 +4333,7 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	if (count > 3 && wpa_s->current_ssid) {
 		wpa_printf(MSG_DEBUG, "Continuous association failures - "
 			   "consider temporary network disabling");
-		wpas_auth_failed(wpa_s);
+		wpas_auth_failed(wpa_s, "CONN_FAILED");
 	}
 
 	switch (count) {
@@ -4498,7 +4498,7 @@ int wpas_is_p2p_prioritized(struct wpa_supplicant *wpa_s)
 }
 
 
-void wpas_auth_failed(struct wpa_supplicant *wpa_s)
+void wpas_auth_failed(struct wpa_supplicant *wpa_s, char *reason)
 {
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
 	int dur;
@@ -4552,9 +4552,9 @@ void wpas_auth_failed(struct wpa_supplicant *wpa_s)
 	ssid->disabled_until.sec = now.sec + dur;
 
 	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_TEMP_DISABLED
-		"id=%d ssid=\"%s\" auth_failures=%u duration=%d",
+		"id=%d ssid=\"%s\" auth_failures=%u duration=%d reason=%s",
 		ssid->id, wpa_ssid_txt(ssid->ssid, ssid->ssid_len),
-		ssid->auth_failures, dur);
+		ssid->auth_failures, dur, reason);
 }
 
 

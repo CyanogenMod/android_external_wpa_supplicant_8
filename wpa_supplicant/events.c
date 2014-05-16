@@ -2153,7 +2153,7 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 			"pre-shared key may be incorrect");
 		if (wpas_p2p_4way_hs_failed(wpa_s) > 0)
 			return; /* P2P group removed */
-		wpas_auth_failed(wpa_s);
+		wpas_auth_failed(wpa_s, "WRONG_KEY");
 	}
 	if (!wpa_s->disconnected &&
 	    (!wpa_s->auto_reconnect_disabled ||
@@ -2611,7 +2611,7 @@ static void wpas_event_disconnect(struct wpa_supplicant *wpa_s, const u8 *addr,
 		(wpa_s->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA)) &&
 	       eapol_sm_failed(wpa_s->eapol))) &&
 	     !wpa_s->eap_expected_failure))
-		wpas_auth_failed(wpa_s);
+		wpas_auth_failed(wpa_s, "AUTH_FAILED");
 
 #ifdef CONFIG_P2P
 	if (deauth && reason_code > 0) {
@@ -3359,6 +3359,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			 */
 			wpas_p2p_disconnect(wpa_s);
 			break;
+		}
+		if (wpa_s->p2p_scan_work && wpa_s->global->p2p &&
+		    p2p_in_progress(wpa_s->global->p2p) > 1) {
+			/* This radio work will be cancelled, so clear P2P
+			 * state as well.
+			 */
+			p2p_stop_find(wpa_s->global->p2p);
 		}
 #endif /* CONFIG_P2P */
 
