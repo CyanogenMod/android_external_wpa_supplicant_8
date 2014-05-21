@@ -1169,7 +1169,6 @@ void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 	DBusMessage *msg;
 	DBusMessageIter iter, dict_iter;
 	struct wpas_dbus_priv *iface;
-	char group_obj_path[WPAS_DBUS_OBJECT_PATH_MAX];
 
 	iface = wpa_s->parent->global->dbus;
 
@@ -1177,14 +1176,13 @@ void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 	if (iface == NULL)
 		return;
 
-	if (wpas_dbus_get_group_obj_path(wpa_s, ssid, group_obj_path) < 0)
+	if (wpa_s->dbus_groupobj_path == NULL)
 		return;
 
 	/* New interface has been created for this group */
 	msg = dbus_message_new_signal(wpa_s->parent->dbus_new_path,
 				      WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 				      "GroupStarted");
-
 	if (msg == NULL)
 		return;
 
@@ -1207,7 +1205,7 @@ void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 		goto nomem;
 
 	if (!wpa_dbus_dict_append_object_path(&dict_iter, "group_object",
-					     group_obj_path) ||
+					      wpa_s->dbus_groupobj_path) ||
 	   !wpa_dbus_dict_close_write(&iter, &dict_iter))
 		goto nomem;
 
@@ -1220,7 +1218,7 @@ nomem:
 
 /**
  *
- * Method to emit GONeogtiation Success or Failure signals based
+ * Method to emit GONegotiation Success or Failure signals based
  * on status.
  * @status: Status of the GO neg request. 0 for success, other for errors.
  */
@@ -2984,7 +2982,6 @@ static const struct wpa_dbus_signal_desc wpas_dbus_interface_signals[] = {
 	{ "DeviceFound", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 	  {
 		  { "path", "o", ARG_OUT },
-		  { "properties", "a{sv}", ARG_OUT },
 		  END_ARGS
 	  }
 	},
@@ -3047,12 +3044,13 @@ static const struct wpa_dbus_signal_desc wpas_dbus_interface_signals[] = {
 	},
 	{ "GONegotiationSuccess", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 	  {
+		  { "properties", "a{sv}", ARG_OUT },
 		  END_ARGS
 	  }
 	},
 	{ "GONegotiationFailure", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
 	  {
-		  { "status", "i", ARG_OUT },
+		  { "properties", "a{sv}", ARG_OUT },
 		  END_ARGS
 	  }
 	},
