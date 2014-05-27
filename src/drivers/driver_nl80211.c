@@ -7693,11 +7693,14 @@ static void nl80211_remove_iface(struct wpa_driver_nl80211_data *drv,
 				 int ifidx)
 {
 	struct nl_msg *msg;
+	struct wpa_driver_nl80211_data *drv2;
 
 	wpa_printf(MSG_DEBUG, "nl80211: Remove interface ifindex=%d", ifidx);
 
 	/* stop listening for EAPOL on this interface */
-	del_ifidx(drv, ifidx);
+	dl_list_for_each(drv2, &drv->global->interfaces,
+			 struct wpa_driver_nl80211_data, list)
+		del_ifidx(drv2, ifidx);
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -7808,8 +7811,17 @@ static int nl80211_create_iface_once(struct wpa_driver_nl80211_data *drv,
 	if (ifidx <= 0)
 		return -1;
 
-	/* start listening for EAPOL on this interface */
-	add_ifidx(drv, ifidx);
+	/*
+	 * Some virtual interfaces need to process EAPOL packets and events on
+	 * the parent interface. This is used mainly with hostapd.
+	 */
+	if (drv->hostapd ||
+	    iftype == NL80211_IFTYPE_AP_VLAN ||
+	    iftype == NL80211_IFTYPE_WDS ||
+	    iftype == NL80211_IFTYPE_MONITOR) {
+		/* start listening for EAPOL on this interface */
+		add_ifidx(drv, ifidx);
+	}
 
 	if (addr && iftype != NL80211_IFTYPE_MONITOR &&
 	    linux_set_ifhwaddr(drv->global->ioctl_sock, ifname, addr)) {
@@ -10179,8 +10191,12 @@ static int wpa_driver_nl80211_if_remove(struct i802_bss *bss,
 		   __func__, type, ifname, ifindex, bss->added_if);
 	if (ifindex > 0 && (bss->added_if || bss->ifindex != ifindex))
 		nl80211_remove_iface(drv, ifindex);
-	else if (ifindex > 0 && !bss->added_if)
-		del_ifidx(drv, ifindex);
+	else if (ifindex > 0 && !bss->added_if) {
+		struct wpa_driver_nl80211_data *drv2;
+		dl_list_for_each(drv2, &drv->global->interfaces,
+				 struct wpa_driver_nl80211_data, list)
+			del_ifidx(drv2, ifindex);
+	}
 
 	if (type != WPA_IF_AP_BSS)
 		return 0;
