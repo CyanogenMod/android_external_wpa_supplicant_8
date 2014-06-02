@@ -277,10 +277,21 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 
 	authsrv_deinit(hapd);
 
-	if (hapd->interface_added &&
-	    hostapd_if_remove(hapd, WPA_IF_AP_BSS, hapd->conf->iface)) {
-		wpa_printf(MSG_WARNING, "Failed to remove BSS interface %s",
-			   hapd->conf->iface);
+	if (hapd->interface_added) {
+		hapd->interface_added = 0;
+		if (hostapd_if_remove(hapd, WPA_IF_AP_BSS, hapd->conf->iface)) {
+			wpa_printf(MSG_WARNING,
+				   "Failed to remove BSS interface %s",
+				   hapd->conf->iface);
+			hapd->interface_added = 1;
+		} else {
+			/*
+			 * Since this was a dynamically added interface, the
+			 * driver wrapper may have removed its internal instance
+			 * and hapd->drv_priv is not valid anymore.
+			 */
+			hapd->drv_priv = NULL;
+		}
 	}
 
 	os_free(hapd->probereq_cb);
@@ -430,6 +441,14 @@ static int hostapd_flush_old_stations(struct hostapd_data *hapd, u16 reason)
 	hostapd_free_stas(hapd);
 
 	return ret;
+}
+
+
+static void hostapd_bss_deinit_no_free(struct hostapd_data *hapd)
+{
+	hostapd_free_stas(hapd);
+	hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
+	hostapd_clear_wep(hapd);
 }
 
 
@@ -1226,8 +1245,14 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 		hapd = iface->bss[j];
 		if (j)
 			os_memcpy(hapd->own_addr, prev_addr, ETH_ALEN);
-		if (hostapd_setup_bss(hapd, j == 0))
+		if (hostapd_setup_bss(hapd, j == 0)) {
+			do {
+				hapd = iface->bss[j];
+				hostapd_bss_deinit_no_free(hapd);
+				hostapd_free_hapd_data(hapd);
+			} while (j-- > 0);
 			goto fail;
+		}
 		if (hostapd_mac_comp_empty(hapd->conf->bssid) == 0)
 			prev_addr = hapd->own_addr;
 	}
@@ -1346,9 +1371,7 @@ static void hostapd_bss_deinit(struct hostapd_data *hapd)
 {
 	wpa_printf(MSG_DEBUG, "%s: deinit bss %s", __func__,
 		   hapd->conf->iface);
-	hostapd_free_stas(hapd);
-	hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
-	hostapd_clear_wep(hapd);
+	hostapd_bss_deinit_no_free(hapd);
 	hostapd_cleanup(hapd);
 }
 
@@ -1601,8 +1624,10 @@ void hostapd_interface_deinit_free(struct hostapd_iface *iface)
 	hostapd_interface_deinit(iface);
 	wpa_printf(MSG_DEBUG, "%s: driver=%p drv_priv=%p -> hapd_deinit",
 		   __func__, driver, drv_priv);
-	if (driver && driver->hapd_deinit && drv_priv)
+	if (driver && driver->hapd_deinit && drv_priv) {
 		driver->hapd_deinit(drv_priv);
+		iface->bss[0]->drv_priv = NULL;
+	}
 	hostapd_interface_free(iface);
 }
 
@@ -1630,6 +1655,8 @@ static void hostapd_deinit_driver(const struct wpa_driver_ops *driver,
 
 int hostapd_enable_iface(struct hostapd_iface *hapd_iface)
 {
+	size_t j;
+
 	if (hapd_iface->bss[0]->drv_priv != NULL) {
 		wpa_printf(MSG_ERROR, "Interface %s already enabled",
 			   hapd_iface->conf->bss[0]->iface);
@@ -1639,6 +1666,8 @@ int hostapd_enable_iface(struct hostapd_iface *hapd_iface)
 	wpa_printf(MSG_DEBUG, "Enable interface %s",
 		   hapd_iface->conf->bss[0]->iface);
 
+	for (j = 0; j < hapd_iface->num_bss; j++)
+		hostapd_set_security_params(hapd_iface->conf->bss[j], 1);
 	if (hostapd_config_check(hapd_iface->conf, 1) < 0) {
 		wpa_printf(MSG_INFO, "Invalid configuration - cannot enable");
 		return -1;
@@ -1667,7 +1696,7 @@ int hostapd_reload_iface(struct hostapd_iface *hapd_iface)
 	wpa_printf(MSG_DEBUG, "Reload interface %s",
 		   hapd_iface->conf->bss[0]->iface);
 	for (j = 0; j < hapd_iface->num_bss; j++)
-		hostapd_set_security_params(hapd_iface->conf->bss[j]);
+		hostapd_set_security_params(hapd_iface->conf->bss[j], 1);
 	if (hostapd_config_check(hapd_iface->conf, 1) < 0) {
 		wpa_printf(MSG_ERROR, "Updated configuration is invalid");
 		return -1;
@@ -1688,6 +1717,13 @@ int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 
 	if (hapd_iface == NULL)
 		return -1;
+
+	if (hapd_iface->bss[0]->drv_priv == NULL) {
+		wpa_printf(MSG_INFO, "Interface %s already disabled",
+			   hapd_iface->conf->bss[0]->iface);
+		return -1;
+	}
+
 	wpa_msg(hapd_iface->bss[0]->msg_ctx, MSG_INFO, AP_EVENT_DISABLED);
 	driver = hapd_iface->bss[0]->driver;
 	drv_priv = hapd_iface->bss[0]->drv_priv;
@@ -1699,9 +1735,7 @@ int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 	/* same as hostapd_interface_deinit without deinitializing ctrl-iface */
 	for (j = 0; j < hapd_iface->num_bss; j++) {
 		struct hostapd_data *hapd = hapd_iface->bss[j];
-		hostapd_free_stas(hapd);
-		hostapd_flush_old_stations(hapd, WLAN_REASON_DEAUTH_LEAVING);
-		hostapd_clear_wep(hapd);
+		hostapd_bss_deinit_no_free(hapd);
 		hostapd_free_hapd_data(hapd);
 	}
 

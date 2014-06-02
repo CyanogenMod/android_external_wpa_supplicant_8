@@ -652,7 +652,7 @@ static int send_and_recv(struct nl80211_global *global,
 
 	while (err > 0) {
 		int res = nl_recvmsgs(nl_handle, cb);
-		if (res) {
+		if (res < 0) {
 			wpa_printf(MSG_INFO,
 				   "nl80211: %s->nl_recvmsgs failed: %d",
 				   __func__, res);
@@ -910,7 +910,7 @@ static void nl80211_recv_beacons(int sock, void *eloop_ctx, void *handle)
 	wpa_printf(MSG_EXCESSIVE, "nl80211: Beacon event message available");
 
 	res = nl_recvmsgs(handle, w->nl_cb);
-	if (res) {
+	if (res < 0) {
 		wpa_printf(MSG_INFO, "nl80211: %s->nl_recvmsgs failed: %d",
 			   __func__, res);
 	}
@@ -3276,7 +3276,7 @@ static void wpa_driver_nl80211_event_receive(int sock, void *eloop_ctx,
 	wpa_printf(MSG_MSGDUMP, "nl80211: Event message available");
 
 	res = nl_recvmsgs(handle, cb);
-	if (res) {
+	if (res < 0) {
 		wpa_printf(MSG_INFO, "nl80211: %s->nl_recvmsgs failed: %d",
 			   __func__, res);
 	}
@@ -10107,19 +10107,22 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 
 		if (linux_get_ifhwaddr(drv->global->ioctl_sock, ifname,
 				       new_addr) < 0) {
-			nl80211_remove_iface(drv, ifidx);
+			if (added)
+				nl80211_remove_iface(drv, ifidx);
 			return -1;
 		}
 		if (nl80211_addr_in_use(drv->global, new_addr)) {
 			wpa_printf(MSG_DEBUG, "nl80211: Allocate new address "
 				   "for P2P group interface");
 			if (nl80211_p2p_interface_addr(drv, new_addr) < 0) {
-				nl80211_remove_iface(drv, ifidx);
+				if (added)
+					nl80211_remove_iface(drv, ifidx);
 				return -1;
 			}
 			if (linux_set_ifhwaddr(drv->global->ioctl_sock, ifname,
 					       new_addr) < 0) {
-				nl80211_remove_iface(drv, ifidx);
+				if (added)
+					nl80211_remove_iface(drv, ifidx);
 				return -1;
 			}
 		}
@@ -10148,7 +10151,8 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 
 		if (linux_set_iface_flags(drv->global->ioctl_sock, ifname, 1))
 		{
-			nl80211_remove_iface(drv, ifidx);
+			if (added)
+				nl80211_remove_iface(drv, ifidx);
 			os_free(new_bss);
 			return -1;
 		}
