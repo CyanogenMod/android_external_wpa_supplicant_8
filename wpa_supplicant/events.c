@@ -1872,6 +1872,8 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_AP
 	if (wpa_s->ap_iface) {
+		if (!data)
+			return;
 		hostapd_notif_assoc(wpa_s->ap_iface->bss[0],
 				    data->assoc_info.addr,
 				    data->assoc_info.req_ies,
@@ -1960,7 +1962,8 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE ||
 	    (wpa_s->current_ssid &&
 	     wpa_s->current_ssid->mode == IEEE80211_MODE_IBSS)) {
-		if (wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE &&
+		if (wpa_s->current_ssid &&
+		    wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE &&
 		    (wpa_s->drv_flags &
 		     WPA_DRIVER_FLAGS_SET_KEYS_AFTER_ASSOC_DONE)) {
 			/*

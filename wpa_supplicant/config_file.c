@@ -790,7 +790,8 @@ static void wpa_config_write_cred(FILE *f, struct wpa_cred *cred)
 		const char *name;
 		name = eap_get_name(cred->eap_method[0].vendor,
 				    cred->eap_method[0].method);
-		fprintf(f, "\teap=%s\n", name);
+		if (name)
+			fprintf(f, "\teap=%s\n", name);
 	}
 	if (cred->phase1)
 		fprintf(f, "\tphase1=\"%s\"\n", cred->phase1);
@@ -1164,6 +1165,10 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 
 	if (config->bgscan)
 		fprintf(f, "bgscan=\"%s\"\n", config->bgscan);
+
+	if (config->p2p_search_delay != DEFAULT_P2P_SEARCH_DELAY)
+		fprintf(f, "p2p_search_delay=%u\n",
+			config->p2p_search_delay);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */
