@@ -584,6 +584,13 @@ static int wpa_supplicant_ctrl_iface_tdls_teardown(
 	u8 peer[ETH_ALEN];
 	int ret;
 
+	if (os_strcmp(addr, "*") == 0) {
+		/* remove everyone */
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN *");
+		wpa_tdls_teardown_peers(wpa_s->wpa);
+		return 0;
+	}
+
 	if (hwaddr_aton(addr, peer)) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE TDLS_TEARDOWN: invalid "
 			   "address '%s'", addr);
@@ -4760,7 +4767,7 @@ static int p2p_ctrl_set(struct wpa_supplicant *wpa_s, char *cmd)
 
 	if (os_strcmp(cmd, "listen_channel") == 0) {
 		return p2p_set_listen_channel(wpa_s->global->p2p, 81,
-					      atoi(param));
+					      atoi(param), 1);
 	}
 
 	if (os_strcmp(cmd, "ssid_postfix") == 0) {

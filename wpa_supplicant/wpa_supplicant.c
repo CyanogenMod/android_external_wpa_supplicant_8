@@ -447,9 +447,7 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_supplicant_ap_deinit(wpa_s);
 #endif /* CONFIG_AP */
 
-#ifdef CONFIG_P2P
 	wpas_p2p_deinit(wpa_s);
-#endif /* CONFIG_P2P */
 
 #ifdef CONFIG_OFFCHANNEL
 	offchannel_deinit(wpa_s);
@@ -705,9 +703,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 #endif /* IEEE8021X_EAPOL */
 		wpa_s->after_wps = 0;
 		wpa_s->known_wps_freq = 0;
-#ifdef CONFIG_P2P
 		wpas_p2p_completed(wpa_s);
-#endif /* CONFIG_P2P */
 
 		sme_sched_obss_scan(wpa_s, 1);
 	} else if (state == WPA_DISCONNECTED || state == WPA_ASSOCIATING ||
@@ -736,6 +732,12 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s,
 
 	if (wpa_s->wpa_state != old_state) {
 		wpas_notify_state_changed(wpa_s, wpa_s->wpa_state, old_state);
+
+		/*
+		 * Notify the P2P Device interface about a state change in one
+		 * of the interfaces.
+		 */
+		wpas_p2p_indicate_state_change(wpa_s);
 
 		if (wpa_s->wpa_state == WPA_COMPLETED ||
 		    old_state == WPA_COMPLETED)
@@ -3725,12 +3727,10 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-#ifdef CONFIG_P2P
 	if (iface->p2p_mgmt && wpas_p2p_init(wpa_s->global, wpa_s) < 0) {
 		wpa_msg(wpa_s, MSG_ERROR, "Failed to init P2P");
 		return -1;
 	}
-#endif /* CONFIG_P2P */
 
 	if (wpa_bss_init(wpa_s) < 0)
 		return -1;
@@ -3781,16 +3781,7 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 	}
 
 	wpa_supplicant_cleanup(wpa_s);
-
-#ifdef CONFIG_P2P
-	if (wpa_s == wpa_s->parent)
-		wpas_p2p_group_remove(wpa_s, "*");
-	if (wpa_s == wpa_s->global->p2p_init_wpa_s && wpa_s->global->p2p) {
-		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Disable P2P since removing "
-			"the management interface is being removed");
-		wpas_p2p_deinit_global(wpa_s->global);
-	}
-#endif /* CONFIG_P2P */
+	wpas_p2p_deinit_iface(wpa_s);
 
 	wpas_ctrl_radio_work_flush(wpa_s);
 	radio_remove_interface(wpa_s);
@@ -4219,11 +4210,7 @@ void wpa_supplicant_update_config(struct wpa_supplicant *wpa_s)
 #ifdef CONFIG_WPS
 	wpas_wps_update_config(wpa_s);
 #endif /* CONFIG_WPS */
-
-#ifdef CONFIG_P2P
 	wpas_p2p_update_config(wpa_s);
-#endif /* CONFIG_P2P */
-
 	wpa_s->conf->changed_parameters = 0;
 }
 
@@ -4640,24 +4627,30 @@ void wpas_request_connection(struct wpa_supplicant *wpa_s)
 }
 
 
-void dump_freq_array(struct wpa_supplicant *wpa_s, const char *title,
-		     int *freq_array, unsigned int len)
+void dump_freq_data(struct wpa_supplicant *wpa_s, const char *title,
+		    struct wpa_used_freq_data *freqs_data,
+		    unsigned int len)
 {
 	unsigned int i;
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Shared frequencies (len=%u): %s",
 		len, title);
-	for (i = 0; i < len; i++)
-		wpa_dbg(wpa_s, MSG_DEBUG, "freq[%u]: %d", i, freq_array[i]);
+	for (i = 0; i < len; i++) {
+		struct wpa_used_freq_data *cur = &freqs_data[i];
+		wpa_dbg(wpa_s, MSG_DEBUG, "freq[%u]: %d, flags=0x%X",
+			i, cur->freq, cur->flags);
+	}
 }
 
 
 /*
  * Find the operating frequencies of any of the virtual interfaces that
- * are using the same radio as the current interface.
+ * are using the same radio as the current interface, and in addition, get
+ * information about the interface types that are using the frequency.
  */
-int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
-			   int *freq_array, unsigned int len)
+int get_shared_radio_freqs_data(struct wpa_supplicant *wpa_s,
+				struct wpa_used_freq_data *freqs_data,
+				unsigned int len)
 {
 	struct wpa_supplicant *ifs;
 	u8 bssid[ETH_ALEN];
@@ -4666,31 +4659,12 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 
 	wpa_dbg(wpa_s, MSG_DEBUG,
 		"Determining shared radio frequencies (max len %u)", len);
-	os_memset(freq_array, 0, sizeof(int) * len);
-
-	/* First add the frequency of the local interface */
-	if (wpa_s->current_ssid != NULL && wpa_s->assoc_freq != 0) {
-		if (wpa_s->current_ssid->mode == WPAS_MODE_AP ||
-		    wpa_s->current_ssid->mode == WPAS_MODE_P2P_GO)
-			freq_array[idx++] = wpa_s->current_ssid->frequency;
-		else if (wpa_drv_get_bssid(wpa_s, bssid) == 0)
-			freq_array[idx++] = wpa_s->assoc_freq;
-	}
-
-	/* If get_radio_name is not supported, use only the local freq */
-	if (!wpa_driver_get_radio_name(wpa_s)) {
-		freq = wpa_drv_shared_freq(wpa_s);
-		if (freq > 0 && idx < len &&
-		    (idx == 0 || freq_array[0] != freq))
-			freq_array[idx++] = freq;
-		dump_freq_array(wpa_s, "No get_radio_name", freq_array, idx);
-		return idx;
-	}
+	os_memset(freqs_data, 0, sizeof(struct wpa_used_freq_data) * len);
 
 	dl_list_for_each(ifs, &wpa_s->radio->ifaces, struct wpa_supplicant,
 			 radio_list) {
-		if (wpa_s == ifs)
-			continue;
+		if (idx == len)
+			break;
 
 		if (ifs->current_ssid == NULL || ifs->assoc_freq == 0)
 			continue;
@@ -4705,13 +4679,45 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 
 		/* Hold only distinct freqs */
 		for (i = 0; i < idx; i++)
-			if (freq_array[i] == freq)
+			if (freqs_data[i].freq == freq)
 				break;
 
 		if (i == idx)
-			freq_array[idx++] = freq;
+			freqs_data[idx++].freq = freq;
+
+		if (ifs->current_ssid->mode == WPAS_MODE_INFRA) {
+			freqs_data[i].flags = ifs->current_ssid->p2p_group ?
+				WPA_FREQ_USED_BY_P2P_CLIENT :
+				WPA_FREQ_USED_BY_INFRA_STATION;
+		}
 	}
 
-	dump_freq_array(wpa_s, "completed iteration", freq_array, idx);
+	dump_freq_data(wpa_s, "completed iteration", freqs_data, idx);
 	return idx;
+}
+
+
+/*
+ * Find the operating frequencies of any of the virtual interfaces that
+ * are using the same radio as the current interface.
+ */
+int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
+			   int *freq_array, unsigned int len)
+{
+	struct wpa_used_freq_data *freqs_data;
+	int num, i;
+
+	os_memset(freq_array, 0, sizeof(int) * len);
+
+	freqs_data = os_calloc(len, sizeof(struct wpa_used_freq_data));
+	if (!freqs_data)
+		return -1;
+
+	num = get_shared_radio_freqs_data(wpa_s, freqs_data, len);
+	for (i = 0; i < num; i++)
+		freq_array[i] = freqs_data[i].freq;
+
+	os_free(freqs_data);
+
+	return num;
 }

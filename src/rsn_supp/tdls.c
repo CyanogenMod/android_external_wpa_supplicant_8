@@ -802,7 +802,7 @@ static void wpa_tdls_disable_peer_link(struct wpa_sm *sm,
 }
 
 
-void wpa_tdls_disable_link(struct wpa_sm *sm, const u8 *addr)
+void wpa_tdls_disable_unreachable_link(struct wpa_sm *sm, const u8 *addr)
 {
 	struct wpa_tdls_peer *peer;
 
@@ -811,8 +811,25 @@ void wpa_tdls_disable_link(struct wpa_sm *sm, const u8 *addr)
 			break;
 	}
 
-	if (peer)
+	if (!peer || !peer->tpk_success) {
+		wpa_printf(MSG_DEBUG, "TDLS: Peer " MACSTR
+			   " not connected - cannot teardown unreachable link",
+			   MAC2STR(addr));
+		return;
+	}
+
+	if (wpa_tdls_is_external_setup(sm)) {
+		/*
+		 * Disable the link, send a teardown packet through the
+		 * AP, and then reset link data.
+		 */
+		wpa_sm_tdls_oper(sm, TDLS_DISABLE_LINK, addr);
+		wpa_tdls_send_teardown(sm, addr,
+				       WLAN_REASON_TDLS_TEARDOWN_UNREACHABLE);
+		wpa_tdls_peer_free(sm, peer);
+	} else {
 		wpa_tdls_disable_peer_link(sm, peer);
+	}
 }
 
 
@@ -1831,7 +1848,6 @@ skip_rsn:
 		if (os_get_random(peer->rnonce, WPA_NONCE_LEN)) {
 			wpa_msg(sm->ctx->ctx, MSG_WARNING,
 				"TDLS: Failed to get random data for responder nonce");
-			wpa_tdls_peer_free(sm, peer);
 			goto error;
 		}
 	}
@@ -1887,8 +1903,10 @@ skip_rsn:
 
 skip_rsn_check:
 	/* add the peer to the driver as a "setup in progress" peer */
-	wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, 0, NULL, 0, NULL, NULL, 0,
-				NULL, 0, NULL, 0, NULL, 0);
+	if (wpa_sm_tdls_peer_addset(sm, peer->addr, 1, 0, 0, NULL, 0, NULL,
+				    NULL, 0, NULL, 0, NULL, 0, NULL, 0))
+		goto error;
+
 	peer->tpk_in_progress = 1;
 
 	wpa_printf(MSG_DEBUG, "TDLS: Sending TDLS Setup Response / TPK M2");
@@ -1902,6 +1920,8 @@ skip_rsn_check:
 error:
 	wpa_tdls_send_error(sm, src_addr, WLAN_TDLS_SETUP_RESPONSE, dtoken,
 			    status);
+	if (peer)
+		wpa_tdls_peer_free(sm, peer);
 	return -1;
 }
 
