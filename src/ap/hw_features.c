@@ -466,6 +466,9 @@ static int ieee80211n_check_40mhz(struct hostapd_iface *iface)
 	struct wpa_driver_scan_params params;
 	int ret;
 
+	if (iface->conf->ht2040_coex_disable == 1)
+		return 0;
+
 	if (!iface->conf->secondary_channel)
 		return 0; /* HT40 not used */
 

@@ -623,6 +623,7 @@ struct hostapd_config {
 	int secondary_channel;
 	int require_ht;
 	int obss_interval;
+	int ht2040_coex_disable;
 	u32 vht_capab;
 	int ieee80211ac;
 	int require_vht;

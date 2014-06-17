@@ -2793,6 +2793,14 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		conf->require_ht = atoi(pos);
 	} else if (os_strcmp(buf, "obss_interval") == 0) {
 		conf->obss_interval = atoi(pos);
+	} else if (os_strcmp(buf, "ht2040_coex_disable") == 0) {
+		int val = atoi(pos);
+		if (val == 1 || val == 0) {
+			conf->ht2040_coex_disable = val;
+		} else {
+			wpa_printf(MSG_ERROR, "ht2040_coex_disable: "
+				   "invalid value: %d", val);
+		}
 #endif /* CONFIG_IEEE80211N */
 #ifdef CONFIG_IEEE80211AC
 	} else if (os_strcmp(buf, "ieee80211ac") == 0) {
