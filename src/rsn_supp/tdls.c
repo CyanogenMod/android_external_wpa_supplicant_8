@@ -1378,10 +1378,17 @@ wpa_tdls_process_discovery_request(struct wpa_sm *sm, const u8 *addr,
 
 	dialog_token = buf[sizeof(struct wpa_tdls_frame)];
 
+	/*
+	 * Some APs will tack on a weird IE to the end of a TDLS
+	 * discovery request packet. This needn't fail the response,
+	 * since the required IE are verified separately.
+	 */
 	if (wpa_supplicant_parse_ies(buf + sizeof(struct wpa_tdls_frame) + 1,
 				     len - (sizeof(struct wpa_tdls_frame) + 1),
-				     &kde) < 0)
-		return -1;
+				     &kde) < 0) {
+		wpa_printf(MSG_DEBUG,
+			   "TDLS: Failed to parse IEs in Discovery Request - ignore as an interop workaround");
+	}
 
 	if (!kde.lnkid) {
 		wpa_printf(MSG_DEBUG, "TDLS: Link ID not found in Discovery "
@@ -2290,9 +2297,16 @@ static int wpa_tdls_process_tpk_m3(struct wpa_sm *sm, const u8 *src_addr,
 	pos += 2 /* status code */ + 1 /* dialog token */;
 
 	ielen = len - (pos - buf); /* start of IE in buf */
+
+	/*
+	 * Don't reject the message if failing to parse IEs. The IEs we need are
+	 * explicitly checked below. Some APs piggy-back broken IEs to the end
+	 * of a TDLS Confirm packet, which will fail the link if we don't ignore
+	 * this error.
+	 */
 	if (wpa_supplicant_parse_ies((const u8 *) pos, ielen, &kde) < 0) {
-		wpa_printf(MSG_INFO, "TDLS: Failed to parse KDEs in TPK M3");
-		goto error;
+		wpa_printf(MSG_DEBUG,
+			   "TDLS: Failed to parse KDEs in TPK M3 - ignore as an interop workaround");
 	}
 
 	if (kde.lnkid == NULL || kde.lnkid_len < 3 * ETH_ALEN) {
