@@ -307,6 +307,7 @@ struct wpa_driver_nl80211_data {
 	unsigned int test_use_roc_tx:1;
 	unsigned int ignore_deauth_event:1;
 	unsigned int dfs_vendor_cmd_avail:1;
+	unsigned int have_low_prio_scan:1;
 
 	u64 remain_on_chan_cookie;
 	u64 send_action_cookie;
@@ -1735,8 +1736,10 @@ static void mlme_event_mgmt(struct i802_bss *bss,
 		rx_freq = drv->last_mgmt_freq = event.rx_mgmt.freq;
 	}
 	wpa_printf(MSG_DEBUG,
-		   "nl80211: RX frame freq=%d ssi_signal=%d stype=%u len=%u",
-		   rx_freq, ssi_signal, stype, (unsigned int) len);
+		   "nl80211: RX frame sa=" MACSTR
+		   " freq=%d ssi_signal=%d stype=%u (%s) len=%u",
+		   MAC2STR(mgmt->sa), rx_freq, ssi_signal, stype, fc2str(fc),
+		   (unsigned int) len);
 	event.rx_mgmt.frame = frame;
 	event.rx_mgmt.frame_len = len;
 	event.rx_mgmt.ssi_signal = ssi_signal;
@@ -3411,6 +3414,7 @@ struct wiphy_info_data {
 	unsigned int p2p_concurrent:1;
 	unsigned int channel_switch_supported:1;
 	unsigned int set_qos_map_supported:1;
+	unsigned int have_low_prio_scan:1;
 };
 
 
@@ -3689,6 +3693,9 @@ static void wiphy_info_feature_flags(struct wiphy_info_data *info,
 
 	if (flags & NL80211_FEATURE_AP_MODE_CHAN_WIDTH_CHANGE)
 		capa->flags |= WPA_DRIVER_FLAGS_HT_2040_COEX;
+
+	if (flags & NL80211_FEATURE_LOW_PRIORITY_SCAN)
+		info->have_low_prio_scan = 1;
 }
 
 
@@ -3981,6 +3988,7 @@ static int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	drv->data_tx_status = info.data_tx_status;
 	if (info.set_qos_map_supported)
 		drv->capa.flags |= WPA_DRIVER_FLAGS_QOS_MAPPING;
+	drv->have_low_prio_scan = info.have_low_prio_scan;
 
 	/*
 	 * If poll command and tx status are supported, mac80211 is new enough
@@ -4384,8 +4392,8 @@ static int nl80211_register_frame(struct i802_bss *bss,
 
 	buf[0] = '\0';
 	wpa_snprintf_hex(buf, sizeof(buf), match, match_len);
-	wpa_printf(MSG_DEBUG, "nl80211: Register frame type=0x%x nl_handle=%p match=%s",
-		   type, nl_handle, buf);
+	wpa_printf(MSG_DEBUG, "nl80211: Register frame type=0x%x (%s) nl_handle=%p match=%s",
+		   type, fc2str(type), nl_handle, buf);
 
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_REGISTER_ACTION);
 
@@ -4949,6 +4957,7 @@ nl80211_scan_common(struct wpa_driver_nl80211_data *drv, u8 cmd,
 {
 	struct nl_msg *msg;
 	size_t i;
+	u32 scan_flags = 0;
 
 	msg = nlmsg_alloc();
 	if (!msg)
@@ -5007,9 +5016,17 @@ nl80211_scan_common(struct wpa_driver_nl80211_data *drv, u8 cmd,
 
 	if (params->only_new_results) {
 		wpa_printf(MSG_DEBUG, "nl80211: Add NL80211_SCAN_FLAG_FLUSH");
-		NLA_PUT_U32(msg, NL80211_ATTR_SCAN_FLAGS,
-			    NL80211_SCAN_FLAG_FLUSH);
+		scan_flags |= NL80211_SCAN_FLAG_FLUSH;
 	}
+
+	if (params->low_priority && drv->have_low_prio_scan) {
+		wpa_printf(MSG_DEBUG,
+			   "nl80211: Add NL80211_SCAN_FLAG_LOW_PRIORITY");
+		scan_flags |= NL80211_SCAN_FLAG_LOW_PRIORITY;
+	}
+
+	if (scan_flags)
+		NLA_PUT_U32(msg, NL80211_ATTR_SCAN_FLAGS, scan_flags);
 
 	return msg;
 
@@ -7070,8 +7087,10 @@ static int wpa_driver_nl80211_send_mlme(struct i802_bss *bss, const u8 *data,
 
 	mgmt = (struct ieee80211_mgmt *) data;
 	fc = le_to_host16(mgmt->frame_control);
-	wpa_printf(MSG_DEBUG, "nl80211: send_mlme - noack=%d freq=%u no_cck=%d offchanok=%d wait_time=%u fc=0x%x nlmode=%d",
-		   noack, freq, no_cck, offchanok, wait_time, fc, drv->nlmode);
+	wpa_printf(MSG_DEBUG, "nl80211: send_mlme - da= " MACSTR
+		   " noack=%d freq=%u no_cck=%d offchanok=%d wait_time=%u fc=0x%x (%s) nlmode=%d",
+		   MAC2STR(mgmt->da), noack, freq, no_cck, offchanok, wait_time,
+		   fc, fc2str(fc), drv->nlmode);
 
 	if ((is_sta_interface(drv->nlmode) ||
 	     drv->nlmode == NL80211_IFTYPE_P2P_DEVICE) &&

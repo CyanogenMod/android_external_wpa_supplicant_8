@@ -739,6 +739,9 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 #ifdef CONFIG_MACSEC
 	INT(macsec_policy);
 #endif /* CONFIG_MACSEC */
+#ifdef CONFIG_HS20
+	INT(update_identifier);
+#endif /* CONFIG_HS20 */
 
 #undef STR
 #undef INT
@@ -1016,6 +1019,9 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 		fprintf(f, "p2p_intra_bss=%u\n", config->p2p_intra_bss);
 	if (config->p2p_group_idle)
 		fprintf(f, "p2p_group_idle=%u\n", config->p2p_group_idle);
+	if (config->p2p_passphrase_len)
+		fprintf(f, "p2p_passphrase_len=%u\n",
+			config->p2p_passphrase_len);
 	if (config->p2p_pref_chan) {
 		unsigned int i;
 		fprintf(f, "p2p_pref_chan=");
