@@ -489,9 +489,10 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	hapd->iconf->vht_oper_centr_freq_seg0_idx = seg0_idx;
 	hapd->iconf->vht_oper_centr_freq_seg1_idx = seg1_idx;
 
-	if (hapd->iface->csa_in_progress &&
-	    freq == hapd->iface->cs_freq_params.freq) {
+	if (hapd->csa_in_progress &&
+	    freq == hapd->cs_freq_params.freq) {
 		hostapd_cleanup_cs_params(hapd);
+		ieee802_11_set_beacon(hapd);
 
 		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED "freq=%d",
 			freq);
@@ -884,6 +885,20 @@ static void hostapd_event_get_survey(struct hostapd_data *hapd,
 
 #ifdef NEED_AP_MLME
 
+static void hostapd_event_iface_unavailable(struct hostapd_data *hapd)
+{
+	wpa_printf(MSG_DEBUG, "Interface %s is unavailable -- stopped",
+		   hapd->conf->iface);
+
+	if (hapd->csa_in_progress) {
+		wpa_printf(MSG_INFO, "CSA failed (%s was stopped)",
+			   hapd->conf->iface);
+		hostapd_switch_channel_fallback(hapd->iface,
+						&hapd->cs_freq_params);
+	}
+}
+
+
 static void hostapd_event_dfs_radar_detected(struct hostapd_data *hapd,
 					     struct dfs_event *radar)
 {
@@ -1071,6 +1086,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		hostapd_event_get_survey(hapd, &data->survey_results);
 		break;
 #ifdef NEED_AP_MLME
+	case EVENT_INTERFACE_UNAVAILABLE:
+		hostapd_event_iface_unavailable(hapd);
+		break;
 	case EVENT_DFS_RADAR_DETECTED:
 		if (!data)
 			break;

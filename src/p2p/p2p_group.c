@@ -973,7 +973,7 @@ const u8 * p2p_iterate_group_members(struct p2p_group *group, void **next)
 	if (!iter)
 		return NULL;
 
-	return iter->addr;
+	return iter->dev_addr;
 }
 
 
@@ -1012,4 +1012,24 @@ void p2p_group_force_beacon_update_ies(struct p2p_group *group)
 int p2p_group_get_freq(struct p2p_group *group)
 {
 	return group->cfg->freq;
+}
+
+
+const struct p2p_group_config * p2p_group_get_config(struct p2p_group *group)
+{
+	return group->cfg;
+}
+
+
+void p2p_loop_on_all_groups(struct p2p_data *p2p,
+			    int (*group_callback)(struct p2p_group *group,
+						  void *user_data),
+			    void *user_data)
+{
+	unsigned int i;
+
+	for (i = 0; i < p2p->num_groups; i++) {
+		if (!group_callback(p2p->groups[i], user_data))
+			break;
+	}
 }

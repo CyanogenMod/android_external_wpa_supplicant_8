@@ -348,6 +348,8 @@ static void wpa_driver_nl80211_scan_timeout(void *eloop_ctx,
 					    void *timeout_ctx);
 static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
 				       enum nl80211_iftype nlmode);
+static int wpa_driver_nl80211_set_mode_ibss(struct i802_bss *bss, int freq);
+
 static int
 wpa_driver_nl80211_finish_drv_init(struct wpa_driver_nl80211_data *drv,
 				   const u8 *set_addr, int first);
@@ -414,6 +416,7 @@ static int nl80211_leave_ibss(struct wpa_driver_nl80211_data *drv);
 static int wpa_driver_nl80211_authenticate_retry(
 	struct wpa_driver_nl80211_data *drv);
 
+static int i802_set_freq(void *priv, struct hostapd_freq_params *freq);
 static int i802_set_iface_flags(struct i802_bss *bss, int up);
 
 
@@ -1677,7 +1680,7 @@ static void mlme_event_ch_switch(struct wpa_driver_nl80211_data *drv,
 
 	bss->freq = data.ch_switch.freq;
 
-	wpa_supplicant_event(drv->ctx, EVENT_CH_SWITCH, &data);
+	wpa_supplicant_event(bss->ctx, EVENT_CH_SWITCH, &data);
 }
 
 
@@ -8594,8 +8597,7 @@ static int wpa_driver_nl80211_ibss(struct wpa_driver_nl80211_data *drv,
 
 	wpa_printf(MSG_DEBUG, "nl80211: Join IBSS (ifindex=%d)", drv->ifindex);
 
-	if (wpa_driver_nl80211_set_mode(drv->first_bss,
-					NL80211_IFTYPE_ADHOC)) {
+	if (wpa_driver_nl80211_set_mode_ibss(drv->first_bss, params->freq)) {
 		wpa_printf(MSG_INFO, "nl80211: Failed to set interface into "
 			   "IBSS mode");
 		return -1;
@@ -9035,26 +9037,29 @@ nla_put_failure:
 }
 
 
-static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
-				       enum nl80211_iftype nlmode)
+static int wpa_driver_nl80211_set_mode_impl(
+		struct i802_bss *bss,
+		enum nl80211_iftype nlmode,
+		struct hostapd_freq_params *desired_freq_params)
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	int ret = -1;
 	int i;
 	int was_ap = is_ap_interface(drv->nlmode);
 	int res;
+	int mode_switch_res;
 
-	res = nl80211_set_mode(drv, drv->ifindex, nlmode);
-	if (res && nlmode == nl80211_get_ifmode(bss))
-		res = 0;
+	mode_switch_res = nl80211_set_mode(drv, drv->ifindex, nlmode);
+	if (mode_switch_res && nlmode == nl80211_get_ifmode(bss))
+		mode_switch_res = 0;
 
-	if (res == 0) {
+	if (mode_switch_res == 0) {
 		drv->nlmode = nlmode;
 		ret = 0;
 		goto done;
 	}
 
-	if (res == -ENODEV)
+	if (mode_switch_res == -ENODEV)
 		return -1;
 
 	if (nlmode == drv->nlmode) {
@@ -9074,21 +9079,35 @@ static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
 		res = i802_set_iface_flags(bss, 0);
 		if (res == -EACCES || res == -ENODEV)
 			break;
-		if (res == 0) {
-			/* Try to set the mode again while the interface is
-			 * down */
-			ret = nl80211_set_mode(drv, drv->ifindex, nlmode);
-			if (ret == -EACCES)
-				break;
-			res = i802_set_iface_flags(bss, 1);
-			if (res && !ret)
-				ret = -1;
-			else if (ret != -EBUSY)
-				break;
-		} else
+		if (res != 0) {
 			wpa_printf(MSG_DEBUG, "nl80211: Failed to set "
 				   "interface down");
-		os_sleep(0, 100000);
+			os_sleep(0, 100000);
+			continue;
+		}
+
+		/*
+		 * Setting the mode will fail for some drivers if the phy is
+		 * on a frequency that the mode is disallowed in.
+		 */
+		if (desired_freq_params) {
+			res = i802_set_freq(bss, desired_freq_params);
+			if (res) {
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Failed to set frequency on interface");
+			}
+		}
+
+		/* Try to set the mode again while the interface is down */
+		mode_switch_res = nl80211_set_mode(drv, drv->ifindex, nlmode);
+		if (mode_switch_res == -EBUSY) {
+			wpa_printf(MSG_DEBUG,
+				   "nl80211: Delaying mode set while interface going down");
+			os_sleep(0, 100000);
+			continue;
+		}
+		ret = mode_switch_res;
+		break;
 	}
 
 	if (!ret) {
@@ -9096,6 +9115,14 @@ static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
 			   "interface is down");
 		drv->nlmode = nlmode;
 		drv->ignore_if_down_event = 1;
+	}
+
+	/* Bring the interface back up */
+	res = linux_set_iface_flags(drv->global->ioctl_sock, bss->ifname, 1);
+	if (res != 0) {
+		wpa_printf(MSG_DEBUG,
+			   "nl80211: Failed to set interface up after switching mode");
+		ret = -1;
 	}
 
 done:
@@ -9157,6 +9184,23 @@ static int dfs_info_handler(struct nl_msg *msg, void *arg)
 	}
 
 	return NL_SKIP;
+}
+
+
+static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
+				       enum nl80211_iftype nlmode)
+{
+	return wpa_driver_nl80211_set_mode_impl(bss, nlmode, NULL);
+}
+
+
+static int wpa_driver_nl80211_set_mode_ibss(struct i802_bss *bss, int freq)
+{
+	struct hostapd_freq_params freq_params;
+	os_memset(&freq_params, 0, sizeof(freq_params));
+	freq_params.freq = freq;
+	return wpa_driver_nl80211_set_mode_impl(bss, NL80211_IFTYPE_ADHOC,
+						&freq_params);
 }
 
 
@@ -12074,7 +12118,7 @@ static int nl80211_switch_channel(void *priv, struct csa_settings *settings)
 		return -ENOMEM;
 
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_CHANNEL_SWITCH);
-	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
+	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, bss->ifindex);
 	NLA_PUT_U32(msg, NL80211_ATTR_CH_SWITCH_COUNT, settings->cs_count);
 	ret = nl80211_put_freq_params(msg, &settings->freq_params);
 	if (ret)

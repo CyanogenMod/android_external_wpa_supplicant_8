@@ -1788,7 +1788,7 @@ unsigned int p2p_get_group_num_members(struct p2p_group *group);
  * @group: P2P group context from p2p_group_init()
  * @next: iteration pointer, must be a pointer to a void * that is set to %NULL
  *	on the first call and not modified later
- * Returns: A P2P Interface Address for each call and %NULL for no more members
+ * Returns: A P2P Device Address for each call and %NULL for no more members
  */
 const u8 * p2p_iterate_group_members(struct p2p_group *group, void **next);
 
@@ -1808,6 +1808,26 @@ const u8 * p2p_group_get_dev_addr(struct p2p_group *group, const u8 *addr);
  * Returns: 1 if client is connected or 0 if not
  */
 int p2p_group_is_client_connected(struct p2p_group *group, const u8 *dev_addr);
+
+/**
+ * p2p_group_get_config - Get the group configuration
+ * @group: P2P group context from p2p_group_init()
+ * Returns: The group configuration pointer
+ */
+const struct p2p_group_config * p2p_group_get_config(struct p2p_group *group);
+
+/**
+ * p2p_loop_on_all_groups - Run the given callback on all groups
+ * @p2p: P2P module context from p2p_init()
+ * @group_callback: The callback function pointer
+ * @user_data: Some user data pointer which can be %NULL
+ *
+ * The group_callback function can stop the iteration by returning 0.
+ */
+void p2p_loop_on_all_groups(struct p2p_data *p2p,
+			    int (*group_callback)(struct p2p_group *group,
+						  void *user_data),
+			    void *user_data);
 
 /**
  * p2p_get_peer_found - Get P2P peer info structure of a found peer
@@ -1969,5 +1989,10 @@ void p2p_set_authorized_oob_dev_pw_id(struct p2p_data *p2p, u16 dev_pw_id,
 				      const u8 *own_interface_addr);
 
 int p2p_set_passphrase_len(struct p2p_data *p2p, unsigned int len);
+
+void p2p_loop_on_known_peers(struct p2p_data *p2p,
+			     void (*peer_callback)(struct p2p_peer_info *peer,
+						   void *user_data),
+			     void *user_data);
 
 #endif /* P2P_H */
