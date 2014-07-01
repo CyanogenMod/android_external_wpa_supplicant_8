@@ -54,7 +54,8 @@ struct wpa_sm_ctx {
 			     int *tdls_ext_setup);
 	int (*send_tdls_mgmt)(void *ctx, const u8 *dst,
 			      u8 action_code, u8 dialog_token,
-			      u16 status_code, const u8 *buf, size_t len);
+			      u16 status_code, u32 peer_capab,
+			      const u8 *buf, size_t len);
 	int (*tdls_oper)(void *ctx, int oper, const u8 *peer);
 	int (*tdls_peer_addset)(void *ctx, const u8 *addr, int add, u16 aid,
 				u16 capability, const u8 *supp_rates,
@@ -62,7 +63,10 @@ struct wpa_sm_ctx {
 				const struct ieee80211_ht_capabilities *ht_capab,
 				const struct ieee80211_vht_capabilities *vht_capab,
 				u8 qosinfo, const u8 *ext_capab,
-				size_t ext_capab_len);
+				size_t ext_capab_len, const u8 *supp_channels,
+				size_t supp_channels_len,
+				const u8 *supp_oper_classes,
+				size_t supp_oper_classes_len);
 #endif /* CONFIG_TDLS */
 	void (*set_rekey_offload)(void *ctx, const u8 *kek, const u8 *kck,
 				  const u8 *replay_ctr);

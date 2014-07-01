@@ -1511,6 +1511,7 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	 * IEEE 802.1X/WPA code will start accounting after the station has
 	 * been authorized. */
 	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa) {
+		ap_sta_set_authorized(hapd, sta, 1);
 		os_get_time(&sta->connected_time);
 		accounting_sta_start(hapd, sta);
 	}

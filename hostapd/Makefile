@@ -6,6 +6,8 @@ ifndef CFLAGS
 CFLAGS = -MMD -O2 -Wall -g
 endif
 
+export BINDIR ?= /usr/local/bin/
+
 CFLAGS += -I../src
 CFLAGS += -I../src/utils
 
@@ -865,9 +867,10 @@ verify_config:
 		exit 1; \
 	fi
 
-install: all
-	mkdir -p $(DESTDIR)/usr/local/bin
-	for i in $(ALL); do cp -f $$i $(DESTDIR)/usr/local/bin/$$i; done
+$(DESTDIR)$(BINDIR)/%: %
+	install -D $(<) $(@)
+
+install: $(addprefix $(DESTDIR)$(BINDIR)/,$(ALL))
 
 ../src/drivers/build.hostapd:
 	@if [ -f ../src/drivers/build.wpa_supplicant ]; then \

@@ -4382,48 +4382,21 @@ static int p2p_ctrl_peer(struct wpa_supplicant *wpa_s, char *cmd,
 static int p2p_ctrl_disallow_freq(struct wpa_supplicant *wpa_s,
 				  const char *param)
 {
-	struct wpa_freq_range *freq = NULL, *n;
-	unsigned int count = 0, i;
-	const char *pos, *pos2, *pos3;
+	unsigned int i;
 
 	if (wpa_s->global->p2p == NULL)
 		return -1;
 
-	/*
-	 * param includes comma separated frequency range.
-	 * For example: 2412-2432,2462,5000-6000
-	 */
-	pos = param;
-	while (pos && pos[0]) {
-		n = os_realloc_array(freq, count + 1,
-				     sizeof(struct wpa_freq_range));
-		if (n == NULL) {
-			os_free(freq);
-			return -1;
-		}
-		freq = n;
-		freq[count].min = atoi(pos);
-		pos2 = os_strchr(pos, '-');
-		pos3 = os_strchr(pos, ',');
-		if (pos2 && (!pos3 || pos2 < pos3)) {
-			pos2++;
-			freq[count].max = atoi(pos2);
-		} else
-			freq[count].max = freq[count].min;
-		pos = pos3;
-		if (pos)
-			pos++;
-		count++;
-	}
+	if (freq_range_list_parse(&wpa_s->global->p2p_disallow_freq, param) < 0)
+		return -1;
 
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < wpa_s->global->p2p_disallow_freq.num; i++) {
+		struct wpa_freq_range *freq;
+		freq = &wpa_s->global->p2p_disallow_freq.range[i];
 		wpa_printf(MSG_DEBUG, "P2P: Disallowed frequency range %u-%u",
-			   freq[i].min, freq[i].max);
+			   freq->min, freq->max);
 	}
 
-	os_free(wpa_s->global->p2p_disallow_freq);
-	wpa_s->global->p2p_disallow_freq = freq;
-	wpa_s->global->num_p2p_disallow_freq = count;
 	wpas_p2p_update_channel_list(wpa_s);
 	return 0;
 }
@@ -5226,6 +5199,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_dbg(wpa_s, MSG_DEBUG, "Flush all wpa_supplicant state");
 
 #ifdef CONFIG_P2P
+	wpas_p2p_cancel(wpa_s);
 	wpas_p2p_stop_find(wpa_s);
 	p2p_ctrl_flush(wpa_s);
 	wpas_p2p_group_remove(wpa_s, "*");
@@ -5270,6 +5244,92 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_s->extra_blacklist_count = 0;
 	wpa_supplicant_ctrl_iface_remove_network(wpa_s, "all");
 	wpa_supplicant_ctrl_iface_remove_cred(wpa_s, "all");
+}
+
+
+static int set_scan_freqs(struct wpa_supplicant *wpa_s, char *val)
+{
+	struct wpa_freq_range_list ranges;
+	int *freqs = NULL;
+	struct hostapd_hw_modes *mode;
+	u16 i;
+
+	if (wpa_s->hw.modes == NULL)
+		return -1;
+
+	os_memset(&ranges, 0, sizeof(ranges));
+	if (freq_range_list_parse(&ranges, val) < 0)
+		return -1;
+
+	for (i = 0; i < wpa_s->hw.num_modes; i++) {
+		int j;
+
+		mode = &wpa_s->hw.modes[i];
+		for (j = 0; j < mode->num_channels; j++) {
+			unsigned int freq;
+
+			if (mode->channels[j].flag & HOSTAPD_CHAN_DISABLED)
+				continue;
+
+			freq = mode->channels[j].freq;
+			if (!freq_range_list_includes(&ranges, freq))
+				continue;
+
+			int_array_add_unique(&freqs, freq);
+		}
+	}
+
+	os_free(ranges.range);
+	os_free(wpa_s->manual_scan_freqs);
+	wpa_s->manual_scan_freqs = freqs;
+
+	return 0;
+}
+
+
+static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
+			   char *reply, int reply_size, int *reply_len)
+{
+	char *pos;
+
+	if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
+		*reply_len = -1;
+		return;
+	}
+
+	if (params) {
+		if (os_strncasecmp(params, "TYPE=ONLY", 9) == 0)
+			wpa_s->scan_res_handler = scan_only_handler;
+
+		pos = os_strstr(params, "freq=");
+		if (pos && set_scan_freqs(wpa_s, pos + 5) < 0) {
+			*reply_len = -1;
+			return;
+		}
+	} else {
+		os_free(wpa_s->manual_scan_freqs);
+		wpa_s->manual_scan_freqs = NULL;
+		if (wpa_s->scan_res_handler == scan_only_handler)
+			wpa_s->scan_res_handler = NULL;
+	}
+
+	if (!wpa_s->sched_scanning && !wpa_s->scanning &&
+	    ((wpa_s->wpa_state <= WPA_SCANNING) ||
+	     (wpa_s->wpa_state == WPA_COMPLETED))) {
+		wpa_s->normal_scans = 0;
+		wpa_s->scan_req = MANUAL_SCAN_REQ;
+		wpa_s->after_wps = 0;
+		wpa_s->known_wps_freq = 0;
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+	} else if (wpa_s->sched_scanning) {
+		wpa_printf(MSG_DEBUG, "Stop ongoing sched_scan to allow requested full scan to proceed");
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_s->scan_req = MANUAL_SCAN_REQ;
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+	} else {
+		wpa_printf(MSG_DEBUG, "Ongoing scan action - reject new request");
+		*reply_len = os_snprintf(reply, reply_size, "FAIL-BUSY\n");
+	}
 }
 
 
@@ -5646,34 +5706,10 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_cancel_scan(wpa_s);
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
-	} else if (os_strcmp(buf, "SCAN") == 0 ||
-		   os_strncmp(buf, "SCAN ", 5) == 0) {
-		if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED)
-			reply_len = -1;
-		else {
-			if (os_strlen(buf) > 4 &&
-			    os_strncasecmp(buf + 5, "TYPE=ONLY", 9) == 0)
-				wpa_s->scan_res_handler = scan_only_handler;
-			if (!wpa_s->sched_scanning && !wpa_s->scanning &&
-			    ((wpa_s->wpa_state <= WPA_SCANNING) ||
-			     (wpa_s->wpa_state == WPA_COMPLETED))) {
-				wpa_s->normal_scans = 0;
-				wpa_s->scan_req = MANUAL_SCAN_REQ;
-				wpa_supplicant_req_scan(wpa_s, 0, 0);
-			} else if (wpa_s->sched_scanning) {
-				wpa_printf(MSG_DEBUG, "Stop ongoing "
-					   "sched_scan to allow requested "
-					   "full scan to proceed");
-				wpa_supplicant_cancel_sched_scan(wpa_s);
-				wpa_s->scan_req = MANUAL_SCAN_REQ;
-				wpa_supplicant_req_scan(wpa_s, 0, 0);
-			} else {
-				wpa_printf(MSG_DEBUG, "Ongoing scan action - "
-					   "reject new request");
-				reply_len = os_snprintf(reply, reply_size,
-							"FAIL-BUSY\n");
-			}
-		}
+	} else if (os_strcmp(buf, "SCAN") == 0) {
+		wpas_ctrl_scan(wpa_s, NULL, reply, reply_size, &reply_len);
+	} else if (os_strncmp(buf, "SCAN ", 5) == 0) {
+		wpas_ctrl_scan(wpa_s, buf + 5, reply, reply_size, &reply_len);
 	} else if (os_strcmp(buf, "SCAN_RESULTS") == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_scan_results(
 			wpa_s, reply, reply_size);

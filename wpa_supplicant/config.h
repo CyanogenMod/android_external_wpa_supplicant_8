@@ -210,6 +210,14 @@ struct wpa_cred {
 		size_t ssid_len;
 	} *excluded_ssid;
 	size_t num_excluded_ssid;
+
+	/**
+	 * sim_num - User selected SIM identifier
+	 *
+	 * This variable is used for identifying which SIM is used if the system
+	 * has more than one.
+	 */
+	int sim_num;
 };
 
 

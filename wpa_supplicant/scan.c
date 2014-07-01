@@ -141,74 +141,6 @@ static void wpa_supplicant_assoc_try(struct wpa_supplicant *wpa_s,
 }
 
 
-static int int_array_len(const int *a)
-{
-	int i;
-	for (i = 0; a && a[i]; i++)
-		;
-	return i;
-}
-
-
-static void int_array_concat(int **res, const int *a)
-{
-	int reslen, alen, i;
-	int *n;
-
-	reslen = int_array_len(*res);
-	alen = int_array_len(a);
-
-	n = os_realloc_array(*res, reslen + alen + 1, sizeof(int));
-	if (n == NULL) {
-		os_free(*res);
-		*res = NULL;
-		return;
-	}
-	for (i = 0; i <= alen; i++)
-		n[reslen + i] = a[i];
-	*res = n;
-}
-
-
-static int freq_cmp(const void *a, const void *b)
-{
-	int _a = *(int *) a;
-	int _b = *(int *) b;
-
-	if (_a == 0)
-		return 1;
-	if (_b == 0)
-		return -1;
-	return _a - _b;
-}
-
-
-static void int_array_sort_unique(int *a)
-{
-	int alen;
-	int i, j;
-
-	if (a == NULL)
-		return;
-
-	alen = int_array_len(a);
-	qsort(a, alen, sizeof(int), freq_cmp);
-
-	i = 0;
-	j = 1;
-	while (a[i] && a[j]) {
-		if (a[i] == a[j]) {
-			j++;
-			continue;
-		}
-		a[++i] = a[j++];
-	}
-	if (a[i])
-		i++;
-	a[i] = 0;
-}
-
-
 /**
  * wpa_supplicant_trigger_scan - Request driver to start a scan
  * @wpa_s: Pointer to wpa_supplicant data
@@ -230,6 +162,7 @@ int wpa_supplicant_trigger_scan(struct wpa_supplicant *wpa_s,
 		os_get_time(&wpa_s->scan_trigger_time);
 		wpa_s->scan_runs++;
 		wpa_s->normal_scans++;
+		wpa_s->own_scan_requested = 1;
 	}
 
 	return ret;
@@ -353,6 +286,33 @@ static void wpa_supplicant_optimize_freqs(
 		}
 		wpa_s->p2p_in_provisioning++;
 	}
+
+	if (params->freqs == NULL && wpa_s->p2p_in_invitation) {
+		/*
+		 * Optimize scan based on GO information during persistent
+		 * group reinvocation
+		 */
+		if (wpa_s->p2p_in_invitation < 5 &&
+		    wpa_s->p2p_invite_go_freq > 0) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO preferred frequency %d MHz during invitation",
+				wpa_s->p2p_invite_go_freq);
+			params->freqs = os_zalloc(2 * sizeof(int));
+			if (params->freqs)
+				params->freqs[0] = wpa_s->p2p_invite_go_freq;
+		}
+		wpa_s->p2p_in_invitation++;
+		if (wpa_s->p2p_in_invitation > 20) {
+			/*
+			 * This should not really happen since the variable is
+			 * cleared on group removal, but if it does happen, make
+			 * sure we do not get stuck in special invitation scan
+			 * mode.
+			 */
+			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Clear p2p_in_invitation");
+			wpa_s->p2p_in_invitation = 0;
+		}
+	}
+
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS
@@ -546,7 +506,6 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 	struct wpa_ssid *ssid;
-	enum scan_req_type scan_req = NORMAL_SCAN_REQ;
 	int ret;
 	struct wpabuf *extra_ie = NULL;
 	struct wpa_driver_scan_params params;
@@ -619,7 +578,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 			max_ssids = WPAS_MAX_SCAN_SSIDS;
 	}
 
-	scan_req = wpa_s->scan_req;
+	wpa_s->last_scan_req = wpa_s->scan_req;
 	wpa_s->scan_req = NORMAL_SCAN_REQ;
 
 	os_memset(&params, 0, sizeof(params));
@@ -637,7 +596,8 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		goto scan;
 	}
 
-	if (scan_req != MANUAL_SCAN_REQ && wpa_s->connect_without_scan) {
+	if (wpa_s->last_scan_req != MANUAL_SCAN_REQ &&
+	    wpa_s->connect_without_scan) {
 		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
 			if (ssid == wpa_s->connect_without_scan)
 				break;
@@ -661,6 +621,18 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		params.num_ssids = 1;
 		goto ssid_list_set;
 	}
+	if (wpa_s->p2p_in_invitation) {
+		if (wpa_s->current_ssid) {
+			wpa_printf(MSG_DEBUG, "P2P: Use specific SSID for scan during invitation");
+			params.ssids[0].ssid = wpa_s->current_ssid->ssid;
+			params.ssids[0].ssid_len =
+				wpa_s->current_ssid->ssid_len;
+			params.num_ssids = 1;
+		} else {
+			wpa_printf(MSG_DEBUG, "P2P: No specific SSID known for scan during invitation");
+		}
+		goto ssid_list_set;
+	}
 #endif /* CONFIG_P2P */
 
 	/* Find the starting point from which to continue scanning */
@@ -675,7 +647,8 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		}
 	}
 
-	if (scan_req != MANUAL_SCAN_REQ && wpa_s->conf->ap_scan == 2) {
+	if (wpa_s->last_scan_req != MANUAL_SCAN_REQ &&
+	    wpa_s->conf->ap_scan == 2) {
 		wpa_s->connect_without_scan = NULL;
 		wpa_s->prev_scan_wildcard = 0;
 		wpa_supplicant_assoc_try(wpa_s, ssid);
@@ -768,6 +741,13 @@ ssid_list_set:
 	wpa_supplicant_optimize_freqs(wpa_s, &params);
 	extra_ie = wpa_supplicant_extra_ies(wpa_s);
 
+	if (wpa_s->last_scan_req == MANUAL_SCAN_REQ && params.freqs == NULL &&
+	    wpa_s->manual_scan_freqs) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Limit manual scan to specified channels");
+		params.freqs = wpa_s->manual_scan_freqs;
+		wpa_s->manual_scan_freqs = NULL;
+	}
+
 	if (params.freqs == NULL && wpa_s->next_scan_freqs) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Optimize scan based on previously "
 			"generated frequency list");
@@ -810,7 +790,7 @@ ssid_list_set:
 	}
 
 #ifdef CONFIG_P2P
-	if (wpa_s->p2p_in_provisioning ||
+	if (wpa_s->p2p_in_provisioning || wpa_s->p2p_in_invitation ||
 	    (wpa_s->show_group_started && wpa_s->go_params)) {
 		/*
 		 * The interface may not yet be in P2P mode, so we have to
@@ -833,7 +813,8 @@ scan:
 	 * station interface when we are not configured to prefer station
 	 * connection and a concurrent operation is already in process.
 	 */
-	if (wpa_s->scan_for_connection && scan_req == NORMAL_SCAN_REQ &&
+	if (wpa_s->scan_for_connection &&
+	    wpa_s->last_scan_req == NORMAL_SCAN_REQ &&
 	    !scan_params->freqs && !params.freqs &&
 	    wpas_is_p2p_prioritized(wpa_s) &&
 	    wpa_s->p2p_group_interface == NOT_P2P_GROUP_INTERFACE &&
@@ -855,6 +836,13 @@ scan:
 
 	ret = wpa_supplicant_trigger_scan(wpa_s, scan_params);
 
+	if (ret && wpa_s->last_scan_req == MANUAL_SCAN_REQ && params.freqs &&
+	    !wpa_s->manual_scan_freqs) {
+		/* Restore manual_scan_freqs for the next attempt */
+		wpa_s->manual_scan_freqs = params.freqs;
+		params.freqs = NULL;
+	}
+
 	wpabuf_free(extra_ie);
 	os_free(params.freqs);
 	os_free(params.filter_ssids);
@@ -864,7 +852,7 @@ scan:
 		if (prev_state != wpa_s->wpa_state)
 			wpa_supplicant_set_state(wpa_s, prev_state);
 		/* Restore scan_req since we will try to scan again */
-		wpa_s->scan_req = scan_req;
+		wpa_s->scan_req = wpa_s->last_scan_req;
 		wpa_supplicant_req_scan(wpa_s, 1, 0);
 	} else {
 		wpa_s->scan_for_connection = 0;

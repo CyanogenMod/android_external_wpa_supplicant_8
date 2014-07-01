@@ -314,6 +314,7 @@ void wnm_deallocate_memory(struct wpa_supplicant *wpa_s)
 		os_free(wpa_s->wnm_neighbor_report_elements[i].mul_bssid);
 	}
 
+	wpa_s->wnm_num_neighbor_report = 0;
 	os_free(wpa_s->wnm_neighbor_report_elements);
 	wpa_s->wnm_neighbor_report_elements = NULL;
 }
@@ -328,6 +329,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 			wpa_printf(MSG_DEBUG, "WNM: Too short TSF");
 			break;
 		}
+		os_free(rep->tsf_info);
 		rep->tsf_info = os_zalloc(sizeof(struct tsf_info));
 		if (rep->tsf_info == NULL)
 			break;
@@ -341,6 +343,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "country string");
 			break;
 		}
+		os_free(rep->con_coun_str);
 		rep->con_coun_str =
 			os_zalloc(sizeof(struct condensed_country_string));
 		if (rep->con_coun_str == NULL)
@@ -354,6 +357,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "candidate");
 			break;
 		}
+		os_free(rep->bss_tran_can);
 		rep->bss_tran_can =
 			os_zalloc(sizeof(struct bss_transition_candidate));
 		if (rep->bss_tran_can == NULL)
@@ -367,6 +371,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "duration");
 			break;
 		}
+		os_free(rep->bss_term_dur);
 		rep->bss_term_dur =
 			os_zalloc(sizeof(struct bss_termination_duration));
 		if (rep->bss_term_dur == NULL)
@@ -380,6 +385,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "bearing");
 			break;
 		}
+		os_free(rep->bearing);
 		rep->bearing = os_zalloc(sizeof(struct bearing));
 		if (rep->bearing == NULL)
 			break;
@@ -392,6 +398,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "pilot");
 			break;
 		}
+		os_free(rep->meas_pilot);
 		rep->meas_pilot = os_zalloc(sizeof(struct measurement_pilot));
 		if (rep->meas_pilot == NULL)
 			break;
@@ -406,6 +413,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 				   "capabilities");
 			break;
 		}
+		os_free(rep->rrm_cap);
 		rep->rrm_cap =
 			os_zalloc(sizeof(struct rrm_enabled_capabilities));
 		if (rep->rrm_cap == NULL)
@@ -418,6 +426,7 @@ static void wnm_parse_neighbor_report_elem(struct neighbor_report *rep,
 			wpa_printf(MSG_DEBUG, "WNM: Too short multiple BSSID");
 			break;
 		}
+		os_free(rep->mul_bssid);
 		rep->mul_bssid = os_zalloc(sizeof(struct multiple_bssid));
 		if (rep->mul_bssid == NULL)
 			break;
@@ -455,8 +464,15 @@ static void wnm_parse_neighbor_report(struct wpa_supplicant *wpa_s,
 
 		id = *pos++;
 		elen = *pos++;
+		wpa_printf(MSG_DEBUG, "WNM: Subelement id=%u len=%u", id, elen);
+		left -= 2;
+		if (elen > left) {
+			wpa_printf(MSG_DEBUG,
+				   "WNM: Truncated neighbor report subelement");
+			break;
+		}
 		wnm_parse_neighbor_report_elem(rep, id, elen, pos);
-		left -= 2 + elen;
+		left -= elen;
 		pos += elen;
 	}
 }
@@ -670,10 +686,12 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 				wpa_printf(MSG_DEBUG, "WNM: Truncated request");
 				return;
 			}
-			wnm_parse_neighbor_report(
-				wpa_s, pos, len,
-				&wpa_s->wnm_neighbor_report_elements[
-					wpa_s->wnm_num_neighbor_report]);
+			if (tag == WLAN_EID_NEIGHBOR_REPORT) {
+				struct neighbor_report *rep;
+				rep = &wpa_s->wnm_neighbor_report_elements[
+					wpa_s->wnm_num_neighbor_report];
+				wnm_parse_neighbor_report(wpa_s, pos, len, rep);
+			}
 
 			pos += len;
 			wpa_s->wnm_num_neighbor_report++;

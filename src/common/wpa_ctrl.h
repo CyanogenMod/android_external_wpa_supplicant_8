@@ -54,6 +54,8 @@ extern "C" {
 #define WPA_EVENT_TEMP_DISABLED "CTRL-EVENT-SSID-TEMP-DISABLED "
 /** Temporarily disabled network block re-enabled */
 #define WPA_EVENT_REENABLED "CTRL-EVENT-SSID-REENABLED "
+/** New scan started */
+#define WPA_EVENT_SCAN_STARTED "CTRL-EVENT-SCAN-STARTED "
 /** New scan results available */
 #define WPA_EVENT_SCAN_RESULTS "CTRL-EVENT-SCAN-RESULTS "
 /** wpa_supplicant state change */
@@ -66,6 +68,8 @@ extern "C" {
 /** Notify the Userspace about the freq conflict */
 #define WPA_EVENT_FREQ_CONFLICT "CTRL-EVENT-FREQ-CONFLICT "
 #endif
+/** Frequency ranges that the driver recommends to avoid */
+#define WPA_EVENT_AVOID_FREQ "CTRL-EVENT-AVOID-FREQ "
 
 /** RSN IBSS 4-way handshakes completed with specified peer */
 #define IBSS_RSN_COMPLETED "IBSS-RSN-COMPLETED "
@@ -146,6 +150,7 @@ extern "C" {
 
 /* parameters: <PMF enabled> <timeout in ms> <Session Information URL> */
 #define ESS_DISASSOC_IMMINENT "ESS-DISASSOC-IMMINENT "
+#define P2P_EVENT_REMOVE_AND_REFORM_GROUP "P2P-REMOVE-AND-REFORM-GROUP "
 
 #define INTERWORKING_AP "INTERWORKING-AP "
 #define INTERWORKING_NO_MATCH "INTERWORKING-NO-MATCH "

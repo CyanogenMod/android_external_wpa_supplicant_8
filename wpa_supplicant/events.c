@@ -1180,6 +1180,7 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		if (p2p_other_scan_completed(wpa_s->global->p2p) == 1) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Pending P2P operation "
 				"stopped scan processing");
+			wpa_s->scan_req = wpa_s->last_scan_req;
 			wpa_s->sta_scan_pending = 1;
 			wpa_supplicant_req_scan(wpa_s, 5, 0);
 			return -1;
@@ -1219,7 +1220,8 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_NO_RANDOM_POOL */
 
-	if (own_request && wpa_s->scan_res_handler) {
+	if (own_request && wpa_s->scan_res_handler &&
+	    (wpa_s->own_scan_running || !wpa_s->external_scan_running)) {
 		void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 					 struct wpa_scan_results *scan_res);
 
@@ -1241,11 +1243,18 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
-	wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available");
+	wpa_dbg(wpa_s, MSG_DEBUG, "New scan results available (own=%u ext=%u)",
+		wpa_s->own_scan_running, wpa_s->external_scan_running);
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_RESULTS);
 	wpas_notify_scan_results(wpa_s);
 
 	wpas_notify_scan_done(wpa_s, 1);
+
+	if (!wpa_s->own_scan_running && wpa_s->external_scan_running) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Do not use results from externally requested scan operation for network selection");
+		wpa_scan_results_free(scan_res);
+		return 0;
+	}
 
 	if (sme_proc_obss_scan(wpa_s) > 0) {
 		wpa_scan_results_free(scan_res);
@@ -1326,7 +1335,8 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 				return 0;
 
 			if (wpa_s->p2p_in_provisioning ||
-			    wpa_s->show_group_started) {
+			    wpa_s->show_group_started ||
+			    wpa_s->p2p_in_invitation) {
 				/*
 				 * Use shorter wait during P2P Provisioning
 				 * state and during P2P join-a-group operation
@@ -2648,6 +2658,58 @@ static void wpas_event_deauth(struct wpa_supplicant *wpa_s,
 }
 
 
+static void wpa_supplicant_notify_avoid_freq(struct wpa_supplicant *wpa_s,
+					     union wpa_event_data *event)
+{
+#ifdef CONFIG_P2P
+	struct wpa_supplicant *ifs;
+#endif /* CONFIG_P2P */
+	struct wpa_freq_range_list *list;
+	char *str = NULL;
+
+	list = &event->freq_range;
+
+	if (list->num)
+		str = freq_range_list_str(list);
+	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_AVOID_FREQ "ranges=%s",
+		str ? str : "");
+
+#ifdef CONFIG_P2P
+	if (freq_range_list_parse(&wpa_s->global->p2p_go_avoid_freq, str)) {
+		wpa_dbg(wpa_s, MSG_ERROR, "%s: Failed to parse freq range",
+			__func__);
+	} else {
+		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Update channel list based on frequency avoid event");
+		wpas_p2p_update_channel_list(wpa_s);
+	}
+
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+		int freq;
+		if (!ifs->current_ssid ||
+		    !ifs->current_ssid->p2p_group ||
+		    (ifs->current_ssid->mode != WPAS_MODE_P2P_GO &&
+		     ifs->current_ssid->mode != WPAS_MODE_P2P_GROUP_FORMATION))
+			continue;
+
+		freq = ifs->current_ssid->frequency;
+		if (!freq_range_list_includes(list, freq)) {
+			wpa_dbg(ifs, MSG_DEBUG, "P2P GO operating frequency %d MHz in safe range",
+				freq);
+			continue;
+		}
+
+		wpa_dbg(ifs, MSG_DEBUG, "P2P GO operating in unsafe frequency %d MHz",
+			freq);
+		/* TODO: Consider using CSA or removing the group within
+		 * wpa_supplicant */
+		wpa_msg(ifs, MSG_INFO, P2P_EVENT_REMOVE_AND_REFORM_GROUP);
+	}
+#endif /* CONFIG_P2P */
+
+	os_free(str);
+}
+
+
 void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			  union wpa_event_data *data)
 {
@@ -2701,8 +2763,22 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		wpa_supplicant_event_michael_mic_failure(wpa_s, data);
 		break;
 #ifndef CONFIG_NO_SCAN_PROCESSING
+	case EVENT_SCAN_STARTED:
+		if (wpa_s->own_scan_requested) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "Own scan request started a scan");
+			wpa_s->own_scan_requested = 0;
+			wpa_s->own_scan_running = 1;
+			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+		} else {
+			wpa_dbg(wpa_s, MSG_DEBUG, "External program started a scan");
+			wpa_s->external_scan_running = 1;
+			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+		}
+		break;
 	case EVENT_SCAN_RESULTS:
 		wpa_supplicant_event_scan_results(wpa_s, data);
+		wpa_s->own_scan_running = 0;
+		wpa_s->external_scan_running = 0;
 		if (wpa_s->wpa_state != WPA_AUTHENTICATING &&
 		    wpa_s->wpa_state != WPA_ASSOCIATING)
 			wpas_p2p_continue_after_scan(wpa_s);
@@ -3193,6 +3269,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #ifdef CONFIG_WPS
 		wpas_wps_start_pbc(wpa_s, NULL, 0);
 #endif /* CONFIG_WPS */
+		break;
+	case EVENT_AVOID_FREQUENCIES:
+		wpa_supplicant_notify_avoid_freq(wpa_s, data);
 		break;
 	case EVENT_CONNECT_FAILED_REASON:
 #ifdef CONFIG_AP

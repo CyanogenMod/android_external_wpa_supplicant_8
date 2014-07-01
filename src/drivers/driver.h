@@ -983,6 +983,10 @@ struct hostapd_sta_add_params {
 	u8 qosinfo;
 	const u8 *ext_capab;
 	size_t ext_capab_len;
+	const u8 *supp_channels;
+	size_t supp_channels_len;
+	const u8 *supp_oper_classes;
+	size_t supp_oper_classes_len;
 };
 
 struct hostapd_freq_params {
@@ -1156,6 +1160,13 @@ struct wpa_signal_info {
 	enum chan_width chanwidth;
 	int center_frq1;
 	int center_frq2;
+};
+
+/* TDLS peer capabilities for send_tdls_mgmt() */
+enum tdls_peer_capability {
+	TDLS_PEER_HT = BIT(0),
+	TDLS_PEER_VHT = BIT(1),
+	TDLS_PEER_WMM = BIT(2),
 };
 
 /**
@@ -2551,6 +2562,7 @@ struct wpa_driver_ops {
 	 * @action_code: TDLS action code for the mssage
 	 * @dialog_token: Dialog Token to use in the message (if needed)
 	 * @status_code: Status Code or Reason Code to use (if needed)
+	 * @peer_capab: TDLS peer capability (TDLS_PEER_* bitfield)
 	 * @buf: TDLS IEs to add to the message
 	 * @len: Length of buf in octets
 	 * Returns: 0 on success, negative (<0) on failure
@@ -2559,7 +2571,7 @@ struct wpa_driver_ops {
 	 * responsible for receiving and sending all TDLS packets.
 	 */
 	int (*send_tdls_mgmt)(void *priv, const u8 *dst, u8 action_code,
-			      u8 dialog_token, u16 status_code,
+			      u8 dialog_token, u16 status_code, u32 peer_capab,
 			      const u8 *buf, size_t len);
 
 	/**
@@ -3297,7 +3309,26 @@ enum wpa_event_type {
 	* entry for one frequency. The survey data can be os_malloc()'d and
 	* then os_free()'d, so the event callback must only copy data.
 	*/
-	EVENT_SURVEY
+	EVENT_SURVEY,
+
+	/**
+	 * EVENT_SCAN_STARTED - Scan started
+	 *
+	 * This indicates that driver has started a scan operation either based
+	 * on a request from wpa_supplicant/hostapd or from another application.
+	 * EVENT_SCAN_RESULTS is used to indicate when the scan has been
+	 * completed (either successfully or by getting cancelled).
+	 */
+	EVENT_SCAN_STARTED,
+
+	/**
+	 * EVENT_AVOID_FREQUENCIES - Received avoid frequency range
+	 *
+	 * This event indicates a set of frequency ranges that should be avoided
+	 * to reduce issues due to interference or internal co-existence
+	 * information in the driver.
+	 */
+	EVENT_AVOID_FREQUENCIES
 };
 
 
@@ -3996,6 +4027,13 @@ union wpa_event_data {
 	struct channel_list_changed {
 		enum reg_change_initiator initiator;
 	} channel_list_changed;
+
+	/**
+	 * freq_range - List of frequency ranges
+	 *
+	 * This is used as the data with EVENT_AVOID_FREQUENCIES.
+	 */
+	struct wpa_freq_range_list freq_range;
 };
 
 /**

@@ -539,12 +539,12 @@ static int wpa_supplicant_tdls_get_capa(void *ctx, int *tdls_supported,
 
 static int wpa_supplicant_send_tdls_mgmt(void *ctx, const u8 *dst,
 					 u8 action_code, u8 dialog_token,
-					 u16 status_code, const u8 *buf,
-					 size_t len)
+					 u16 status_code, u32 peer_capab,
+					 const u8 *buf, size_t len)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	return wpa_drv_send_tdls_mgmt(wpa_s, dst, action_code, dialog_token,
-				      status_code, buf, len);
+				      status_code, peer_capab, buf, len);
 }
 
 
@@ -560,7 +560,9 @@ static int wpa_supplicant_tdls_peer_addset(
 	const u8 *supp_rates, size_t supp_rates_len,
 	const struct ieee80211_ht_capabilities *ht_capab,
 	const struct ieee80211_vht_capabilities *vht_capab,
-	u8 qosinfo, const u8 *ext_capab, size_t ext_capab_len)
+	u8 qosinfo, const u8 *ext_capab, size_t ext_capab_len,
+	const u8 *supp_channels, size_t supp_channels_len,
+	const u8 *supp_oper_classes, size_t supp_oper_classes_len)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	struct hostapd_sta_add_params params;
@@ -588,6 +590,10 @@ static int wpa_supplicant_tdls_peer_addset(
 	params.set = !add;
 	params.ext_capab = ext_capab;
 	params.ext_capab_len = ext_capab_len;
+	params.supp_channels = supp_channels;
+	params.supp_channels_len = supp_channels_len;
+	params.supp_oper_classes = supp_oper_classes;
+	params.supp_oper_classes_len = supp_oper_classes_len;
 
 	return wpa_drv_sta_add(wpa_s, &params);
 }

@@ -459,6 +459,9 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->next_scan_freqs);
 	wpa_s->next_scan_freqs = NULL;
 
+	os_free(wpa_s->manual_scan_freqs);
+	wpa_s->manual_scan_freqs = NULL;
+
 	gas_query_deinit(wpa_s->gas);
 	wpa_s->gas = NULL;
 
@@ -3507,7 +3510,8 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	os_free(global->params.override_driver);
 	os_free(global->params.override_ctrl_interface);
 
-	os_free(global->p2p_disallow_freq);
+	os_free(global->p2p_disallow_freq.range);
+	os_free(global->p2p_go_avoid_freq.range);
 	os_free(global->add_psk);
 
 	os_free(global);

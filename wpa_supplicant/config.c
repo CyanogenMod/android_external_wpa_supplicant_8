@@ -1565,6 +1565,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INTe(engine) },
 	{ INTe(engine2) },
 	{ INT(eapol_flags) },
+	{ INTe(sim_num) },
 #endif /* IEEE8021X_EAPOL */
 	{ FUNC_KEY(wep_key0) },
 	{ FUNC_KEY(wep_key1) },
@@ -2033,6 +2034,7 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->eapol_flags = DEFAULT_EAPOL_FLAGS;
 	ssid->eap_workaround = DEFAULT_EAP_WORKAROUND;
 	ssid->eap.fragment_size = DEFAULT_FRAGMENT_SIZE;
+	ssid->eap.sim_num = DEFAULT_USER_SELECTED_SIM;
 #endif /* IEEE8021X_EAPOL */
 #ifdef CONFIG_HT_OVERRIDES
 	ssid->disable_ht = DEFAULT_DISABLE_HT;
@@ -2336,6 +2338,11 @@ int wpa_config_set_cred(struct wpa_cred *cred, const char *var,
 		return 0;
 	}
 
+	if (os_strcmp(var, "sim_num") == 0) {
+		cred->sim_num = atoi(value);
+		return 0;
+	}
+
 	val = wpa_config_parse_string(value, &len);
 	if (val == NULL) {
 		wpa_printf(MSG_ERROR, "Line %d: invalid field '%s' string "
@@ -2511,6 +2518,7 @@ struct wpa_cred * wpa_config_add_cred(struct wpa_config *config)
 	if (cred == NULL)
 		return NULL;
 	cred->id = id;
+	cred->sim_num = DEFAULT_USER_SELECTED_SIM;
 	if (last)
 		last->next = cred;
 	else

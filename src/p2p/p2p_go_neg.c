@@ -587,8 +587,21 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 
 	if (dev == NULL)
 		dev = p2p_add_dev_from_go_neg_req(p2p, sa, &msg);
-	else if (dev->flags & P2P_DEV_PROBE_REQ_ONLY)
+	else if ((dev->flags & P2P_DEV_PROBE_REQ_ONLY) ||
+		  !(dev->flags & P2P_DEV_REPORTED))
 		p2p_add_dev_info(p2p, sa, dev, &msg);
+	else if (!dev->listen_freq && !dev->oper_freq) {
+		/*
+		 * This may happen if the peer entry was added based on PD
+		 * Request and no Probe Request/Response frame has been received
+		 * from this peer (or that information has timed out).
+		 */
+		p2p_dbg(p2p, "Update peer " MACSTR
+			" based on GO Neg Req since listen/oper freq not known",
+			MAC2STR(dev->info.p2p_device_addr));
+		p2p_add_dev_info(p2p, sa, dev, &msg);
+	}
+
 	if (dev && dev->flags & P2P_DEV_USER_REJECTED) {
 		p2p_dbg(p2p, "User has rejected this peer");
 		status = P2P_SC_FAIL_REJECTED_BY_USER;
@@ -1077,6 +1090,7 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 		return;
 	}
 	dev->flags &= ~P2P_DEV_WAIT_GO_NEG_CONFIRM;
+	p2p->cfg->send_action_done(p2p->cfg->cb_ctx);
 
 	if (msg.dialog_token != dev->dialog_token) {
 		p2p_dbg(p2p, "Unexpected Dialog Token %u (expected %u)",
