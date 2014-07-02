@@ -134,8 +134,11 @@ static void eap_gpsk_deinit(struct eap_sm *sm, void *priv)
 	struct eap_gpsk_data *data = priv;
 	os_free(data->id_server);
 	os_free(data->id_peer);
-	os_free(data->psk);
-	os_free(data);
+	if (data->psk) {
+		os_memset(data->psk, 0, data->psk_len);
+		os_free(data->psk);
+	}
+	bin_clear_free(data, sizeof(*data));
 }
 
 
@@ -565,7 +568,7 @@ static const u8 * eap_gpsk_validate_gpsk_3_mic(struct eap_gpsk_data *data,
 		wpa_printf(MSG_DEBUG, "EAP-GPSK: Failed to compute MIC");
 		return NULL;
 	}
-	if (os_memcmp(mic, pos, miclen) != 0) {
+	if (os_memcmp_const(mic, pos, miclen) != 0) {
 		wpa_printf(MSG_INFO, "EAP-GPSK: Incorrect MIC in GPSK-3");
 		wpa_hexdump(MSG_DEBUG, "EAP-GPSK: Received MIC", pos, miclen);
 		wpa_hexdump(MSG_DEBUG, "EAP-GPSK: Computed MIC", mic, miclen);

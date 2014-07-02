@@ -157,7 +157,7 @@ static void eap_pwd_deinit(struct eap_sm *sm, void *priv)
 	EC_POINT_free(data->server_element);
 	os_free(data->id_peer);
 	os_free(data->id_server);
-	os_free(data->password);
+	bin_clear_free(data->password, data->password_len);
 	if (data->grp) {
 		EC_GROUP_free(data->grp->group);
 		EC_POINT_free(data->grp->pwe);
@@ -167,7 +167,7 @@ static void eap_pwd_deinit(struct eap_sm *sm, void *priv)
 	}
 	wpabuf_free(data->inbuf);
 	wpabuf_free(data->outbuf);
-	os_free(data);
+	bin_clear_free(data, sizeof(*data));
 }
 
 
@@ -782,6 +782,8 @@ eap_pwd_process(struct eap_sm *sm, void *priv, struct eap_method_ret *ret,
 		tot_len = WPA_GET_BE16(pos);
 		wpa_printf(MSG_DEBUG, "EAP-pwd: Incoming fragments whose "
 			   "total length = %d", tot_len);
+		if (tot_len > 15000)
+			return NULL;
 		data->inbuf = wpabuf_alloc(tot_len);
 		if (data->inbuf == NULL) {
 			wpa_printf(MSG_INFO, "Out of memory to buffer "

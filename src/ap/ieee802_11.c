@@ -236,7 +236,8 @@ static u16 auth_shared_key(struct hostapd_data *hapd, struct sta_info *sta,
 
 	/* Transaction 3 */
 	if (!iswep || !sta->challenge || !challenge ||
-	    os_memcmp(sta->challenge, challenge, WLAN_AUTH_CHALLENGE_LEN)) {
+	    os_memcmp_const(sta->challenge, challenge,
+			    WLAN_AUTH_CHALLENGE_LEN)) {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_INFO,
 			       "shared key authentication - invalid "
@@ -402,7 +403,7 @@ static int check_sae_token(struct hostapd_data *hapd, const u8 *addr,
 		return -1;
 	if (hmac_sha256(hapd->sae_token_key, sizeof(hapd->sae_token_key),
 			addr, ETH_ALEN, mac) < 0 ||
-	    os_memcmp(token, mac, SHA256_MAC_LEN) != 0)
+	    os_memcmp_const(token, mac, SHA256_MAC_LEN) != 0)
 		return -1;
 
 	return 0;

@@ -91,7 +91,7 @@ static void eap_mschapv2_reset(struct eap_sm *sm, void *priv)
 		return;
 
 	os_free(data->peer_challenge);
-	os_free(data);
+	bin_clear_free(data, sizeof(*data));
 }
 
 
@@ -393,7 +393,7 @@ static void eap_mschapv2_process_response(struct eap_sm *sm,
 		return;
 	}
 
-	if (os_memcmp(nt_response, expected, 24) == 0) {
+	if (os_memcmp_const(nt_response, expected, 24) == 0) {
 		const u8 *pw_hash;
 		u8 pw_hash_buf[16], pw_hash_hash[16];
 

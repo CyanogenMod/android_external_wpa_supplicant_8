@@ -116,7 +116,7 @@ static void * eap_pwd_init(struct eap_sm *sm)
 	data->bnctx = BN_CTX_new();
 	if (data->bnctx == NULL) {
 		wpa_printf(MSG_INFO, "EAP-PWD: bn context allocation fail");
-		os_free(data->password);
+		bin_clear_free(data->password, data->password_len);
 		os_free(data->id_server);
 		os_free(data);
 		return NULL;
@@ -144,7 +144,7 @@ static void eap_pwd_reset(struct eap_sm *sm, void *priv)
 	EC_POINT_free(data->peer_element);
 	os_free(data->id_peer);
 	os_free(data->id_server);
-	os_free(data->password);
+	bin_clear_free(data->password, data->password_len);
 	if (data->grp) {
 		EC_GROUP_free(data->grp->group);
 		EC_POINT_free(data->grp->pwe);
@@ -154,7 +154,7 @@ static void eap_pwd_reset(struct eap_sm *sm, void *priv)
 	}
 	wpabuf_free(data->inbuf);
 	wpabuf_free(data->outbuf);
-	os_free(data);
+	bin_clear_free(data, sizeof(*data));
 }
 
 
@@ -900,6 +900,8 @@ static void eap_pwd_process(struct eap_sm *sm, void *priv,
 		tot_len = WPA_GET_BE16(pos);
 		wpa_printf(MSG_DEBUG, "EAP-pwd: Incoming fragments, total "
 			   "length = %d", tot_len);
+		if (tot_len > 15000)
+			return;
 		data->inbuf = wpabuf_alloc(tot_len);
 		if (data->inbuf == NULL) {
 			wpa_printf(MSG_INFO, "EAP-pwd: Out of memory to "

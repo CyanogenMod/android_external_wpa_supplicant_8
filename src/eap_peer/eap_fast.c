@@ -250,6 +250,8 @@ static void eap_fast_deinit(struct eap_sm *sm, void *priv)
 		pac = pac->next;
 		eap_fast_free_pac(prev);
 	}
+	os_memset(data->key_data, 0, EAP_FAST_KEY_LEN);
+	os_memset(data->emsk, 0, EAP_EMSK_LEN);
 	os_free(data->session_id);
 	wpabuf_free(data->pending_phase2_req);
 	os_free(data);
@@ -767,7 +769,7 @@ static struct wpabuf * eap_fast_process_crypto_binding(
 		    "MAC calculation", (u8 *) _bind, bind_len);
 	hmac_sha1(cmk, EAP_FAST_CMK_LEN, (u8 *) _bind, bind_len,
 		  _bind->compound_mac);
-	res = os_memcmp(cmac, _bind->compound_mac, sizeof(cmac));
+	res = os_memcmp_const(cmac, _bind->compound_mac, sizeof(cmac));
 	wpa_hexdump(MSG_MSGDUMP, "EAP-FAST: Received Compound MAC",
 		    cmac, sizeof(cmac));
 	wpa_hexdump(MSG_MSGDUMP, "EAP-FAST: Calculated Compound MAC",
@@ -1636,6 +1638,8 @@ static void * eap_fast_init_for_reauth(struct eap_sm *sm, void *priv)
 		os_free(data);
 		return NULL;
 	}
+	os_memset(data->key_data, 0, EAP_FAST_KEY_LEN);
+	os_memset(data->emsk, 0, EAP_EMSK_LEN);
 	os_free(data->session_id);
 	data->session_id = NULL;
 	if (data->phase2_priv && data->phase2_method &&

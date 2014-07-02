@@ -130,6 +130,20 @@ static void * eap_sim_init(struct eap_sm *sm)
 }
 
 
+static void eap_sim_clear_keys(struct eap_sim_data *data, int reauth)
+{
+	if (!reauth) {
+		os_memset(data->mk, 0, EAP_SIM_MK_LEN);
+		os_memset(data->k_aut, 0, EAP_SIM_K_AUT_LEN);
+		os_memset(data->k_encr, 0, EAP_SIM_K_ENCR_LEN);
+	}
+	os_memset(data->kc, 0, 3 * EAP_SIM_KC_LEN);
+	os_memset(data->sres, 0, 3 * EAP_SIM_SRES_LEN);
+	os_memset(data->msk, 0, EAP_SIM_KEYING_DATA_LEN);
+	os_memset(data->emsk, 0, EAP_EMSK_LEN);
+}
+
+
 static void eap_sim_deinit(struct eap_sm *sm, void *priv)
 {
 	struct eap_sim_data *data = priv;
@@ -138,6 +152,7 @@ static void eap_sim_deinit(struct eap_sm *sm, void *priv)
 		os_free(data->pseudonym);
 		os_free(data->reauth_id);
 		os_free(data->last_eap_identity);
+		eap_sim_clear_keys(data, 0);
 		os_free(data);
 	}
 }
@@ -449,7 +464,7 @@ static struct wpabuf * eap_sim_client_error(struct eap_sim_data *data, u8 id,
 	msg = eap_sim_msg_init(EAP_CODE_RESPONSE, id, EAP_TYPE_SIM,
 			       EAP_SIM_SUBTYPE_CLIENT_ERROR);
 	eap_sim_msg_add(msg, EAP_SIM_AT_CLIENT_ERROR_CODE, err, NULL, 0);
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, EAP_TYPE_SIM, NULL, NULL, 0);
 }
 
 
@@ -502,7 +517,7 @@ static struct wpabuf * eap_sim_response_start(struct eap_sm *sm,
 				identity, identity_len);
 	}
 
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, EAP_TYPE_SIM, NULL, NULL, 0);
 }
 
 
@@ -520,7 +535,8 @@ static struct wpabuf * eap_sim_response_challenge(struct eap_sim_data *data,
 	}
 	wpa_printf(MSG_DEBUG, "   AT_MAC");
 	eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
-	return eap_sim_msg_finish(msg, data->k_aut, (u8 *) data->sres,
+	return eap_sim_msg_finish(msg, EAP_TYPE_SIM, data->k_aut,
+				  (u8 *) data->sres,
 				  data->num_chal * EAP_SIM_SRES_LEN);
 }
 
@@ -562,7 +578,7 @@ static struct wpabuf * eap_sim_response_reauth(struct eap_sim_data *data,
 	}
 	wpa_printf(MSG_DEBUG, "   AT_MAC");
 	eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
-	return eap_sim_msg_finish(msg, data->k_aut, nonce_s,
+	return eap_sim_msg_finish(msg, EAP_TYPE_SIM, data->k_aut, nonce_s,
 				  EAP_SIM_NONCE_S_LEN);
 }
 
@@ -596,7 +612,7 @@ static struct wpabuf * eap_sim_response_notification(struct eap_sim_data *data,
 		wpa_printf(MSG_DEBUG, "   AT_MAC");
 		eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
 	}
-	return eap_sim_msg_finish(msg, k_aut, (u8 *) "", 0);
+	return eap_sim_msg_finish(msg, EAP_TYPE_SIM, k_aut, (u8 *) "", 0);
 }
 
 
@@ -1109,6 +1125,7 @@ static void eap_sim_deinit_for_reauth(struct eap_sm *sm, void *priv)
 	struct eap_sim_data *data = priv;
 	eap_sim_clear_identities(sm, data, CLEAR_EAP_ID);
 	data->use_result_ind = 0;
+	eap_sim_clear_keys(data, 1);
 }
 
 

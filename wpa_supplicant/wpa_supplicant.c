@@ -1656,10 +1656,15 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		hs20 = wpabuf_alloc(20);
 		if (hs20) {
 			int pps_mo_id = hs20_get_pps_mo_id(wpa_s, ssid);
+			size_t len;
+
 			wpas_hs20_add_indication(hs20, pps_mo_id);
-			os_memcpy(wpa_ie + wpa_ie_len, wpabuf_head(hs20),
-				  wpabuf_len(hs20));
-			wpa_ie_len += wpabuf_len(hs20);
+			len = sizeof(wpa_ie) - wpa_ie_len;
+			if (wpabuf_len(hs20) <= len) {
+				os_memcpy(wpa_ie + wpa_ie_len,
+					  wpabuf_head(hs20), wpabuf_len(hs20));
+				wpa_ie_len += wpabuf_len(hs20);
+			}
 			wpabuf_free(hs20);
 		}
 	}
@@ -2830,7 +2835,7 @@ static int wpa_disable_max_amsdu(struct wpa_supplicant *wpa_s,
 				 struct ieee80211_ht_capabilities *htcaps_mask,
 				 int disabled)
 {
-	u16 msk;
+	le16 msk;
 
 	wpa_msg(wpa_s, MSG_DEBUG, "set_disable_max_amsdu: %d", disabled);
 
@@ -2903,8 +2908,8 @@ static int wpa_set_disable_ht40(struct wpa_supplicant *wpa_s,
 				int disabled)
 {
 	/* Masking these out disables HT40 */
-	u16 msk = host_to_le16(HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET |
-			       HT_CAP_INFO_SHORT_GI40MHZ);
+	le16 msk = host_to_le16(HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET |
+				HT_CAP_INFO_SHORT_GI40MHZ);
 
 	wpa_msg(wpa_s, MSG_DEBUG, "set_disable_ht40: %d", disabled);
 
@@ -2925,8 +2930,8 @@ static int wpa_set_disable_sgi(struct wpa_supplicant *wpa_s,
 			       int disabled)
 {
 	/* Masking these out disables SGI */
-	u16 msk = host_to_le16(HT_CAP_INFO_SHORT_GI20MHZ |
-			       HT_CAP_INFO_SHORT_GI40MHZ);
+	le16 msk = host_to_le16(HT_CAP_INFO_SHORT_GI20MHZ |
+				HT_CAP_INFO_SHORT_GI40MHZ);
 
 	wpa_msg(wpa_s, MSG_DEBUG, "set_disable_sgi: %d", disabled);
 
@@ -2947,7 +2952,7 @@ static int wpa_set_disable_ldpc(struct wpa_supplicant *wpa_s,
 			       int disabled)
 {
 	/* Masking these out disables LDPC */
-	u16 msk = host_to_le16(HT_CAP_INFO_LDPC_CODING_CAP);
+	le16 msk = host_to_le16(HT_CAP_INFO_LDPC_CODING_CAP);
 
 	wpa_msg(wpa_s, MSG_DEBUG, "set_disable_ldpc: %d", disabled);
 
@@ -2988,7 +2993,7 @@ void wpa_supplicant_apply_ht_overrides(
 	wpa_set_disable_ldpc(wpa_s, htcaps, htcaps_mask, ssid->disable_ldpc);
 
 	if (ssid->ht40_intolerant) {
-		u16 bit = host_to_le16(HT_CAP_INFO_40MHZ_INTOLERANT);
+		le16 bit = host_to_le16(HT_CAP_INFO_40MHZ_INTOLERANT);
 		htcaps->ht_capabilities_info |= bit;
 		htcaps_mask->ht_capabilities_info |= bit;
 	}
@@ -3150,8 +3155,8 @@ static int wpas_check_wowlan_trigger(const char *start, const char *trigger,
 }
 
 
-int wpas_set_wowlan_triggers(struct wpa_supplicant *wpa_s,
-			     struct wpa_driver_capa *capa)
+static int wpas_set_wowlan_triggers(struct wpa_supplicant *wpa_s,
+				    struct wpa_driver_capa *capa)
 {
 	struct wowlan_triggers triggers;
 	char *start, *end, *buf;
@@ -4390,7 +4395,7 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_EAP_PASSWORD:
-		os_free(eap->password);
+		bin_clear_free(eap->password, eap->password_len);
 		eap->password = (u8 *) os_strdup(value);
 		eap->password_len = os_strlen(value);
 		eap->pending_req_password = 0;
@@ -4398,7 +4403,7 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_EAP_NEW_PASSWORD:
-		os_free(eap->new_password);
+		bin_clear_free(eap->new_password, eap->new_password_len);
 		eap->new_password = (u8 *) os_strdup(value);
 		eap->new_password_len = os_strlen(value);
 		eap->pending_req_new_password = 0;
@@ -4406,14 +4411,14 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_EAP_PIN:
-		os_free(eap->pin);
+		str_clear_free(eap->pin);
 		eap->pin = os_strdup(value);
 		eap->pending_req_pin = 0;
 		if (ssid == wpa_s->current_ssid)
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_EAP_OTP:
-		os_free(eap->otp);
+		bin_clear_free(eap->otp, eap->otp_len);
 		eap->otp = (u8 *) os_strdup(value);
 		eap->otp_len = os_strlen(value);
 		os_free(eap->pending_req_otp);
@@ -4421,14 +4426,14 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 		eap->pending_req_otp_len = 0;
 		break;
 	case WPA_CTRL_REQ_EAP_PASSPHRASE:
-		os_free(eap->private_key_passwd);
-		eap->private_key_passwd = (u8 *) os_strdup(value);
+		str_clear_free(eap->private_key_passwd);
+		eap->private_key_passwd = os_strdup(value);
 		eap->pending_req_passphrase = 0;
 		if (ssid == wpa_s->current_ssid)
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_SIM:
-		os_free(eap->external_sim_resp);
+		str_clear_free(eap->external_sim_resp);
 		eap->external_sim_resp = os_strdup(value);
 		break;
 	default:

@@ -126,6 +126,21 @@ static void * eap_aka_prime_init(struct eap_sm *sm)
 #endif /* EAP_AKA_PRIME */
 
 
+static void eap_aka_clear_keys(struct eap_aka_data *data, int reauth)
+{
+	if (!reauth) {
+		os_memset(data->mk, 0, EAP_SIM_MK_LEN);
+		os_memset(data->k_aut, 0, EAP_AKA_PRIME_K_AUT_LEN);
+		os_memset(data->k_encr, 0, EAP_SIM_K_ENCR_LEN);
+		os_memset(data->k_re, 0, EAP_AKA_PRIME_K_RE_LEN);
+	}
+	os_memset(data->msk, 0, EAP_SIM_KEYING_DATA_LEN);
+	os_memset(data->emsk, 0, EAP_EMSK_LEN);
+	os_memset(data->autn, 0, EAP_AKA_AUTN_LEN);
+	os_memset(data->auts, 0, EAP_AKA_AUTS_LEN);
+}
+
+
 static void eap_aka_deinit(struct eap_sm *sm, void *priv)
 {
 	struct eap_aka_data *data = priv;
@@ -135,6 +150,7 @@ static void eap_aka_deinit(struct eap_sm *sm, void *priv)
 		os_free(data->last_eap_identity);
 		wpabuf_free(data->id_msgs);
 		os_free(data->network_name);
+		eap_aka_clear_keys(data, 0);
 		os_free(data);
 	}
 }
@@ -151,7 +167,7 @@ static int eap_aka_ext_sim_req(struct eap_sm *sm, struct eap_aka_data *data)
 	pos += os_snprintf(pos, end - pos, ":");
 	pos += wpa_snprintf_hex(pos, end - pos, data->rand, EAP_AKA_RAND_LEN);
 	pos += os_snprintf(pos, end - pos, ":");
-	pos += wpa_snprintf_hex(pos, end - pos, data->autn, EAP_AKA_AUTN_LEN);
+	wpa_snprintf_hex(pos, end - pos, data->autn, EAP_AKA_AUTN_LEN);
 
 	eap_sm_request_sim(sm, req);
 	return 1;
@@ -294,7 +310,7 @@ static int eap_aka_umts_auth(struct eap_sm *sm, struct eap_aka_data *data)
 	{
 		u8 autn[EAP_AKA_AUTN_LEN];
 		os_memset(autn, '1', EAP_AKA_AUTN_LEN);
-		if (os_memcmp(autn, data->autn, EAP_AKA_AUTN_LEN) != 0) {
+		if (os_memcmp_const(autn, data->autn, EAP_AKA_AUTN_LEN) != 0) {
 			wpa_printf(MSG_WARNING, "EAP-AKA: AUTN did not match "
 				   "with expected value");
 			return -1;
@@ -509,7 +525,7 @@ static int eap_aka_verify_checkcode(struct eap_aka_data *data,
 #endif /* EAP_AKA_PRIME */
 		sha1_vector(1, &addr, &len, hash);
 
-	if (os_memcmp(hash, checkcode, hash_len) != 0) {
+	if (os_memcmp_const(hash, checkcode, hash_len) != 0) {
 		wpa_printf(MSG_DEBUG, "EAP-AKA: Mismatch in AT_CHECKCODE");
 		return -1;
 	}
@@ -532,7 +548,7 @@ static struct wpabuf * eap_aka_client_error(struct eap_aka_data *data, u8 id,
 	msg = eap_sim_msg_init(EAP_CODE_RESPONSE, id, data->eap_method,
 			       EAP_AKA_SUBTYPE_CLIENT_ERROR);
 	eap_sim_msg_add(msg, EAP_SIM_AT_CLIENT_ERROR_CODE, err, NULL, 0);
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, data->eap_method, NULL, NULL, 0);
 }
 
 
@@ -549,7 +565,7 @@ static struct wpabuf * eap_aka_authentication_reject(struct eap_aka_data *data,
 		   "(id=%d)", id);
 	msg = eap_sim_msg_init(EAP_CODE_RESPONSE, id, data->eap_method,
 			       EAP_AKA_SUBTYPE_AUTHENTICATION_REJECT);
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, data->eap_method, NULL, NULL, 0);
 }
 
 
@@ -568,7 +584,7 @@ static struct wpabuf * eap_aka_synchronization_failure(
 	wpa_printf(MSG_DEBUG, "   AT_AUTS");
 	eap_sim_msg_add_full(msg, EAP_SIM_AT_AUTS, data->auts,
 			     EAP_AKA_AUTS_LEN);
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, data->eap_method, NULL, NULL, 0);
 }
 
 
@@ -612,7 +628,7 @@ static struct wpabuf * eap_aka_response_identity(struct eap_sm *sm,
 				identity, identity_len);
 	}
 
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, data->eap_method, NULL, NULL, 0);
 }
 
 
@@ -634,7 +650,8 @@ static struct wpabuf * eap_aka_response_challenge(struct eap_aka_data *data,
 	}
 	wpa_printf(MSG_DEBUG, "   AT_MAC");
 	eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
-	return eap_sim_msg_finish(msg, data->k_aut, (u8 *) "", 0);
+	return eap_sim_msg_finish(msg, data->eap_method, data->k_aut, (u8 *) "",
+				  0);
 }
 
 
@@ -676,7 +693,7 @@ static struct wpabuf * eap_aka_response_reauth(struct eap_aka_data *data,
 	}
 	wpa_printf(MSG_DEBUG, "   AT_MAC");
 	eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
-	return eap_sim_msg_finish(msg, data->k_aut, nonce_s,
+	return eap_sim_msg_finish(msg, data->eap_method, data->k_aut, nonce_s,
 				  EAP_SIM_NONCE_S_LEN);
 }
 
@@ -710,7 +727,7 @@ static struct wpabuf * eap_aka_response_notification(struct eap_aka_data *data,
 		wpa_printf(MSG_DEBUG, "   AT_MAC");
 		eap_sim_msg_add_mac(msg, EAP_SIM_AT_MAC);
 	}
-	return eap_sim_msg_finish(msg, k_aut, (u8 *) "", 0);
+	return eap_sim_msg_finish(msg, data->eap_method, k_aut, (u8 *) "", 0);
 }
 
 
@@ -790,7 +807,7 @@ static struct wpabuf * eap_aka_prime_kdf_select(struct eap_aka_data *data,
 			       EAP_AKA_SUBTYPE_CHALLENGE);
 	wpa_printf(MSG_DEBUG, "   AT_KDF");
 	eap_sim_msg_add(msg, EAP_SIM_AT_KDF, kdf, NULL, 0);
-	return eap_sim_msg_finish(msg, NULL, NULL, 0);
+	return eap_sim_msg_finish(msg, data->eap_method, NULL, NULL, 0);
 }
 
 
@@ -1372,6 +1389,7 @@ static void eap_aka_deinit_for_reauth(struct eap_sm *sm, void *priv)
 	data->id_msgs = NULL;
 	data->use_result_ind = 0;
 	data->kdf_negotiation = 0;
+	eap_aka_clear_keys(data, 1);
 }
 
 
