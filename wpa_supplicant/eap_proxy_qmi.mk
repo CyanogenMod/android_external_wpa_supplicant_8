@@ -17,6 +17,12 @@ INCLUDES += $(TARGET_OUT_HEADERS)/qmi/src
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/services
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/core/lib/inc
 
+ifdef CONFIG_EAP_PROXY_MDM_DETECT
+L_CFLAGS += -DCONFIG_EAP_PROXY_MDM_DETECT
+INCLUDES += $(TARGET_OUT_HEADERS)/libmdmdetect/inc
+LIB_SHARED_EAP_PROXY += libmdmdetect
+endif
+
 # EAP-AKA' (enable CONFIG_PCSC, if EAP-AKA' is used).
 # This requires CONFIG_EAP_AKA to be enabled, too.
 # This is supported only in B Family devices.
