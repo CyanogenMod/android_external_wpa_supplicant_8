@@ -1051,6 +1051,17 @@ struct wpa_config {
 	 * resources.
 	 */
 	unsigned int p2p_search_delay;
+
+	/**
+	 * key_mgmt_offload - Use key managment offload
+	 *
+	 * Key managment offload should be used if the device supports it.
+	 * Key managment offload is the capability of a device operating as
+	 * a station to do the exchange necessary to establish temporal keys
+	 * during initial RSN connection, after roaming, or during a PTK
+	 * rekeying operation.
+	 */
+	int key_mgmt_offload;
 };
 
 

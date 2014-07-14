@@ -198,6 +198,10 @@ static int wpa_supplicant_get_pmk(struct wpa_sm *sm,
 			wpa_hexdump_key(MSG_DEBUG, "WPA: PMK from EAPOL state "
 					"machines", sm->pmk, pmk_len);
 			sm->pmk_len = pmk_len;
+			if (PMK_LEN == sm->pmk_len)
+				if (wpa_sm_key_mgmt_set_pmk(sm))
+					wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
+						"RSN: cannot set PMK for key management offload");
 			if (sm->proto == WPA_PROTO_RSN &&
 			    !wpa_key_mgmt_ft(sm->key_mgmt)) {
 				sa = pmksa_cache_add(sm->pmksa,
@@ -2779,3 +2783,14 @@ int wpa_sm_get_p2p_ip_addr(struct wpa_sm *sm, u8 *buf)
 }
 
 #endif /* CONFIG_P2P */
+
+
+void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, u8 *rx_replay_counter)
+{
+	if (NULL != rx_replay_counter) {
+		os_memcpy(sm->rx_replay_counter, rx_replay_counter,
+			  WPA_REPLAY_COUNTER_LEN);
+		sm->rx_replay_counter_set = 1;
+		wpa_printf(MSG_DEBUG, "Updated key replay counter");
+	}
+}

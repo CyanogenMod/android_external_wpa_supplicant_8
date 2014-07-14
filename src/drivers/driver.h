@@ -1043,6 +1043,25 @@ struct wpa_driver_capa {
 	unsigned int num_multichan_concurrent;
 
 	/**
+	 * Supported types of device key management offload
+	 */
+/* WPA/WPA2 PSK key management */
+#define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_PSK		0x00000001
+/* 802.11r (FT) PSK key management */
+#define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_FT_PSK	0x00000002
+/* Key management on already established PMKSA */
+#define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_PMKSA	0x00000004
+	unsigned int key_mgmt_offload_support;
+
+	/**
+	 * Supported types of device key derivation used as
+	 * part of key management offload
+	 */
+/* IGTK key derivation */
+#define WPA_DRIVER_KEY_DERIVE_OFFLOAD_SUPPORT_IGTK	0x00000001
+	unsigned int key_derive_offload_support;
+
+	/**
 	 * extended_capa - extended capabilities in driver/device
 	 *
 	 * Must be allocated and freed by driver and the pointers must be
@@ -3000,6 +3019,18 @@ struct wpa_driver_ops {
 	 */
 	int (*disable_transmit_sa)(void *priv, u32 channel, u8 an);
 #endif /* CONFIG_MACSEC */
+
+	/**
+	 * key_mgmt_set_pmk - Set PMK for key management offload
+	 * @priv: Private driver interface data
+	 * @pmk: PMK to send to device
+	 * Returns: error code
+	 *
+	 * Used to pass the PMK to the device for key management offload.
+	 * This will be used in the case of key management offload on an
+	 * already established PMKSA.
+	 */
+	int (*key_mgmt_set_pmk)(void *priv, const u8 *pmk);
 };
 
 
@@ -3475,7 +3506,20 @@ enum wpa_event_type {
 	 * to reduce issues due to interference or internal co-existence
 	 * information in the driver.
 	 */
-	EVENT_AVOID_FREQUENCIES
+	EVENT_AVOID_FREQUENCIES,
+
+	/**
+	 * EVENT_AUTHORIZATION - Device offloaded key management
+	 *
+	 *  Indicates that the device offloaded the establishment of
+	 *  temporal keys for an RSN connection.  This is used as part
+	 *  of key managment offload, where a device operating as a
+	 *  station is capable of doing the exchange necessary to establish
+	 *  temporal keys during initial RSN connection or after roaming.  This
+	 *  event might also be sent after the device handles a PTK rekeying
+	 *  operation.
+	 */
+	EVENT_AUTHORIZATION
 };
 
 
@@ -4114,6 +4158,22 @@ union wpa_event_data {
 	 * This is used as the data with EVENT_AVOID_FREQUENCIES.
 	 */
 	struct wpa_freq_range_list freq_range;
+
+	/**
+	 * authorization_info - key management offload information
+	 *
+	 * This is the information that is passed from the device
+	 * when an authorization event is signaled which indicates
+	 * that the device offloaded key management.
+	 * @authorized: Status of key management offload, type
+	 *	 nl80211_authorization_status
+	 * @key_replay_ctr: Key replay counter value last used
+	 *	in a valid EAPOL-Key frame
+	 */
+	struct authorization_info {
+		u8 authorized;
+		u8 *key_replay_ctr;
+	} authorization_info;
 };
 
 /**

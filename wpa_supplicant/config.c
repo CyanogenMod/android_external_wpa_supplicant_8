@@ -3909,6 +3909,7 @@ static const struct global_parse_data global_fields[] = {
 	{ STR(osu_dir), 0 },
 	{ STR(wowlan_triggers), 0 },
 	{ INT(p2p_search_delay), 0},
+	{ INT(key_mgmt_offload), 0},
 };
 
 #undef FUNC

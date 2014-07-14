@@ -1802,6 +1802,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			params.psk = ssid->psk;
 	}
 
+	if (wpa_s->conf->key_mgmt_offload &&
+		 (params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+		  params.key_mgmt_suite == WPA_KEY_MGMT_FT_PSK))
+		if (ssid->psk_set)
+			params.psk = ssid->psk;
+
 	params.drop_unencrypted = use_crypt;
 
 #ifdef CONFIG_IEEE80211W

@@ -1179,6 +1179,10 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->p2p_search_delay != DEFAULT_P2P_SEARCH_DELAY)
 		fprintf(f, "p2p_search_delay=%u\n",
 			config->p2p_search_delay);
+
+	if (config->key_mgmt_offload)
+		fprintf(f, "key_mgmt_offload=%u\n",
+			config->key_mgmt_offload);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */
