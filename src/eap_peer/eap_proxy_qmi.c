@@ -39,6 +39,9 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "eap_config.h"
 #include "common/wpa_ctrl.h"
 #include <cutils/properties.h>
+#ifdef CONFIG_EAP_PROXY_MDM_DETECT
+#include "mdm_detect.h"
+#endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 #if defined(__BIONIC_FORTIFY)
 #include <sys/system_properties.h>
 #endif
@@ -624,6 +627,25 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
 	const char *eap_qmi_port[MAX_NO_OF_SIM_SUPPORTED];
 	int index;
 	static Boolean flag = FALSE;
+#ifdef CONFIG_EAP_PROXY_MDM_DETECT
+	struct dev_info mdm_detect_info;
+	int ret = 0;
+
+	/* Call ESOC API to get the number of modems.
+	 * If the number of modems is not zero, only then proceed
+	 * with the eap_proxy intialization.
+	 */
+	ret = get_system_info(&mdm_detect_info);
+	if (ret > 0)
+		wpa_printf(MSG_ERROR, "eap_proxy: Failed to get system info, ret %d", ret);
+
+	if (mdm_detect_info.num_modems == 0) {
+		wpa_printf(MSG_ERROR, "eap_proxy: No Modem support for this target"
+			   " number of modems is %d", mdm_detect_info.num_modems);
+		return NULL;
+	}
+	wpa_printf(MSG_DEBUG, "eap_proxy: num_modems = %d", mdm_detect_info.num_modems);
+#endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
 	eap_proxy =  os_malloc(sizeof(struct eap_proxy_sm));
 	if (NULL == eap_proxy) {
