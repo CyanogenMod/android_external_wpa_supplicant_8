@@ -1051,6 +1051,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_FT_PSK	0x00000002
 /* Key management on already established PMKSA */
 #define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_PMKSA	0x00000004
+/* 802.11r (FT) 802.1X key management */
+#define WPA_DRIVER_KEY_MGMT_OFFLOAD_SUPPORT_FT_802_1X	0x00000008
 	unsigned int key_mgmt_offload_support;
 
 	/**
@@ -1059,6 +1061,8 @@ struct wpa_driver_capa {
 	 */
 /* IGTK key derivation */
 #define WPA_DRIVER_KEY_DERIVE_OFFLOAD_SUPPORT_IGTK	0x00000001
+/* SHA-256 key derivation */
+#define WPA_DRIVER_KEY_DERIVE_OFFLOAD_SUPPORT_SHA256	0x00000002
 	unsigned int key_derive_offload_support;
 
 	/**

@@ -1804,6 +1804,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 
 	if (wpa_s->conf->key_mgmt_offload &&
 		 (params.key_mgmt_suite == WPA_KEY_MGMT_PSK ||
+		  params.key_mgmt_suite == WPA_KEY_MGMT_PSK_SHA256 ||
 		  params.key_mgmt_suite == WPA_KEY_MGMT_FT_PSK))
 		if (ssid->psk_set)
 			params.psk = ssid->psk;

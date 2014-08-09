@@ -198,10 +198,16 @@ static int wpa_supplicant_get_pmk(struct wpa_sm *sm,
 			wpa_hexdump_key(MSG_DEBUG, "WPA: PMK from EAPOL state "
 					"machines", sm->pmk, pmk_len);
 			sm->pmk_len = pmk_len;
-			if (PMK_LEN == sm->pmk_len)
-				if (wpa_sm_key_mgmt_set_pmk(sm))
+			if (sm->key_mgmt ==  WPA_KEY_MGMT_FT_IEEE8021X)
+				if (wpa_sm_key_mgmt_set_pmk(sm, sm->xxkey))
 					wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
-						"RSN: cannot set PMK for key management offload");
+						"RSN: cannot set low order 256 bits "
+						"of MSK for key management offload");
+			else
+				if (wpa_sm_key_mgmt_set_pmk(sm, sm->pmk))
+					wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
+						"RSN: cannot set PMK for key"
+						"management offload");
 			if (sm->proto == WPA_PROTO_RSN &&
 			    !wpa_key_mgmt_ft(sm->key_mgmt)) {
 				sa = pmksa_cache_add(sm->pmksa,

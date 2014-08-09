@@ -3287,6 +3287,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->wmm_ac_params[2] = ac_vi;
 	config->wmm_ac_params[3] = ac_vo;
 	config->p2p_search_delay = DEFAULT_P2P_SEARCH_DELAY;
+	config->key_mgmt_offload = DEFAULT_KEY_MGMT_OFFLOAD;
 
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
