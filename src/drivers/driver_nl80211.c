@@ -8769,6 +8769,9 @@ static int nl80211_set_key_mgmt_offload(
 	int offload_key_mgmt = 0;
 	int pass_psk = 0;
 
+	if (!params->req_key_mgmt_offload)
+		return 0;
+
 	wpa_printf(MSG_DEBUG,
 		  "nl80211: set key mgmt offload, suite %d, support 0x%x, psk 0x%p",
 		  params->key_mgmt_suite, capa->key_mgmt_offload_support,
@@ -12511,7 +12514,8 @@ nla_put_failure:
 }
 
 
-static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk)
+static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk,
+				    size_t pmk_len)
 {
 	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
@@ -12535,6 +12539,7 @@ static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk)
 	nl80211_cmd(drv, msg, 0, NL80211_CMD_KEY_MGMT_SET_PMK);
 	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, drv->ifindex);
 	NLA_PUT(msg, NL80211_ATTR_PMK, NL80211_KEY_LEN_PMK, pmk);
+	NLA_PUT_U32(msg, NL80211_ATTR_PMK_LEN, pmk_len);
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	if (ret) {

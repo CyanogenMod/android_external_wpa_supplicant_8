@@ -682,6 +682,14 @@ struct wpa_driver_associate_params {
 	const struct ieee80211_vht_capabilities *vhtcaps;
 	const struct ieee80211_vht_capabilities *vhtcaps_mask;
 #endif /* CONFIG_VHT_OVERRIDES */
+
+	/**
+	 * req_key_mgmt_offload - Request key managment offload for connection
+	 *
+	 * Request key managment offload for this connection if the device
+	 * supports it.
+	 */
+	int req_key_mgmt_offload;
 };
 
 enum hide_ssid {
@@ -3028,13 +3036,14 @@ struct wpa_driver_ops {
 	 * key_mgmt_set_pmk - Set PMK for key management offload
 	 * @priv: Private driver interface data
 	 * @pmk: PMK to send to device
+	 * @pmk_len: length of PMK
 	 * Returns: error code
 	 *
 	 * Used to pass the PMK to the device for key management offload.
 	 * This will be used in the case of key management offload on an
 	 * already established PMKSA.
 	 */
-	int (*key_mgmt_set_pmk)(void *priv, const u8 *pmk);
+	int (*key_mgmt_set_pmk)(void *priv, const u8 *pmk, size_t pmk_len);
 };
 
 

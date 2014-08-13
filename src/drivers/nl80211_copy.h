@@ -1618,6 +1618,7 @@ enum nl80211_commands {
  *	derivation used as part of key management offload.
  * @NL80211_ATTR_PMK: The Pairwise Master Key to be used for the
  *	connection.
+ * @NL80211_ATTR_PMK_LEN: The length of the PMK.
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -1961,6 +1962,7 @@ enum nl80211_attrs {
 	NL80211_ATTR_KEY_MGMT_OFFLOAD_SUPPORT,
 	NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT,
 	NL80211_ATTR_PMK,
+	NL80211_ATTR_PMK_LEN,
 
 	NL80211_ATTR_IFACE_SOCKET_OWNER,
 

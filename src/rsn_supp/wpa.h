@@ -70,7 +70,7 @@ struct wpa_sm_ctx {
 #endif /* CONFIG_TDLS */
 	void (*set_rekey_offload)(void *ctx, const u8 *kek, const u8 *kck,
 				  const u8 *replay_ctr);
-	int (*key_mgmt_set_pmk)(void *ctx, u8 *pmk);
+	int (*key_mgmt_set_pmk)(void *ctx, const u8 *pmk, size_t pmk_len);
 };
 
 

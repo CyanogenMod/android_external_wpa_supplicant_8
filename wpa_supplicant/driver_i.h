@@ -828,11 +828,12 @@ static inline int wpa_drv_disable_transmit_sa(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_MACSEC */
 
 static inline int wpa_drv_key_mgmt_set_pmk(struct wpa_supplicant *wpa_s,
-					   const u8 *pmk)
+					   const u8 *pmk, size_t pmk_len)
 {
 	if (!wpa_s->driver->key_mgmt_set_pmk)
 		return -1;
-	return wpa_s->driver->key_mgmt_set_pmk(wpa_s->drv_priv, pmk);
+	return wpa_s->driver->key_mgmt_set_pmk(wpa_s->drv_priv, pmk,
+					       pmk_len);
 }
 
 #endif /* DRIVER_I_H */
