@@ -12,6 +12,7 @@
 #include "common.h"
 #include "utils/eloop.h"
 #include "wpa_supplicant_i.h"
+#include "p2p_supplicant.h"
 #include "driver_i.h"
 #include "offchannel.h"
 
@@ -187,6 +188,12 @@ void offchannel_send_action_tx_status(
 			wpa_s->pending_action_dst, wpa_s->pending_action_src,
 			wpa_s->pending_action_bssid,
 			data, data_len, result);
+	}
+
+	if (wpa_s->p2p_long_listen > 0) {
+		/* Continue the listen */
+		wpa_printf(MSG_DEBUG, "P2P: Continuing long Listen state");
+		wpas_p2p_listen_start(wpa_s, wpa_s->p2p_long_listen);
 	}
 }
 
