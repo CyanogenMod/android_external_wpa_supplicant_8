@@ -52,7 +52,10 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* Default timeout (in milli-seconds) for synchronous QMI message */
 #define WPA_UIM_QMI_DEFAULT_TIMEOUT               5000
 
-#define EAP_PROXY_PROPERTY_BASEBAND    "ro.baseband"
+#define EAP_PROXY_PROPERTY_BASEBAND	"ro.baseband"
+#ifdef CONFIG_EAP_PROXY_MSM8994_TARGET
+#define EAP_PROXY_TARGET_PLATFORM	"ro.board.platform"
+#endif /* CONFIG_EAP_PROXY_MSM8994_TARGET */
 #if defined(__BIONIC_FORTIFY)
 #define EAP_PROXY_PROPERTY_BASEBAND_SIZE   PROP_VALUE_MAX
 #else
@@ -65,6 +68,9 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define EAP_PROXY_BASEBAND_VALUE_SGLTE     "sglte"
 #define EAP_PROXY_BASEBAND_VALUE_CSFB      "csfb"
 #define EAP_PROXY_BASEBAND_VALUE_MDMUSB    "mdm"
+#ifdef CONFIG_EAP_PROXY_MSM8994_TARGET
+#define EAP_PROXY_TARGET_PLATFORM_MSM8994  "msm8994"
+#endif /* CONFIG_EAP_PROXY_MSM8994_TARGET */
 #define EAP_PROXY_BASEBAND_VALUE_UNDEFINED "undefined"
 
 #ifdef SIM_AKA_IDENTITY_IMSI
@@ -557,13 +563,13 @@ const char * eap_proxy_get_port(void)
 	char def[EAP_PROXY_PROPERTY_BASEBAND_SIZE] = {0};
 
 	ret = property_get(EAP_PROXY_PROPERTY_BASEBAND, args, def);
-	if (ret > EAP_PROXY_PROPERTY_BASEBAND_SIZE){
+	if (ret > EAP_PROXY_PROPERTY_BASEBAND_SIZE) {
 		wpa_printf(MSG_ERROR,"property [%s] has size [%d] that exceeds max [%d]",
 				   EAP_PROXY_PROPERTY_BASEBAND,
 				   ret,
 				   EAP_PROXY_PROPERTY_BASEBAND_SIZE);
 		return NULL;
-	   }
+	}
 
 	if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_MSM, args, 3)) {
 	   wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
@@ -592,6 +598,17 @@ const char * eap_proxy_get_port(void)
 		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
 		eap_proxy_port = QMI_PORT_RMNET_1;
 	}
+#ifdef CONFIG_EAP_PROXY_MSM8994_TARGET
+	if ((!os_strncmp(EAP_PROXY_BASEBAND_VALUE_MSM, args, 3)) ||
+	    (!os_strncmp(EAP_PROXY_BASEBAND_VALUE_APQ, args, 3)) ||
+	    (!os_strncmp(EAP_PROXY_BASEBAND_VALUE_SGLTE, args, 5))) {
+		ret = property_get(EAP_PROXY_TARGET_PLATFORM, args, def);
+		if (!os_strncmp(EAP_PROXY_TARGET_PLATFORM_MSM8994, args, 7)) {
+			wpa_printf(MSG_ERROR,"baseband property is set to [%s]: for 8994 HW", args);
+			eap_proxy_port = QMI_PORT_RMNET_0;
+		}
+	}
+#endif /* CONFIG_EAP_PROXY_MSM8994_TARGET */
 	return eap_proxy_port;
 }
 
