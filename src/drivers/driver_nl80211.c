@@ -3500,6 +3500,9 @@ static void wiphy_info_supported_iftypes(struct wiphy_info_data *info,
 		case NL80211_IFTYPE_AP:
 			info->capa->flags |= WPA_DRIVER_FLAGS_AP;
 			break;
+		case NL80211_IFTYPE_MESH_POINT:
+			info->capa->flags |= WPA_DRIVER_FLAGS_MESH;
+			break;
 		case NL80211_IFTYPE_ADHOC:
 			info->capa->flags |= WPA_DRIVER_FLAGS_IBSS;
 			break;
