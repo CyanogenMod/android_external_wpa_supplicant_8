@@ -14,6 +14,7 @@
 #include "crypto/sha256.h"
 #include "crypto/aes_wrap.h"
 #include "crypto/crypto.h"
+#include "drivers/driver.h"
 #include "ieee802_11_defs.h"
 #include "defs.h"
 #include "wpa_common.h"
@@ -1495,4 +1496,79 @@ int wpa_select_ap_group_cipher(int wpa, int wpa_pairwise, int rsn_pairwise)
 			 WPA_CIPHER_GCMP)) == WPA_CIPHER_CCMP_256)
 		return WPA_CIPHER_CCMP_256;
 	return WPA_CIPHER_CCMP;
+}
+
+
+static int wpa_check_wowlan_trigger(const char *start, const char *trigger,
+				    int capa_trigger, u8 *param_trigger)
+{
+	if (os_strcmp(start, trigger) != 0)
+		return 0;
+	if (!capa_trigger)
+		return 0;
+
+	*param_trigger = 1;
+	return 1;
+}
+
+
+struct wowlan_triggers *wpa_get_wowlan_triggers(const char *wowlan_triggers,
+						struct wpa_driver_capa *capa)
+{
+	struct wowlan_triggers *triggers;
+	char *start, *end, *buf;
+	int last;
+
+	if (!wowlan_triggers)
+		return NULL;
+
+	buf = os_strdup(wowlan_triggers);
+	if (buf == NULL)
+		return NULL;
+
+	triggers = os_zalloc(sizeof(*triggers));
+	if (triggers == NULL)
+		goto out;
+
+#define CHECK_TRIGGER(trigger) \
+	wpa_check_wowlan_trigger(start, #trigger,			\
+				  capa->wowlan_triggers.trigger,	\
+				  &triggers->trigger)
+
+	start = buf;
+	while (*start != '\0') {
+		while (isblank(*start))
+			start++;
+		if (*start == '\0')
+			break;
+		end = start;
+		while (!isblank(*end) && *end != '\0')
+			end++;
+		last = *end == '\0';
+		*end = '\0';
+
+		if (!CHECK_TRIGGER(any) &&
+		    !CHECK_TRIGGER(disconnect) &&
+		    !CHECK_TRIGGER(magic_pkt) &&
+		    !CHECK_TRIGGER(gtk_rekey_failure) &&
+		    !CHECK_TRIGGER(eap_identity_req) &&
+		    !CHECK_TRIGGER(four_way_handshake) &&
+		    !CHECK_TRIGGER(rfkill_release)) {
+			wpa_printf(MSG_DEBUG,
+				   "Unknown/unsupported wowlan trigger '%s'",
+				   start);
+			os_free(triggers);
+			triggers = NULL;
+			goto out;
+		}
+
+		if (last)
+			break;
+		start = end + 1;
+	}
+#undef CHECK_TRIGGER
+
+out:
+	os_free(buf);
+	return triggers;
 }
