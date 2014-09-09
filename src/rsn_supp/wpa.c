@@ -140,15 +140,16 @@ void wpa_sm_key_request(struct wpa_sm *sm, int error, int pairwise)
 
 static void wpa_supplicant_key_mgmt_set_pmk(struct wpa_sm *sm)
 {
-	if (sm->key_mgmt == WPA_KEY_MGMT_FT_IEEE8021X)
+	if (sm->key_mgmt == WPA_KEY_MGMT_FT_IEEE8021X) {
 		if (wpa_sm_key_mgmt_set_pmk(sm, sm->xxkey, sm->xxkey_len))
 			wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
 				"RSN: cannot set low order 256 bits of MSK for "
 				"key management offload");
-	else
+	} else {
 		if (wpa_sm_key_mgmt_set_pmk(sm, sm->pmk, sm->pmk_len))
 			wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
 				"RSN: cannot set PMK for key management offload");
+	}
 }
 
 
