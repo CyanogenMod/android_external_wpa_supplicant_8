@@ -615,6 +615,37 @@ const char * eap_proxy_get_port(void)
 	return eap_proxy_port;
 }
 
+#ifdef CONFIG_EAP_PROXY_MDM_DETECT
+static int eap_modem_compatible(struct dev_info *mdm_detect_info)
+{
+	char args[EAP_PROXY_PROPERTY_BASEBAND_SIZE] = {0};
+	int ret = 0;
+
+	/* Get the hardware property */
+	ret = property_get(EAP_PROXY_PROPERTY_BASEBAND, args, "");
+	if (ret > EAP_PROXY_PROPERTY_BASEBAND_SIZE){
+		wpa_printf(MSG_ERROR,"property [%s] has size [%d] that exceeds max [%d]",
+			   EAP_PROXY_PROPERTY_BASEBAND,
+			   ret,
+			   EAP_PROXY_PROPERTY_BASEBAND_SIZE);
+		return FALSE;
+	}
+
+	/* This will check for the type of hardware, and if the hardware type
+	 * needs external modem, it will check if the modem type is external */
+	if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_APQ, args, 3)) {
+		for (ret = 0; ret < mdm_detect_info->num_modems; ret++) {
+			if (mdm_detect_info->mdm_list[ret].type == MDM_TYPE_EXTERNAL) {
+				wpa_printf(MSG_INFO, "eap_proxy: hardware supports external modem");
+				return TRUE;
+			}
+		}
+		wpa_printf(MSG_ERROR, "eap_proxy: hardware does not support external modem");
+		return FALSE;
+	}
+	return TRUE;
+}
+#endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
 struct eap_proxy_sm *
 eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
@@ -645,6 +676,11 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
 		return NULL;
 	}
 	wpa_printf(MSG_DEBUG, "eap_proxy: num_modems = %d", mdm_detect_info.num_modems);
+
+	if(eap_modem_compatible(&mdm_detect_info) == FALSE) {
+		wpa_printf(MSG_ERROR, "eap_proxy: build does not support EAP-SIM feature");
+		return NULL;
+	}
 #endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
 	eap_proxy =  os_malloc(sizeof(struct eap_proxy_sm));
