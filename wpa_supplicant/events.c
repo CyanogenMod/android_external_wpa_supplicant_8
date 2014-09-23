@@ -3484,6 +3484,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			}
 			wpa_sm_set_rx_replay_ctr(wpa_s->wpa,
 				  data->authorization_info.key_replay_ctr);
+			wpa_sm_set_ptk_kck_kek(wpa_s->wpa,
+				  data->authorization_info.ptk_kck,
+				  data->authorization_info.ptk_kek);
 		}
 	default:
 		wpa_msg(wpa_s, MSG_INFO, "Unknown event %d", event);

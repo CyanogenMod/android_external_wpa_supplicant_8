@@ -2806,3 +2806,17 @@ void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, u8 *rx_replay_counter)
 		wpa_printf(MSG_DEBUG, "Updated key replay counter");
 	}
 }
+
+
+void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm, u8 *ptk_kck, u8 *ptk_kek)
+{
+	if (NULL != ptk_kck) {
+		os_memcpy(sm->ptk.kck, ptk_kck, 16);
+		wpa_printf(MSG_DEBUG, "Updated PTK KCK");
+	}
+	if (NULL != ptk_kek) {
+		os_memcpy(sm->ptk.kek, ptk_kek, 16);
+		wpa_printf(MSG_DEBUG, "Updated PTK KEK");
+	}
+	sm->ptk_set = 1;
+}

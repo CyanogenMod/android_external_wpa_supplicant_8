@@ -1619,6 +1619,8 @@ enum nl80211_commands {
  * @NL80211_ATTR_PMK: The Pairwise Master Key to be used for the
  *	connection.
  * @NL80211_ATTR_PMK_LEN: The length of the PMK.
+ * @NL80211_ATTR_PTK_KCK: Pairwise Transient Key, Key Confirmation Key.
+ * @NL80211_ATTR_PTK_KEK: Pairwise Transient Key, Key Encryption Key.
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -1963,6 +1965,8 @@ enum nl80211_attrs {
 	NL80211_ATTR_KEY_DERIVE_OFFLOAD_SUPPORT,
 	NL80211_ATTR_PMK,
 	NL80211_ATTR_PMK_LEN,
+	NL80211_ATTR_PTK_KCK,
+	NL80211_ATTR_PTK_KEK,
 
 	NL80211_ATTR_IFACE_SOCKET_OWNER,
 
@@ -4194,6 +4198,8 @@ enum nl80211_tdls_peer_capability {
 #define NL80211_KEY_LEN_PSK		32
 #define NL80211_KEY_LEN_PMK		32
 #define NL80211_KEY_REPLAY_CTR_LEN	8
+#define NL80211_KEY_LEN_PTK_KCK		16
+#define NL80211_KEY_LEN_PTK_KEK		16
 
 /**
  * enum nl80211_key_mgmt_offload_support - key management offload types

@@ -4182,10 +4182,14 @@ union wpa_event_data {
 	 *	 nl80211_authorization_status
 	 * @key_replay_ctr: Key replay counter value last used
 	 *	in a valid EAPOL-Key frame
+	 * @ptk_kck: the derived PTK KCK
+	 * @ptk_kek: the derived PTK KEK
 	 */
 	struct authorization_info {
 		u8 authorized;
 		u8 *key_replay_ctr;
+		u8 *ptk_kck;
+		u8 *ptk_kek;
 	} authorization_info;
 };
 

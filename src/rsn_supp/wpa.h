@@ -150,6 +150,8 @@ int wpa_sm_get_p2p_ip_addr(struct wpa_sm *sm, u8 *buf);
 
 void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, u8 *rx_replay_counter);
 
+void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm, u8 *ptk_kck, u8 *ptk_kek);
+
 #else /* CONFIG_NO_WPA */
 
 static inline struct wpa_sm * wpa_sm_init(struct wpa_sm_ctx *ctx)
@@ -306,6 +308,10 @@ static inline void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm,
 
 static inline void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm,
 					    u8 *rx_replay_counter)
+{
+}
+
+void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm, u8 *ptk_kck, u8 *ptk_kek)
 {
 }
 

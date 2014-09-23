@@ -3000,17 +3000,33 @@ static void nl80211_event_authorization(struct wpa_driver_nl80211_data *drv,
 	os_memset(&data, 0, sizeof(data));
 
 	auth_status = nla_get_u8(tb[NL80211_ATTR_AUTHORIZATION_STATUS]);
-
 	if (auth_status == NL80211_AUTHORIZED)
 		data.authorization_info.authorized = 1;
 	wpa_printf(MSG_DEBUG, "nl80211: authorization event, status: %d",
 		  auth_status);
+
 	data.authorization_info.key_replay_ctr =
 		  nla_data(tb[NL80211_ATTR_KEY_REPLAY_CTR]);
 	if (NULL != data.authorization_info.key_replay_ctr) {
 		wpa_hexdump(MSG_MSGDUMP, "  * key replay counter",
 			  data.authorization_info.key_replay_ctr,
 			  NL80211_KEY_REPLAY_CTR_LEN);
+	}
+
+	data.authorization_info.ptk_kck =
+		  nla_data(tb[NL80211_ATTR_PTK_KCK]);
+	if (NULL != data.authorization_info.ptk_kck) {
+		wpa_hexdump(MSG_MSGDUMP, "  * PTK KCK",
+			  data.authorization_info.ptk_kck,
+			  NL80211_KEY_LEN_PTK_KCK);
+	}
+
+	data.authorization_info.ptk_kek =
+		  nla_data(tb[NL80211_ATTR_PTK_KEK]);
+	if (NULL != data.authorization_info.ptk_kek) {
+		wpa_hexdump(MSG_MSGDUMP, "  * PTK KEK",
+			  data.authorization_info.ptk_kek,
+			  NL80211_KEY_LEN_PTK_KEK);
 	}
 
 	wpa_supplicant_event(drv->ctx, EVENT_AUTHORIZATION, &data);
@@ -12541,7 +12557,7 @@ static int nl80211_key_mgmt_set_pmk(void *priv, const u8 *pmk,
 	struct nl_msg *msg;
 	int ret;
 
-	wpa_printf(MSG_DEBUG, "nl80211: Key managment set PMK");
+	wpa_printf(MSG_DEBUG, "nl80211: Key management set PMK");
 
 	if (NULL == pmk)
 		return -EINVAL;
