@@ -3509,7 +3509,9 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_P2P
 		wpa_s->conf_p2p_dev = os_rel2abs_path(iface->conf_p2p_dev);
+#ifndef ANDROID_P2P
 		wpa_config_read(wpa_s->conf_p2p_dev, wpa_s->conf);
+#endif
 #endif /* CONFIG_P2P */
 
 		/*
