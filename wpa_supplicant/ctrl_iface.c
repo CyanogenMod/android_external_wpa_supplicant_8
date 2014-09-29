@@ -41,6 +41,7 @@
 #include "autoscan.h"
 #include "wnm_sta.h"
 #include "offchannel.h"
+#include "drivers/driver.h"
 
 static int wpa_supplicant_global_iface_list(struct wpa_global *global,
 					    char *buf, int len);
@@ -1539,6 +1540,11 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
 		pos += ret;
+		ret = os_snprintf(pos, end - pos, "freq=%u\n",
+				  wpa_s->assoc_freq);
+		if (ret < 0 || ret >= end - pos)
+			return pos - buf;
+		pos += ret;
 		if (ssid) {
 			u8 *_ssid = ssid->ssid;
 			size_t ssid_len = ssid->ssid_len;
@@ -2479,6 +2485,8 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 			struct wpa_ssid *remove_ssid = ssid;
 			id = ssid->id;
 			ssid = ssid->next;
+			if (wpa_s->last_ssid == remove_ssid)
+				wpa_s->last_ssid = NULL;
 			wpas_notify_network_removed(wpa_s, remove_ssid);
 			wpa_config_remove_network(wpa_s->conf, id);
 		}
@@ -2496,6 +2504,9 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 			   "id=%d", id);
 		return -1;
 	}
+
+	if (wpa_s->last_ssid == ssid)
+		wpa_s->last_ssid = NULL;
 
 	if (ssid == wpa_s->current_ssid || wpa_s->current_ssid == NULL) {
 #ifdef CONFIG_SME
@@ -2571,9 +2582,10 @@ static int wpa_supplicant_ctrl_iface_update_network(
 static int wpa_supplicant_ctrl_iface_set_network(
 	struct wpa_supplicant *wpa_s, char *cmd)
 {
-	int id;
+	int id, ret, prev_bssid_set;
 	struct wpa_ssid *ssid;
 	char *name, *value;
+	u8 prev_bssid[ETH_ALEN];
 
 	/* cmd: "<network id> <variable name> <value>" */
 	name = os_strchr(cmd, ' ');
@@ -2599,8 +2611,15 @@ static int wpa_supplicant_ctrl_iface_set_network(
 		return -1;
 	}
 
-	return wpa_supplicant_ctrl_iface_update_network(wpa_s, ssid, name,
-							value);
+	prev_bssid_set = ssid->bssid_set;
+	os_memcpy(prev_bssid, ssid->bssid, ETH_ALEN);
+	ret = wpa_supplicant_ctrl_iface_update_network(wpa_s, ssid, name,
+						       value);
+	if (ret == 0 &&
+	    (ssid->bssid_set != prev_bssid_set ||
+	     os_memcmp(ssid->bssid, prev_bssid, ETH_ALEN) != 0))
+		wpas_notify_network_bssid_set_changed(wpa_s, ssid);
+	return ret;
 }
 
 
@@ -5545,28 +5564,6 @@ static int wpas_ctrl_iface_wnm_bss_query(struct wpa_supplicant *wpa_s, char *cmd
 #endif /* CONFIG_WNM */
 
 
-/* Get string representation of channel width */
-static const char * channel_width_name(enum chan_width width)
-{
-	switch (width) {
-	case CHAN_WIDTH_20_NOHT:
-		return "20 MHz (no HT)";
-	case CHAN_WIDTH_20:
-		return "20 MHz";
-	case CHAN_WIDTH_40:
-		return "40 MHz";
-	case CHAN_WIDTH_80:
-		return "80 MHz";
-	case CHAN_WIDTH_80P80:
-		return "80+80 MHz";
-	case CHAN_WIDTH_160:
-		return "160 MHz";
-	default:
-		return "unknown";
-	}
-}
-
-
 static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 				      size_t buflen)
 {
@@ -5591,7 +5588,7 @@ static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 
 	if (si.chanwidth != CHAN_WIDTH_UNKNOWN) {
 		ret = os_snprintf(pos, end - pos, "WIDTH=%s\n",
-				  channel_width_name(si.chanwidth));
+				  channel_width_to_string(si.chanwidth));
 		if (ret < 0 || ret > end - pos)
 			return -1;
 		pos += ret;
@@ -6520,6 +6517,8 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strcmp(buf, "PMKSA") == 0) {
 		reply_len = wpa_sm_pmksa_cache_list(wpa_s->wpa, reply,
 						    reply_size);
+	} else if (os_strcmp(buf, "PMKSA_FLUSH") == 0) {
+		wpa_sm_pmksa_cache_flush(wpa_s->wpa, NULL);
 	} else if (os_strncmp(buf, "SET ", 4) == 0) {
 		if (wpa_supplicant_ctrl_iface_set(wpa_s, buf + 4))
 			reply_len = -1;

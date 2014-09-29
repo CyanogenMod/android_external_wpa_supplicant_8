@@ -158,6 +158,13 @@ static void wpas_trigger_scan_cb(struct wpa_radio_work *work, int deinit)
 		return;
 	}
 
+	if (wpas_update_random_addr_disassoc(wpa_s) < 0) {
+		wpa_msg(wpa_s, MSG_INFO,
+			"Failed to assign random MAC address for a scan");
+		radio_work_done(work);
+		return;
+	}
+
 	wpa_supplicant_notify_scanning(wpa_s, 1);
 
 	if (wpa_s->clear_driver_scan_cache)
@@ -1243,6 +1250,13 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->conf->filter_rssi)
 		params.filter_rssi = wpa_s->conf->filter_rssi;
+
+	/* See if user specified frequencies. If so, scan only those. */
+	if (wpa_s->conf->freq_list && !params.freqs) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Optimize scan based on conf->freq_list");
+		int_array_concat(&params.freqs, wpa_s->conf->freq_list);
+	}
 
 	scan_params = &params;
 

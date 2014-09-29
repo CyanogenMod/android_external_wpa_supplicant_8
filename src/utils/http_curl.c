@@ -1099,7 +1099,6 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 				certs = NULL;
 			}
 			if (ctx->peer_issuer_issuer) {
-				X509 *cert;
 				cert = X509_dup(ctx->peer_issuer_issuer);
 				if (cert && !sk_X509_push(certs, cert)) {
 					tls_show_errors(
@@ -1178,9 +1177,10 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 
 	if (status == V_OCSP_CERTSTATUS_GOOD)
 		return 1;
-	if (status == V_OCSP_CERTSTATUS_REVOKED)
+	if (status == V_OCSP_CERTSTATUS_REVOKED) {
 		ctx->last_err = "Server certificate has been revoked";
 		return 0;
+	}
 	if (ctx->ocsp == MANDATORY_OCSP) {
 		wpa_printf(MSG_DEBUG, "OpenSSL: OCSP status unknown, but OCSP required");
 		ctx->last_err = "OCSP status unknown";

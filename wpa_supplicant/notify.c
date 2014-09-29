@@ -345,6 +345,12 @@ void wpas_notify_bss_rates_changed(struct wpa_supplicant *wpa_s,
 }
 
 
+void wpas_notify_bss_seen(struct wpa_supplicant *wpa_s, unsigned int id)
+{
+	wpas_dbus_bss_signal_prop_changed(wpa_s, WPAS_DBUS_BSS_PROP_AGE, id);
+}
+
+
 void wpas_notify_blob_added(struct wpa_supplicant *wpa_s, const char *name)
 {
 	wpas_dbus_signal_blob_added(wpa_s, name);
@@ -626,4 +632,19 @@ void wpas_notify_eap_status(struct wpa_supplicant *wpa_s, const char *status,
 	wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_EAP_STATUS
 		     "status='%s' parameter='%s'",
 		     status, parameter);
+}
+
+
+void wpas_notify_network_bssid_set_changed(struct wpa_supplicant *wpa_s,
+					   struct wpa_ssid *ssid)
+{
+	if (wpa_s->current_ssid != ssid)
+		return;
+
+	wpa_dbg(wpa_s, MSG_DEBUG,
+		"Network bssid config changed for the current network - within-ESS roaming %s",
+		ssid->bssid_set ? "disabled" : "enabled");
+
+	wpa_drv_roaming(wpa_s, !ssid->bssid_set,
+			ssid->bssid_set ? ssid->bssid : NULL);
 }
