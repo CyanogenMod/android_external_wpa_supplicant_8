@@ -486,8 +486,11 @@ static int compare_scan_neighbor_results(struct wpa_supplicant *wpa_s,
 
 	u8 i, j;
 
-	if (scan_res == NULL || num_neigh_rep == 0)
+	if (scan_res == NULL || num_neigh_rep == 0 || !wpa_s->current_bss)
 		return 0;
+
+	wpa_printf(MSG_DEBUG, "WNM: Current BSS " MACSTR " RSSI %d",
+		   MAC2STR(wpa_s->bssid), wpa_s->current_bss->level);
 
 	for (i = 0; i < num_neigh_rep; i++) {
 		for (j = 0; j < scan_res->num; j++) {
@@ -499,8 +502,16 @@ static int compare_scan_neighbor_results(struct wpa_supplicant *wpa_s,
 				/* Got a BSSID with better RSSI value */
 				os_memcpy(bssid_to_connect, neigh_rep[i].bssid,
 					  ETH_ALEN);
+				wpa_printf(MSG_DEBUG, "Found a BSS " MACSTR
+					   " with better scan RSSI %d",
+					   MAC2STR(scan_res->res[j]->bssid),
+					   scan_res->res[j]->level);
 				return 1;
 			}
+			wpa_printf(MSG_DEBUG, "scan_res[%d] " MACSTR
+				   " RSSI %d", j,
+				   MAC2STR(scan_res->res[j]->bssid),
+				   scan_res->res[j]->level);
 		}
 	}
 
