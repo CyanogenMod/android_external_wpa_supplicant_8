@@ -286,8 +286,10 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 	struct wpa_supplicant *wpa_s = ctx;
 	struct wpa_driver_scan_params *params = NULL;
 	struct wpabuf *wps_ie, *ies;
+	unsigned int num_channels = 0;
+	int social_channels_freq[] = { 2412, 2437, 2462, 60480 };
 	size_t ielen;
-	u8 *n;
+	u8 *n, i;
 
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return -1;
@@ -341,25 +343,34 @@ static int wpas_p2p_scan(void *ctx, enum p2p_scan_type type, int freq,
 
 	switch (type) {
 	case P2P_SCAN_SOCIAL:
-		params->freqs = os_malloc(4 * sizeof(int));
+		params->freqs = os_calloc(ARRAY_SIZE(social_channels_freq) + 1,
+					  sizeof(int));
 		if (params->freqs == NULL)
 			goto fail;
-		params->freqs[0] = 2412;
-		params->freqs[1] = 2437;
-		params->freqs[2] = 2462;
-		params->freqs[3] = 0;
+		for (i = 0; i < ARRAY_SIZE(social_channels_freq); i++) {
+			if (p2p_supported_freq(wpa_s->global->p2p,
+					       social_channels_freq[i]))
+				params->freqs[num_channels++] =
+					social_channels_freq[i];
+		}
+		params->freqs[num_channels++] = 0;
 		break;
 	case P2P_SCAN_FULL:
 		break;
 	case P2P_SCAN_SOCIAL_PLUS_ONE:
-		params->freqs = os_malloc(5 * sizeof(int));
+		params->freqs = os_calloc(ARRAY_SIZE(social_channels_freq) + 2,
+					  sizeof(int));
 		if (params->freqs == NULL)
 			goto fail;
-		params->freqs[0] = 2412;
-		params->freqs[1] = 2437;
-		params->freqs[2] = 2462;
-		params->freqs[3] = freq;
-		params->freqs[4] = 0;
+		for (i = 0; i < ARRAY_SIZE(social_channels_freq); i++) {
+			if (p2p_supported_freq(wpa_s->global->p2p,
+					       social_channels_freq[i]))
+				params->freqs[num_channels++] =
+					social_channels_freq[i];
+		}
+		if (p2p_supported_freq(wpa_s->global->p2p, freq))
+			params->freqs[num_channels++] = freq;
+		params->freqs[num_channels++] = 0;
 		break;
 	}
 
@@ -449,11 +460,16 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 		 (ssid && ssid->mode == WPAS_MODE_INFRA)) {
 		wpa_s->reassociate = 0;
 		wpa_s->disconnected = 1;
-		wpa_supplicant_deauthenticate(wpa_s,
-					      WLAN_REASON_DEAUTH_LEAVING);
 		gtype = "client";
 	} else
 		gtype = "GO";
+
+	if (removal_reason != P2P_GROUP_REMOVAL_SILENT && ssid)
+		wpas_notify_p2p_group_removed(wpa_s, ssid, gtype);
+
+	if (os_strcmp(gtype, "client") == 0)
+		wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+
 	if (wpa_s->cross_connect_in_use) {
 		wpa_s->cross_connect_in_use = 0;
 		wpa_msg_global(wpa_s->parent, MSG_INFO,
@@ -510,9 +526,6 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 	 * group has been removed.
 	 */
 	wpa_s->global->p2p_go_wait_client.sec = 0;
-
-	if (removal_reason != P2P_GROUP_REMOVAL_SILENT && ssid)
-		wpas_notify_p2p_group_removed(wpa_s, ssid, gtype);
 
 	if (wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE) {
 		struct wpa_global *global;
@@ -3466,7 +3479,7 @@ struct p2p_oper_class_map {
 	u8 min_chan;
 	u8 max_chan;
 	u8 inc;
-	enum { BW20, BW40PLUS, BW40MINUS, BW80 } bw;
+	enum { BW20, BW40PLUS, BW40MINUS, BW80, BW2160 } bw;
 };
 
 static struct p2p_oper_class_map op_class[] = {
@@ -3491,6 +3504,7 @@ static struct p2p_oper_class_map op_class[] = {
 	 * removing invalid channels.
 	 */
 	{ HOSTAPD_MODE_IEEE80211A, 128, 36, 161, 4, BW80 },
+	{ HOSTAPD_MODE_IEEE80211AD, 180, 1, 4, 1, BW2160 },
 	{ -1, 0, 0, 0, 0, BW20 }
 };
 
@@ -3862,7 +3876,6 @@ static int _wpas_p2p_in_progress(void *ctx)
 int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 {
 	struct p2p_config p2p;
-	unsigned int r;
 	int i;
 
 	if (wpa_s->conf->p2p_disabled)
@@ -3914,22 +3927,32 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 		p2p.config_methods = wpa_s->wps->config_methods;
 	}
 
+	if (wpas_p2p_setup_channels(wpa_s, &p2p.channels, &p2p.cli_channels)) {
+		wpa_printf(MSG_ERROR,
+			   "P2P: Failed to configure supported channel list");
+		return -1;
+	}
+
 	if (wpa_s->conf->p2p_listen_reg_class &&
 	    wpa_s->conf->p2p_listen_channel) {
 		p2p.reg_class = wpa_s->conf->p2p_listen_reg_class;
 		p2p.channel = wpa_s->conf->p2p_listen_channel;
 		p2p.channel_forced = 1;
 	} else {
-		p2p.reg_class = 81;
 		/*
 		 * Pick one of the social channels randomly as the listen
 		 * channel.
 		 */
-		os_get_random((u8 *) &r, sizeof(r));
-		p2p.channel = 1 + (r % 3) * 5;
+		if (p2p_config_get_random_social(&p2p, &p2p.reg_class,
+						 &p2p.channel) != 0) {
+			wpa_printf(MSG_ERROR,
+				   "P2P: Failed to select random social channel as listen channel");
+			return -1;
+		}
 		p2p.channel_forced = 0;
 	}
-	wpa_printf(MSG_DEBUG, "P2P: Own listen channel: %d", p2p.channel);
+	wpa_printf(MSG_DEBUG, "P2P: Own listen channel: %d:%d",
+		   p2p.reg_class, p2p.channel);
 
 	if (wpa_s->conf->p2p_oper_reg_class &&
 	    wpa_s->conf->p2p_oper_channel) {
@@ -3940,13 +3963,17 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 			   "%d:%d", p2p.op_reg_class, p2p.op_channel);
 
 	} else {
-		p2p.op_reg_class = 81;
 		/*
-		 * Use random operation channel from (1, 6, 11) if no other
-		 * preference is indicated.
+		 * Use random operation channel from 2.4 GHz band social
+		 * channels (1, 6, 11) or band 60 GHz social channel (2) if no
+		 * other preference is indicated.
 		 */
-		os_get_random((u8 *) &r, sizeof(r));
-		p2p.op_channel = 1 + (r % 3) * 5;
+		if (p2p_config_get_random_social(&p2p, &p2p.op_reg_class,
+						 &p2p.op_channel) != 0) {
+			wpa_printf(MSG_ERROR,
+				   "P2P: Failed to select random social channel as operation channel");
+			return -1;
+		}
 		p2p.cfg_op_channel = 0;
 		wpa_printf(MSG_DEBUG, "P2P: Random operating channel: "
 			   "%d:%d", p2p.op_reg_class, p2p.op_channel);
@@ -3962,12 +3989,6 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 		p2p.country[2] = 0x04;
 	} else
 		os_memcpy(p2p.country, "XX\x04", 3);
-
-	if (wpas_p2p_setup_channels(wpa_s, &p2p.channels, &p2p.cli_channels)) {
-		wpa_printf(MSG_ERROR, "P2P: Failed to configure supported "
-			   "channel list");
-		return -1;
-	}
 
 	os_memcpy(p2p.pri_dev_type, wpa_s->conf->device_type,
 		  WPS_DEV_TYPE_LEN);
@@ -4073,11 +4094,8 @@ static void wpas_p2p_deinit_global(struct wpa_global *global)
 	struct wpa_supplicant *wpa_s, *tmp;
 
 	wpa_s = global->ifaces;
-	if (wpa_s)
-		wpas_p2p_service_flush(wpa_s);
 
-	if (global->p2p == NULL)
-		return;
+	wpas_p2p_service_flush(global->p2p_init_wpa_s);
 
 	/* Remove remaining P2P group interfaces */
 	while (wpa_s && wpa_s->p2p_group_interface != NOT_P2P_GROUP_INTERFACE)
@@ -4354,8 +4372,8 @@ static void wpas_p2p_scan_res_join(struct wpa_supplicant *wpa_s,
 	    p2p_get_interface_addr(wpa_s->global->p2p,
 				   wpa_s->pending_join_dev_addr,
 				   iface_addr) == 0 &&
-	    os_memcmp(iface_addr, wpa_s->pending_join_dev_addr, ETH_ALEN) != 0)
-	{
+	    os_memcmp(iface_addr, wpa_s->pending_join_dev_addr, ETH_ALEN) != 0
+	    && !wpa_bss_get_bssid(wpa_s, wpa_s->pending_join_iface_addr)) {
 		wpa_printf(MSG_DEBUG, "P2P: Overwrite pending interface "
 			   "address for join from " MACSTR " to " MACSTR
 			   " based on newly discovered P2P peer entry",
@@ -5027,7 +5045,8 @@ static int wpas_p2p_select_go_freq(struct wpa_supplicant *wpa_s, int freq)
 			wpa_printf(MSG_DEBUG, "P2P: Use best 2.4 GHz band "
 				   "channel: %d MHz", freq);
 		} else {
-			os_get_random((u8 *) &r, sizeof(r));
+			if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+				return -1;
 			freq = 2412 + (r % 3) * 25;
 			wpa_printf(MSG_DEBUG, "P2P: Use random 2.4 GHz band "
 				   "channel: %d MHz", freq);
@@ -5044,7 +5063,8 @@ static int wpas_p2p_select_go_freq(struct wpa_supplicant *wpa_s, int freq)
 			wpa_printf(MSG_DEBUG, "P2P: Use best 5 GHz band "
 				   "channel: %d MHz", freq);
 		} else {
-			os_get_random((u8 *) &r, sizeof(r));
+			if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+				return -1;
 			freq = 5180 + (r % 4) * 20;
 			if (!p2p_supported_freq_go(wpa_s->global->p2p, freq)) {
 				wpa_printf(MSG_DEBUG, "P2P: Could not select "
@@ -5074,12 +5094,14 @@ static int wpas_p2p_select_freq_no_pref(struct wpa_supplicant *wpa_s,
 	unsigned int i, r;
 
 	/* first try some random selection of the social channels */
-	os_get_random((u8 *) &r, sizeof(r));
+	if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+		return -1;
 
 	for (i = 0; i < 3; i++) {
 		params->freq = 2412 + ((r + i) % 3) * 25;
 		if (!wpas_p2p_disallowed_freq(wpa_s->global, params->freq) &&
-		    freq_included(channels, params->freq))
+		    freq_included(channels, params->freq) &&
+		    p2p_supported_freq(wpa_s->global->p2p, params->freq))
 			goto out;
 	}
 
@@ -5087,11 +5109,28 @@ static int wpas_p2p_select_freq_no_pref(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < 11; i++) {
 		params->freq = 2412 + i * 5;
 		if (!wpas_p2p_disallowed_freq(wpa_s->global, params->freq) &&
-		    freq_included(channels, params->freq))
+		    freq_included(channels, params->freq) &&
+		    p2p_supported_freq(wpa_s->global->p2p, params->freq))
 			goto out;
 	}
 
-	wpa_printf(MSG_DEBUG, "P2P: No 2.4 GHz channel allowed");
+	/* try social channel class 180 channel 2 */
+	params->freq = 58320 + 1 * 2160;
+	if (!wpas_p2p_disallowed_freq(wpa_s->global, params->freq) &&
+	    freq_included(channels, params->freq) &&
+	    p2p_supported_freq(wpa_s->global->p2p, params->freq))
+		goto out;
+
+	/* try all channels in reg. class 180 */
+	for (i = 0; i < 4; i++) {
+		params->freq = 58320 + i * 2160;
+		if (!wpas_p2p_disallowed_freq(wpa_s->global, params->freq) &&
+		    freq_included(channels, params->freq) &&
+		    p2p_supported_freq(wpa_s->global->p2p, params->freq))
+			goto out;
+	}
+
+	wpa_printf(MSG_DEBUG, "P2P: No 2.4 and 60 GHz channel allowed");
 	return -1;
 out:
 	wpa_printf(MSG_DEBUG, "P2P: Set GO freq %d MHz (no preference known)",
@@ -5795,6 +5834,8 @@ int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 
 	if (wpa_s->global->p2p_disabled)
 		return -1;
+	if (wpa_s->conf->p2p_disabled)
+		return -1;
 	if (wpa_s->global->p2p == NULL)
 		return -1;
 	if (bss == NULL)
@@ -6323,8 +6364,10 @@ void wpas_p2p_update_config(struct wpa_supplicant *wpa_s)
 			 * Pick one of the social channels randomly as the
 			 * listen channel.
 			 */
-			os_get_random((u8 *) &r, sizeof(r));
-			channel = 1 + (r % 3) * 5;
+			if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+				channel = 1;
+			else
+				channel = 1 + (r % 3) * 5;
 			channel_forced = 0;
 		}
 		ret = p2p_set_listen_channel(p2p, reg_class, channel,
@@ -6348,8 +6391,10 @@ void wpas_p2p_update_config(struct wpa_supplicant *wpa_s)
 			 * Use random operation channel from (1, 6, 11)
 			 *if no other preference is indicated.
 			 */
-			os_get_random((u8 *) &r, sizeof(r));
-			op_channel = 1 + (r % 3) * 5;
+			if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+				op_channel = 1;
+			else
+				op_channel = 1 + (r % 3) * 5;
 			cfg_op_channel = 0;
 		}
 		ret = p2p_set_oper_channel(p2p, op_reg_class, op_channel,
