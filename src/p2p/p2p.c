@@ -259,7 +259,8 @@ static void p2p_listen_in_find(struct p2p_data *p2p, int dev_disc)
 		return;
 	}
 
-	os_get_random((u8 *) &r, sizeof(r));
+	if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+		r = 0;
 	tu = (r % ((p2p->max_disc_int - p2p->min_disc_int) + 1) +
 	      p2p->min_disc_int) * 100;
 	if (p2p->max_disc_tu >= 0 && tu > (unsigned int) p2p->max_disc_tu)
@@ -1286,8 +1287,8 @@ static void p2p_prepare_channel_best(struct p2p_data *p2p)
 	} else if (p2p_channel_random_social(&p2p->cfg->channels,
 					     &p2p->op_reg_class,
 					     &p2p->op_channel) == 0) {
-		p2p_dbg(p2p, "Select random available social channel %d from 2.4 GHz band as operating channel preference",
-			p2p->op_channel);
+		p2p_dbg(p2p, "Select random available social channel (op_class %u channel %u) as operating channel preference",
+			p2p->op_reg_class, p2p->op_channel);
 	} else {
 		/* Select any random available channel from the first available
 		 * operating class */
@@ -1824,8 +1825,17 @@ static void p2p_go_neg_start(void *eloop_ctx, void *timeout_ctx)
 	struct p2p_data *p2p = eloop_ctx;
 	if (p2p->go_neg_peer == NULL)
 		return;
+	if (p2p->pending_listen_freq) {
+		p2p_dbg(p2p, "Clear pending_listen_freq for p2p_go_neg_start");
+		p2p->pending_listen_freq = 0;
+	}
 	p2p->cfg->stop_listen(p2p->cfg->cb_ctx);
 	p2p->go_neg_peer->status = P2P_SC_SUCCESS;
+	/*
+	 * Set new timeout to make sure a previously set one does not expire
+	 * too quickly while waiting for the GO Negotiation to complete.
+	 */
+	p2p_set_timeout(p2p, 0, 500000);
 	p2p_connect_send(p2p, p2p->go_neg_peer);
 }
 
@@ -1835,6 +1845,10 @@ static void p2p_invite_start(void *eloop_ctx, void *timeout_ctx)
 	struct p2p_data *p2p = eloop_ctx;
 	if (p2p->invite_peer == NULL)
 		return;
+	if (p2p->pending_listen_freq) {
+		p2p_dbg(p2p, "Clear pending_listen_freq for p2p_invite_start");
+		p2p->pending_listen_freq = 0;
+	}
 	p2p->cfg->stop_listen(p2p->cfg->cb_ctx);
 	p2p_invite_send(p2p, p2p->invite_peer, p2p->invite_go_dev_addr,
 			p2p->invite_dev_pw_id);
@@ -2480,7 +2494,8 @@ struct p2p_data * p2p_init(const struct p2p_config *cfg)
 	p2p->max_disc_int = 3;
 	p2p->max_disc_tu = -1;
 
-	os_get_random(&p2p->next_tie_breaker, 1);
+	if (os_get_random(&p2p->next_tie_breaker, 1) < 0)
+		p2p->next_tie_breaker = 0;
 	p2p->next_tie_breaker &= 0x01;
 	if (cfg->sd_request)
 		p2p->dev_capab |= P2P_DEV_CAPAB_SERVICE_DISCOVERY;
@@ -2773,6 +2788,19 @@ static void p2p_sd_cb(struct p2p_data *p2p, int success)
 		return;
 	}
 
+	if (p2p->sd_query->for_all_peers) {
+		/* Update the pending broadcast SD query count for this device
+		 */
+		p2p->sd_peer->sd_pending_bcast_queries--;
+
+		/*
+		 * If there are no pending broadcast queries for this device,
+		 * mark it as done (-1).
+		 */
+		if (p2p->sd_peer->sd_pending_bcast_queries == 0)
+			p2p->sd_peer->sd_pending_bcast_queries = -1;
+	}
+
 	/* Wait for response from the peer */
 	p2p_set_state(p2p, P2P_SD_DURING_FIND);
 	p2p_set_timeout(p2p, 0, 200000);
@@ -3003,7 +3031,8 @@ static void p2p_go_neg_req_cb(struct p2p_data *p2p, int success)
 		 * make it less likely to hit cases where we could end up in
 		 * sync with peer not listening.
 		 */
-		os_get_random((u8 *) &r, sizeof(r));
+		if (os_get_random((u8 *) &r, sizeof(r)) < 0)
+			r = 0;
 		timeout += r % 100000;
 	}
 	p2p_set_timeout(p2p, 0, timeout);
@@ -4072,6 +4101,13 @@ void p2p_set_managed_oper(struct p2p_data *p2p, int enabled)
 		p2p_dbg(p2p, "Managed P2P Device operations disabled");
 		p2p->dev_capab &= ~P2P_DEV_CAPAB_INFRA_MANAGED;
 	}
+}
+
+
+int p2p_config_get_random_social(struct p2p_config *p2p, u8 *op_class,
+				 u8 *op_channel)
+{
+	return p2p_channel_random_social(&p2p->channels, op_class, op_channel);
 }
 
 

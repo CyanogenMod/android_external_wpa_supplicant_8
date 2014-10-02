@@ -27,6 +27,7 @@
 #include "dbus_new_handlers.h"
 #include "dbus_dict_helpers.h"
 #include "dbus_common_i.h"
+#include "drivers/driver.h"
 
 static const char *debug_strings[] = {
 	"excessive", "msgdump", "debug", "info", "warning", "error", NULL
@@ -1397,6 +1398,88 @@ out:
 		os_free((u8 *) params.ssids[i].ssid);
 	os_free((u8 *) params.extra_ies);
 	os_free(params.freqs);
+	return reply;
+}
+
+
+/**
+ * wpas_dbus_handler_signal_poll - Request immediate signal properties
+ * @message: Pointer to incoming dbus message
+ * @wpa_s: wpa_supplicant structure for a network interface
+ * Returns: NULL indicating success or DBus error message on failure
+ *
+ * Handler function for "SignalPoll" method call of a network device. Requests
+ * that wpa_supplicant read signal properties like RSSI, noise, and link
+ * speed and return them.
+ */
+DBusMessage * wpas_dbus_handler_signal_poll(DBusMessage *message,
+					    struct wpa_supplicant *wpa_s)
+{
+	struct wpa_signal_info si;
+	DBusMessage *reply = NULL;
+	DBusMessageIter iter, iter_dict, variant_iter;
+	int ret;
+
+	ret = wpa_drv_signal_poll(wpa_s, &si);
+	if (ret) {
+		return dbus_message_new_error(message, DBUS_ERROR_FAILED,
+					      "Failed to read signal");
+	}
+
+	reply = dbus_message_new_method_return(message);
+	if (reply == NULL)
+		goto nomem;
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	if (!dbus_message_iter_open_container(&iter, DBUS_TYPE_VARIANT,
+					      "a{sv}", &variant_iter))
+		goto nomem;
+	if (!wpa_dbus_dict_open_write(&variant_iter, &iter_dict))
+		goto nomem;
+
+	if (!wpa_dbus_dict_append_int32(&iter_dict, "rssi", si.current_signal))
+		goto nomem;
+	if (!wpa_dbus_dict_append_int32(&iter_dict, "linkspeed",
+					si.current_txrate / 1000))
+		goto nomem;
+	if (!wpa_dbus_dict_append_int32(&iter_dict, "noise", si.current_noise))
+		goto nomem;
+	if (!wpa_dbus_dict_append_uint32(&iter_dict, "frequency", si.frequency))
+		goto nomem;
+
+	if (si.chanwidth != CHAN_WIDTH_UNKNOWN) {
+		if (!wpa_dbus_dict_append_string(&iter_dict, "width",
+					channel_width_to_string(si.chanwidth)))
+			goto nomem;
+	}
+
+	if (si.center_frq1 > 0 && si.center_frq2 > 0) {
+		if (!wpa_dbus_dict_append_int32(&iter_dict, "center-frq1",
+						si.center_frq1))
+			goto nomem;
+		if (!wpa_dbus_dict_append_int32(&iter_dict, "center-frq2",
+						si.center_frq2))
+			goto nomem;
+	}
+
+	if (si.avg_signal) {
+		if (!wpa_dbus_dict_append_int32(&iter_dict, "avg-rssi",
+						si.avg_signal))
+			goto nomem;
+	}
+
+	if (!wpa_dbus_dict_close_write(&variant_iter, &iter_dict))
+		goto nomem;
+	if (!dbus_message_iter_close_container(&iter, &variant_iter))
+		goto nomem;
+
+	return reply;
+
+nomem:
+	if (reply)
+		dbus_message_unref(reply);
+	reply = dbus_message_new_error(message, DBUS_ERROR_NO_MEMORY, NULL);
 	return reply;
 }
 
@@ -3951,6 +4034,35 @@ dbus_bool_t wpas_dbus_getter_bss_ies(DBusMessageIter *iter, DBusError *error,
 	return wpas_dbus_simple_array_property_getter(iter, DBUS_TYPE_BYTE,
 						      res + 1, res->ie_len,
 						      error);
+}
+
+
+/**
+ * wpas_dbus_getter_bss_age - Return time in seconds since BSS was last seen
+ * @iter: Pointer to incoming dbus message iter
+ * @error: Location to store error on failure
+ * @user_data: Function specific data
+ * Returns: TRUE on success, FALSE on failure
+ *
+ * Getter for BSS age
+ */
+dbus_bool_t wpas_dbus_getter_bss_age(DBusMessageIter *iter, DBusError *error,
+				     void *user_data)
+{
+	struct bss_handler_args *args = user_data;
+	struct wpa_bss *res;
+	struct os_reltime now, diff = { 0, 0 };
+	u32 age;
+
+	res = get_bss_helper(args, error, __func__);
+	if (!res)
+		return FALSE;
+
+	os_get_reltime(&now);
+	os_reltime_sub(&now, &res->last_update, &diff);
+	age = diff.sec > 0 ? diff.sec : 0;
+	return wpas_dbus_simple_property_getter(iter, DBUS_TYPE_UINT32, &age,
+						error);
 }
 
 

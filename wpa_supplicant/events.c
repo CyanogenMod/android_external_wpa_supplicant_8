@@ -2163,10 +2163,12 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 	}
 	if (!wpa_s->disconnected &&
 	    (!wpa_s->auto_reconnect_disabled ||
-	     wpa_s->key_mgmt == WPA_KEY_MGMT_WPS)) {
+	     wpa_s->key_mgmt == WPA_KEY_MGMT_WPS ||
+	     wpas_wps_searching(wpa_s))) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Auto connect enabled: try to "
-			"reconnect (wps=%d wpa_state=%d)",
+			"reconnect (wps=%d/%d wpa_state=%d)",
 			wpa_s->key_mgmt == WPA_KEY_MGMT_WPS,
+			wpas_wps_searching(wpa_s),
 			wpa_s->wpa_state);
 		if (wpa_s->wpa_state == WPA_COMPLETED &&
 		    wpa_s->current_ssid &&
@@ -2998,15 +3000,17 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			wpa_s->own_scan_running = 1;
 			if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
 			    wpa_s->manual_scan_use_id) {
-				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED "id=%u",
-					wpa_s->manual_scan_id);
+				wpa_msg_ctrl(wpa_s, MSG_INFO,
+					     WPA_EVENT_SCAN_STARTED "id=%u",
+					     wpa_s->manual_scan_id);
 			} else {
-				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+				wpa_msg_ctrl(wpa_s, MSG_INFO,
+					     WPA_EVENT_SCAN_STARTED);
 			}
 		} else {
 			wpa_dbg(wpa_s, MSG_DEBUG, "External program started a scan");
 			wpa_s->external_scan_running = 1;
-			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+			wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
 		}
 		break;
 	case EVENT_SCAN_RESULTS:

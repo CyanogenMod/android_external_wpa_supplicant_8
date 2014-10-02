@@ -2804,6 +2804,30 @@ struct wpa_driver_ops {
 	 */
 	int (*status)(void *priv, char *buf, size_t buflen);
 
+	/**
+	 * roaming - Set roaming policy for driver-based BSS selection
+	 * @priv: Private driver interface data
+	 * @allowed: Whether roaming within ESS is allowed
+	 * @bssid: Forced BSSID if roaming is disabled or %NULL if not set
+	 * Returns: Length of written status information or -1 on failure
+	 *
+	 * This optional callback can be used to update roaming policy from the
+	 * associate() command (bssid being set there indicates that the driver
+	 * should not roam before getting this roaming() call to allow roaming.
+	 * If the driver does not indicate WPA_DRIVER_FLAGS_BSS_SELECTION
+	 * capability, roaming policy is handled within wpa_supplicant and there
+	 * is no need to implement or react to this callback.
+	 */
+	int (*roaming)(void *priv, int allowed, const u8 *bssid);
+
+	/**
+	 * set_mac_addr - Set MAC address
+	 * @priv: Private driver interface data
+	 * @addr: MAC address to use or %NULL for setting back to permanent
+	 * Returns: 0 on success, -1 on failure
+	 */
+	int (*set_mac_addr)(void *priv, const u8 *addr);
+
 #ifdef CONFIG_MACSEC
 	int (*macsec_init)(void *priv, struct macsec_init_params *params);
 
@@ -4171,6 +4195,9 @@ void wpa_scan_results_free(struct wpa_scan_results *res);
 
 /* Convert wpa_event_type to a string for logging */
 const char * event_to_string(enum wpa_event_type event);
+
+/* Convert chan_width to a string for logging and control interfaces */
+const char * channel_width_to_string(enum chan_width width);
 
 /* NULL terminated array of linked in driver wrappers */
 extern struct wpa_driver_ops *wpa_drivers[];

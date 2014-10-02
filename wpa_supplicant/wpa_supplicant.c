@@ -300,6 +300,7 @@ void wpa_supplicant_initiate_eapol(struct wpa_supplicant *wpa_s)
 		wpa_s->key_mgmt != WPA_KEY_MGMT_IEEE8021X_NO_WPA &&
 		wpa_s->key_mgmt != WPA_KEY_MGMT_WPS;
 	eapol_conf.external_sim = wpa_s->conf->external_sim;
+	eapol_conf.wps = wpa_s->key_mgmt == WPA_KEY_MGMT_WPS;
 	eapol_sm_notify_config(wpa_s->eapol, &ssid->eap, &eapol_conf);
 #endif /* IEEE8021X_EAPOL */
 
@@ -1382,6 +1383,68 @@ void wpas_connect_work_done(struct wpa_supplicant *wpa_s)
 }
 
 
+int wpas_update_random_addr(struct wpa_supplicant *wpa_s, int style)
+{
+	struct os_reltime now;
+	u8 addr[ETH_ALEN];
+
+	os_get_reltime(&now);
+	if (wpa_s->last_mac_addr_style == style &&
+	    wpa_s->last_mac_addr_change.sec != 0 &&
+	    !os_reltime_expired(&now, &wpa_s->last_mac_addr_change,
+				wpa_s->conf->rand_addr_lifetime)) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"Previously selected random MAC address has not yet expired");
+		return 0;
+	}
+
+	switch (style) {
+	case 1:
+		if (random_mac_addr(addr) < 0)
+			return -1;
+		break;
+	case 2:
+		os_memcpy(addr, wpa_s->perm_addr, ETH_ALEN);
+		if (random_mac_addr_keep_oui(addr) < 0)
+			return -1;
+		break;
+	default:
+		return -1;
+	}
+
+	if (wpa_drv_set_mac_addr(wpa_s, addr) < 0) {
+		wpa_msg(wpa_s, MSG_INFO,
+			"Failed to set random MAC address");
+		return -1;
+	}
+
+	os_get_reltime(&wpa_s->last_mac_addr_change);
+	wpa_s->mac_addr_changed = 1;
+	wpa_s->last_mac_addr_style = style;
+
+	if (wpa_supplicant_update_mac_addr(wpa_s) < 0) {
+		wpa_msg(wpa_s, MSG_INFO,
+			"Could not update MAC address information");
+		return -1;
+	}
+
+	wpa_msg(wpa_s, MSG_DEBUG, "Using random MAC address " MACSTR,
+		MAC2STR(addr));
+
+	return 0;
+}
+
+
+int wpas_update_random_addr_disassoc(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING ||
+	    !wpa_s->conf->preassoc_mac_addr)
+		return 0;
+
+	return wpas_update_random_addr(wpa_s, wpa_s->conf->preassoc_mac_addr);
+}
+
+
 static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit);
 
 /**
@@ -1396,6 +1459,34 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			      struct wpa_bss *bss, struct wpa_ssid *ssid)
 {
 	struct wpa_connect_work *cwork;
+	int rand_style;
+
+	if (ssid->mac_addr == -1)
+		rand_style = wpa_s->conf->mac_addr;
+	else
+		rand_style = ssid->mac_addr;
+
+	if (wpa_s->last_ssid == ssid) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Re-association to the same ESS");
+	} else if (rand_style > 0) {
+		if (wpas_update_random_addr(wpa_s, rand_style) < 0)
+			return;
+		wpa_sm_pmksa_cache_flush(wpa_s->wpa, ssid);
+	} else if (wpa_s->mac_addr_changed) {
+		if (wpa_drv_set_mac_addr(wpa_s, NULL) < 0) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Could not restore permanent MAC address");
+			return;
+		}
+		wpa_s->mac_addr_changed = 0;
+		if (wpa_supplicant_update_mac_addr(wpa_s) < 0) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Could not update MAC address information");
+			return;
+		}
+		wpa_msg(wpa_s, MSG_DEBUG, "Using permanent MAC address");
+	}
+	wpa_s->last_ssid = ssid;
 
 #ifdef CONFIG_IBSS_RSN
 	ibss_rsn_deinit(wpa_s->ibss_rsn);
@@ -2664,6 +2755,8 @@ int wpa_supplicant_update_mac_addr(struct wpa_supplicant *wpa_s)
 		return -1;
 	}
 
+	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
+
 	return 0;
 }
 
@@ -2711,6 +2804,7 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Own MAC address: " MACSTR,
 		MAC2STR(wpa_s->own_addr));
+	os_memcpy(wpa_s->perm_addr, wpa_s->own_addr, ETH_ALEN);
 	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
 
 	if (wpa_s->bridge_ifname[0]) {
