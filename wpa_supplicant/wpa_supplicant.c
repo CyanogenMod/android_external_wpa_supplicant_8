@@ -406,11 +406,6 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	os_free(wpa_s->confanother);
 	wpa_s->confanother = NULL;
 
-#ifdef CONFIG_P2P
-	os_free(wpa_s->conf_p2p_dev);
-	wpa_s->conf_p2p_dev = NULL;
-#endif /* CONFIG_P2P */
-
 	wpa_sm_set_eapol(wpa_s->wpa, NULL);
 	eapol_sm_deinit(wpa_s->eapol);
 	wpa_s->eapol = NULL;
@@ -1843,7 +1838,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 				   MAC2STR(bss->bssid), bss->freq,
 				   ssid->bssid_set);
 			params.bssid = bss->bssid;
-			params.freq = bss->freq;
+			params.freq.freq = bss->freq;
 		}
 		params.bssid_hint = bss->bssid;
 		params.freq_hint = bss->freq;
@@ -1859,8 +1854,23 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	}
 
 	if (ssid->mode == WPAS_MODE_IBSS && ssid->frequency > 0 &&
-	    params.freq == 0)
-		params.freq = ssid->frequency; /* Initial channel for IBSS */
+	    params.freq.freq == 0) {
+		enum hostapd_hw_mode hw_mode;
+		u8 channel;
+
+		params.freq.freq = ssid->frequency;
+
+		hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
+		for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
+			if (wpa_s->hw.modes[i].mode == hw_mode) {
+				struct hostapd_hw_modes *mode;
+
+				mode = &wpa_s->hw.modes[i];
+				params.freq.ht_enabled = ht_supported(mode);
+				break;
+			}
+		}
+	}
 
 	if (ssid->mode == WPAS_MODE_IBSS) {
 		if (ssid->beacon_int)
@@ -1944,13 +1954,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	if (wpa_s->num_multichan_concurrent < 2) {
 		int freq, num;
 		num = get_shared_radio_freqs(wpa_s, &freq, 1);
-		if (num > 0 && freq > 0 && freq != params.freq) {
+		if (num > 0 && freq > 0 && freq != params.freq.freq) {
 			wpa_printf(MSG_DEBUG,
 				   "Assoc conflicting freq found (%d != %d)",
-				   freq, params.freq);
-			if (wpas_p2p_handle_frequency_conflicts(wpa_s,
-								params.freq,
-								ssid) < 0)
+				   freq, params.freq.freq);
+			if (wpas_p2p_handle_frequency_conflicts(
+				    wpa_s, params.freq.freq, ssid) < 0)
 				return;
 		}
 	}
@@ -3600,13 +3609,6 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		}
 		wpa_s->confanother = os_rel2abs_path(iface->confanother);
 		wpa_config_read(wpa_s->confanother, wpa_s->conf);
-
-#ifdef CONFIG_P2P
-		wpa_s->conf_p2p_dev = os_rel2abs_path(iface->conf_p2p_dev);
-#ifndef ANDROID_P2P
-		wpa_config_read(wpa_s->conf_p2p_dev, wpa_s->conf);
-#endif
-#endif /* CONFIG_P2P */
 
 		/*
 		 * Override ctrl_interface and driver_param if set on command
