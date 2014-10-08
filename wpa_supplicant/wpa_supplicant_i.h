@@ -67,7 +67,7 @@ struct wpa_interface {
 
 #ifdef CONFIG_P2P
 	/**
-	 * conf_p2p_dev - Additional configuration file used to hold the
+	 * conf_p2p_dev - Configuration file used to hold the
 	 * P2P Device configuration parameters.
 	 *
 	 * This can also be %NULL. In such a case, if a P2P Device dedicated
@@ -407,10 +407,6 @@ struct wpa_supplicant {
 
 	char *confname;
 	char *confanother;
-
-#ifdef CONFIG_P2P
-	char *conf_p2p_dev;
-#endif /* CONFIG_P2P */
 
 	struct wpa_config *conf;
 	int countermeasures;
@@ -993,6 +989,8 @@ void wnm_bss_keep_alive_deinit(struct wpa_supplicant *wpa_s);
 int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s);
 struct wpa_bss * wpa_supplicant_pick_network(struct wpa_supplicant *wpa_s,
 					     struct wpa_ssid **selected_ssid);
+int ht_supported(const struct hostapd_hw_modes *mode);
+int vht_supported(const struct hostapd_hw_modes *mode);
 
 /* eap_register.c */
 int eap_register_methods(void);
