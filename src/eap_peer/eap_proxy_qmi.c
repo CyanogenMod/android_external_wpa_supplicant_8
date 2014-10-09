@@ -74,6 +74,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef CONFIG_EAP_PROXY_MSM8994_TARGET
 #define EAP_PROXY_TARGET_PLATFORM_MSM8994  "msm8994"
 #endif /* CONFIG_EAP_PROXY_MSM8994_TARGET */
+#define EAP_PROXY_TARGET_FUSION4_5_PCIE    "fusion4_5_pcie"
 #define EAP_PROXY_BASEBAND_VALUE_UNDEFINED "undefined"
 
 #ifdef SIM_AKA_IDENTITY_IMSI
@@ -576,19 +577,19 @@ const char * eap_proxy_get_port(void)
 
 	if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_MSM, args, 3)) {
 	   wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
-	   eap_proxy_port = QMI_PORT_RMNET_1;
+	   eap_proxy_port = QMI_PORT_RMNET_0;
 	}
 	else if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_APQ, args, 3)) {
 		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
-		eap_proxy_port = QMI_PORT_RMNET_1;
+		eap_proxy_port = QMI_PORT_RMNET_0;
 	}
 	else if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_SVLTE1, args, 6)) {
 		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
-		eap_proxy_port = QMI_PORT_RMNET_1;
+		eap_proxy_port = QMI_PORT_RMNET_0;
 	}
 	else if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_SVLTE2A, args, 7)) {
 		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
-		eap_proxy_port = QMI_PORT_RMNET_1;
+		eap_proxy_port = QMI_PORT_RMNET_0;
 	}
 	else if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_CSFB, args, 4)) {
 		eap_proxy_port = QMI_PORT_RMNET_SDIO_0;
@@ -599,7 +600,11 @@ const char * eap_proxy_get_port(void)
 	}
 	else if(!os_strncmp(EAP_PROXY_BASEBAND_VALUE_SGLTE, args, 5)) {
 		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
-		eap_proxy_port = QMI_PORT_RMNET_1;
+		eap_proxy_port = QMI_PORT_RMNET_0;
+	}
+	else if(!os_strncmp(EAP_PROXY_TARGET_FUSION4_5_PCIE, args, 14)) {
+		wpa_printf(MSG_ERROR,"baseband property is set to [%s]", args);
+		eap_proxy_port = QMI_PORT_RMNET_MHI_0;
 	}
 #ifdef CONFIG_EAP_PROXY_MSM8994_TARGET
 	if ((!os_strncmp(EAP_PROXY_BASEBAND_VALUE_MSM, args, 3)) ||
@@ -720,21 +725,31 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
 	for (index = 0; index < MAX_NO_OF_SIM_SUPPORTED; ++index) {
 		/*Get the available port using property get*/
 		eap_qmi_port[index] = eap_proxy_get_port();
+		eap_proxy->qmihandle[index] = QMI_NO_ERR;
 
-		/* initialize the QMI connection */
-		qmiRetCode = qmi_dev_connection_init(eap_qmi_port[index], &qmiErrorCode);
-		if (QMI_NO_ERR != qmiRetCode) {
-			wpa_printf(MSG_ERROR, "Error in qmi_connection_init\n");
-			flag = FALSE;
+		do {
+			if(eap_proxy->qmihandle[index] == QMI_PORT_NOT_OPEN_ERR &&
+			   os_strcmp(eap_qmi_port[index], QMI_PORT_RMNET_0) == 0)
+				eap_qmi_port[index] = QMI_PORT_RMNET_1;
+			/* initialize the QMI connection */
+			qmiRetCode = qmi_dev_connection_init(eap_qmi_port[index], &qmiErrorCode);
+			if (QMI_NO_ERR != qmiRetCode) {
+				wpa_printf(MSG_ERROR, "Error in qmi_connection_init\n");
+				flag = FALSE;
+				break;
+			}
+
+			/* initialize the QMI EAP Service for client n or SIM n*/
+			wpa_printf(MSG_INFO,
+			"eap_proxy: Initializing the QMI EAP Services for client %d\n", index+1);
+			eap_proxy->qmihandle[index] = qmi_eap_srvc_init_client(eap_qmi_port[index],
+								&handle_qmi_eap_ind,
+								eap_proxy, &qmiErrorCode);
+		} while(eap_proxy->qmihandle[index] == QMI_PORT_NOT_OPEN_ERR &&
+			os_strcmp(eap_qmi_port[index], QMI_PORT_RMNET_0) == 0);
+
+		if(QMI_NO_ERR != qmiRetCode)
 			continue;
-		}
-
-		/* initialize the QMI EAP Service for client n or SIM n*/
-		wpa_printf(MSG_INFO, "eap_proxy: Initializing the QMI EAP Services for client %d\n", index+1);
-		eap_proxy->qmihandle[index] = qmi_eap_srvc_init_client(eap_qmi_port[index],
-							&handle_qmi_eap_ind,
-							eap_proxy, &qmiErrorCode);
-
 		if (0 >= eap_proxy->qmihandle[index]) {
 			wpa_printf(MSG_ERROR, "Unable to initialize service client %d;"
 						" error_ret=%d; error_code=%d\n",
