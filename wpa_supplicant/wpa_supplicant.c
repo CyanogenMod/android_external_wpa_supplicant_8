@@ -1535,6 +1535,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		   (ssid->key_mgmt & WPA_KEY_MGMT_WPS)) {
 		/* Use ap_scan==1 style network selection to find the network
 		 */
+		wpas_connect_work_done(wpa_s);
 		wpa_s->scan_req = MANUAL_SCAN_REQ;
 		wpa_s->reassociate = 1;
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
@@ -1585,6 +1586,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 					      wpa_ie, &wpa_ie_len)) {
 			wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to set WPA "
 				"key management and encryption suites");
+			wpas_connect_work_done(wpa_s);
 			return;
 		}
 	} else if ((ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA) && bss &&
@@ -1604,6 +1606,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to set WPA "
 				"key management and encryption suites (no "
 				"scan results)");
+			wpas_connect_work_done(wpa_s);
 			return;
 		}
 #ifdef CONFIG_WPS
@@ -1876,8 +1879,10 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 				   freq, params.freq);
 			if (wpas_p2p_handle_frequency_conflicts(wpa_s,
 								params.freq,
-								ssid) < 0)
+								ssid) < 0) {
+				wpas_connect_work_done(wpa_s);
 				return;
+			}
 		}
 	}
 #endif /* CONFIG_P2P */
