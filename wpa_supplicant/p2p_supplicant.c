@@ -3376,7 +3376,6 @@ int wpas_p2p_init(struct wpa_global *global, struct wpa_supplicant *wpa_s)
 	p2p.get_noa = wpas_get_noa;
 	p2p.go_connected = wpas_go_connected;
 	p2p.is_concurrent_session_active = wpas_is_concurrent_session_active;
-	p2p.is_p2p_in_progress = _wpas_p2p_in_progress;
 
 	os_memcpy(wpa_s->global->p2p_dev_addr, wpa_s->own_addr, ETH_ALEN);
 	os_memcpy(p2p.dev_addr, wpa_s->global->p2p_dev_addr, ETH_ALEN);
@@ -5889,6 +5888,13 @@ int wpas_p2p_notif_pbc_overlap(struct wpa_supplicant *wpa_s)
 		wpa_msg_ctrl(wpa_s->parent, MSG_INFO, WPS_EVENT_OVERLAP);
 	wpas_p2p_group_formation_failed(wpa_s);
 	return 1;
+}
+
+
+void wpas_p2p_pbc_overlap_cb(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+	wpas_p2p_notif_pbc_overlap(wpa_s);
 }
 
 

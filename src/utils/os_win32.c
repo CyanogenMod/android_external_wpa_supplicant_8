@@ -233,3 +233,8 @@ size_t os_strlcpy(char *dest, const char *src, size_t siz)
 
 	return s - src - 1;
 }
+
+int os_exec(const char *program, const char *arg, int wait_completion)
+{
+	return -1;
+}

@@ -506,6 +506,15 @@ static inline void * os_realloc_array(void *ptr, size_t nmemb, size_t size)
  */
 size_t os_strlcpy(char *dest, const char *src, size_t siz);
 
+/**
+ * os_exec - Execute an external program
+ * @program: Path to the program
+ * @arg: Command line argument string
+ * @wait_completion: Whether to wait until the program execution completes
+ * Returns: 0 on success, -1 on error
+ */
+int os_exec(const char *program, const char *arg, int wait_completion);
+
 
 #ifdef OS_REJECT_C_LIB_FUNCTIONS
 #define malloc OS_DO_NOT_USE_malloc
