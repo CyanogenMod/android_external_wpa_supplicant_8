@@ -1584,7 +1584,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 
 	wpa_s->connect_work = work;
 
-	if (!wpas_valid_bss_ssid(wpa_s, bss, ssid)) {
+	if (cwork->bss_removed || !wpas_valid_bss_ssid(wpa_s, bss, ssid)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "BSS/SSID entry for association not valid anymore - drop connection attempt");
 		wpas_connect_work_done(wpa_s);
 		return;
@@ -1621,6 +1621,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		   (ssid->key_mgmt & WPA_KEY_MGMT_WPS)) {
 		/* Use ap_scan==1 style network selection to find the network
 		 */
+		wpas_connect_work_done(wpa_s);
 		wpa_s->scan_req = MANUAL_SCAN_REQ;
 		wpa_s->reassociate = 1;
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
@@ -1671,6 +1672,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 					      wpa_ie, &wpa_ie_len)) {
 			wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to set WPA "
 				"key management and encryption suites");
+			wpas_connect_work_done(wpa_s);
 			return;
 		}
 	} else if ((ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA) && bss &&
@@ -1690,6 +1692,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to set WPA "
 				"key management and encryption suites (no "
 				"scan results)");
+			wpas_connect_work_done(wpa_s);
 			return;
 		}
 #ifdef CONFIG_WPS
@@ -1959,8 +1962,10 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 				   "Assoc conflicting freq found (%d != %d)",
 				   freq, params.freq.freq);
 			if (wpas_p2p_handle_frequency_conflicts(
-				    wpa_s, params.freq.freq, ssid) < 0)
+				    wpa_s, params.freq.freq, ssid) < 0) {
+				wpas_connect_work_done(wpa_s);
 				return;
+			}
 		}
 	}
 #endif /* CONFIG_P2P */
@@ -3512,17 +3517,18 @@ void radio_work_done(struct wpa_radio_work *work)
 }
 
 
-int radio_work_pending(struct wpa_supplicant *wpa_s, const char *type)
+struct wpa_radio_work *
+radio_work_pending(struct wpa_supplicant *wpa_s, const char *type)
 {
 	struct wpa_radio_work *work;
 	struct wpa_radio *radio = wpa_s->radio;
 
 	dl_list_for_each(work, &radio->work, struct wpa_radio_work, list) {
 		if (work->wpa_s == wpa_s && os_strcmp(work->type, type) == 0)
-			return 1;
+			return work;
 	}
 
-	return 0;
+	return NULL;
 }
 
 
