@@ -80,6 +80,7 @@ const char * event_to_string(enum wpa_event_type event)
 	E2S(SCAN_STARTED);
 	E2S(AVOID_FREQUENCIES);
 	E2S(AUTHORIZATION);
+	E2S(ACS_CHANNEL_SELECTED);
 	}
 
 	return "UNKNOWN";
