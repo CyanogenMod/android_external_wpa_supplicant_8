@@ -215,9 +215,16 @@ void p2p_go_neg_failed(struct p2p_data *p2p, struct p2p_device *peer,
 		       int status)
 {
 	struct p2p_go_neg_results res;
-	p2p_clear_timeout(p2p);
 	eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p, NULL);
-	p2p_set_state(p2p, P2P_IDLE);
+	if (p2p->state != P2P_SEARCH) {
+		/*
+		 * Clear timeouts related to GO Negotiation if no new p2p_find
+		 * has been started.
+		 */
+		p2p_clear_timeout(p2p);
+		p2p_set_state(p2p, P2P_IDLE);
+	}
+
 	if (p2p->go_neg_peer) {
 		p2p->go_neg_peer->flags &= ~P2P_DEV_PEER_WAITING_RESPONSE;
 		p2p->go_neg_peer->wps_method = WPS_NOT_READY;
