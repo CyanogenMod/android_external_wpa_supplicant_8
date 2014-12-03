@@ -45,5 +45,6 @@ int eap_proxy_get_imsi(struct eap_proxy_sm *eap_proxy, char *imsi_buf,
 
 int eap_proxy_notify_config(struct eap_proxy_sm *sm,
 			    struct eap_peer_config *config);
+size_t eap_proxy_get_sim_info(char *reply_buf, int buf_len);
 
 #endif /* EAP_PROXY_H */

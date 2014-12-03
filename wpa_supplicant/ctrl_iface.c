@@ -16,6 +16,9 @@
 #include "common/ieee802_11_common.h"
 #include "common/wpa_ctrl.h"
 #include "eap_peer/eap.h"
+#ifdef CONFIG_EAP_PROXY
+#include "eap_peer/eap_proxy.h"
+#endif
 #include "eapol_supp/eapol_supp_sm.h"
 #include "rsn_supp/wpa.h"
 #include "rsn_supp/preauth.h"
@@ -3346,6 +3349,14 @@ static int ctrl_iface_get_capability_freq(struct wpa_supplicant *wpa_s,
 	return pos - buf;
 }
 
+
+#ifdef CONFIG_EAP_PROXY
+static int wpa_supplicant_ctrl_iface_eap_proxy_get_sim_info(
+	char *buf, size_t buf_len)
+{
+	return eap_proxy_get_sim_info(buf, buf_len);
+}
+#endif /* CONFIG_EAP_PROXY */
 
 static int wpa_supplicant_ctrl_iface_get_capability(
 	struct wpa_supplicant *wpa_s, const char *_field, char *buf,
@@ -6912,6 +6923,11 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		if (wpa_supplicant_ctrl_iface_save_config(wpa_s))
 			reply_len = -1;
 #endif /* CONFIG_NO_CONFIG_WRITE */
+#ifdef CONFIG_EAP_PROXY
+	} else if (os_strcmp (buf, "GET_SIM_INFO") == 0) {
+		reply_len = wpa_supplicant_ctrl_iface_eap_proxy_get_sim_info(
+			reply, reply_size);
+#endif /* CONFIG_EAP_PROXY */
 	} else if (os_strncmp(buf, "GET_CAPABILITY ", 15) == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_get_capability(
 			wpa_s, buf + 15, reply, reply_size);
