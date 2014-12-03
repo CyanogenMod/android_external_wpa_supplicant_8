@@ -1330,6 +1330,14 @@ static int wpa_cli_cmd_list_networks(struct wpa_ctrl *ctrl, int argc,
 	return wpa_ctrl_command(ctrl, "LIST_NETWORKS");
 }
 
+#ifdef CONFIG_EAP_PROXY
+static int wpa_cli_cmd_get_sim_info(struct wpa_ctrl *ctrl, int argc,
+				      char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "GET_SIM_INFO");
+}
+#endif
+
 
 static int wpa_cli_cmd_select_network(struct wpa_ctrl *ctrl, int argc,
 				      char *argv[])
@@ -2576,6 +2584,11 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "list_networks", wpa_cli_cmd_list_networks, NULL,
 	  cli_cmd_flag_none,
 	  "= list configured networks" },
+#ifdef CONFIG_EAP_PROXY
+	{ "GET_SIM_INFO", wpa_cli_cmd_get_sim_info, NULL,
+	  cli_cmd_flag_none,
+	  "= get the SIM card info" },
+#endif
 	{ "select_network", wpa_cli_cmd_select_network, NULL,
 	  cli_cmd_flag_none,
 	  "<network id> = select a network (disable others)" },
