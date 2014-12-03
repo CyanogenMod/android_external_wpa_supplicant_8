@@ -1317,7 +1317,7 @@ struct wpabuf * eap_proxy_get_eapRespData(struct eap_proxy_sm *eap_proxy)
 		return NULL;
 	}
 
-	resp->used = sizeof(struct wpabuf) + len;
+	resp->used = len;
 	os_memcpy(resp->buf, eap_proxy->qmi_resp_data.eap_send_pkt_resp.resp_data,
 		   len);
 /*
