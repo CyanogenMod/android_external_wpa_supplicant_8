@@ -6044,6 +6044,13 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 	wpa_s->manual_scan_only_new = 0;
 	wpa_s->scan_id_count = 0;
 
+	if (radio_work_pending(wpa_s, "scan")) {
+		wpa_printf(MSG_DEBUG,
+			   "Pending scan scheduled - reject new request");
+		*reply_len = os_snprintf(reply, reply_size, "FAIL-BUSY\n");
+		return;
+	}
+
 	if (params) {
 		if (os_strncasecmp(params, "TYPE=ONLY", 9) == 0)
 			wpa_s->scan_res_handler = scan_only_handler;
