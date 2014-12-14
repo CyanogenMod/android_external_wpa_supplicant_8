@@ -215,9 +215,16 @@ void p2p_go_neg_failed(struct p2p_data *p2p, struct p2p_device *peer,
 		       int status)
 {
 	struct p2p_go_neg_results res;
-	p2p_clear_timeout(p2p);
 	eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p, NULL);
-	p2p_set_state(p2p, P2P_IDLE);
+	if (p2p->state != P2P_SEARCH) {
+		/*
+		 * Clear timeouts related to GO Negotiation if no new p2p_find
+		 * has been started.
+		 */
+		p2p_clear_timeout(p2p);
+		p2p_set_state(p2p, P2P_IDLE);
+	}
+
 	if (p2p->go_neg_peer) {
 		p2p->go_neg_peer->flags &= ~P2P_DEV_PEER_WAITING_RESPONSE;
 		p2p->go_neg_peer->wps_method = WPS_NOT_READY;
@@ -958,14 +965,8 @@ static void p2p_search(struct p2p_data *p2p)
 				 p2p->num_req_dev_types, p2p->req_dev_types,
 				 p2p->find_dev_id, pw_id);
 	if (res < 0) {
-		p2p_dbg(p2p, "Scan request failed");
+		p2p_dbg(p2p, "Scan request schedule failed");
 		p2p_continue_find(p2p);
-	} else {
-		p2p_dbg(p2p, "Running p2p_scan");
-		p2p->p2p_scan_running = 1;
-		eloop_cancel_timeout(p2p_scan_timeout, p2p, NULL);
-		eloop_register_timeout(P2P_SCAN_TIMEOUT, 0, p2p_scan_timeout,
-				       p2p, NULL);
 	}
 }
 
@@ -975,6 +976,22 @@ static void p2p_find_timeout(void *eloop_ctx, void *timeout_ctx)
 	struct p2p_data *p2p = eloop_ctx;
 	p2p_dbg(p2p, "Find timeout -> stop");
 	p2p_stop_find(p2p);
+}
+
+
+void p2p_notify_scan_trigger_status(struct p2p_data *p2p, int status)
+{
+	if (status != 0) {
+		p2p_dbg(p2p, "Scan request failed");
+		/* Do continue find even for the first p2p_find_scan */
+		p2p_continue_find(p2p);
+	} else {
+		p2p_dbg(p2p, "Running p2p_scan");
+		p2p->p2p_scan_running = 1;
+		eloop_cancel_timeout(p2p_scan_timeout, p2p, NULL);
+		eloop_register_timeout(P2P_SCAN_TIMEOUT, 0, p2p_scan_timeout,
+				       p2p, NULL);
+	}
 }
 
 
@@ -1108,17 +1125,11 @@ int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 		return -1;
 	}
 
-	if (res == 0) {
-		p2p_dbg(p2p, "Running p2p_scan");
-		p2p->p2p_scan_running = 1;
-		eloop_cancel_timeout(p2p_scan_timeout, p2p, NULL);
-		eloop_register_timeout(P2P_SCAN_TIMEOUT, 0, p2p_scan_timeout,
-				       p2p, NULL);
-	} else if (p2p->p2p_scan_running) {
+	if (res != 0 && p2p->p2p_scan_running) {
 		p2p_dbg(p2p, "Failed to start p2p_scan - another p2p_scan was already running");
 		/* wait for the previous p2p_scan to complete */
 		res = 0; /* do not report failure */
-	} else {
+	} else if (res != 0) {
 		p2p_dbg(p2p, "Failed to start p2p_scan");
 		p2p_set_state(p2p, P2P_IDLE);
 		eloop_cancel_timeout(p2p_find_timeout, p2p, NULL);
@@ -3509,6 +3520,10 @@ static void p2p_state_timeout(void *eloop_ctx, void *timeout_ctx)
 	p2p_dbg(p2p, "Timeout (state=%s)", p2p_state_txt(p2p->state));
 
 	p2p->in_listen = 0;
+	if (p2p->drv_in_listen) {
+		p2p_dbg(p2p, "Driver is still in listen state - stop it");
+		p2p->cfg->stop_listen(p2p->cfg->cb_ctx);
+	}
 
 	switch (p2p->state) {
 	case P2P_IDLE:
