@@ -43,6 +43,10 @@ enum qca_radiotap_vendor_ids {
  * @QCA_NL80211_VENDOR_SUBCMD_NAN: NAN command/event which is used to pass
  *	NAN Request/Response and NAN Indication messages. These messages are
  *	interpreted between the framework and the firmware component.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_DO_ACS: ACS command/event which is used to
+ *	invoke the ACS function in device and pass selected channels to
+ *	hostapd.
  */
 enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_UNSPEC = 0,
@@ -53,6 +57,7 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_NAN =  12,
 	QCA_NL80211_VENDOR_SUBMCD_STATS_EXT = 13,
 	/* 14..33 - reserved for QCA */
+	QCA_NL80211_VENDOR_SUBCMD_DO_ACS = 54,
 };
 
 
@@ -69,6 +74,26 @@ enum qca_wlan_vendor_attr {
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_MAX	= QCA_WLAN_VENDOR_ATTR_AFTER_LAST - 1,
+};
+
+enum qca_wlan_vendor_attr_acs_offload {
+	QCA_WLAN_VENDOR_ATTR_ACS_CHANNEL_INVALID = 0,
+	QCA_WLAN_VENDOR_ATTR_ACS_PRIMARY_CHANNEL,
+	QCA_WLAN_VENDOR_ATTR_ACS_SECONDARY_CHANNEL,
+	QCA_WLAN_VENDOR_ATTR_ACS_HW_MODE,
+	QCA_WLAN_VENDOR_ATTR_ACS_HT_ENABLED,
+	QCA_WLAN_VENDOR_ATTR_ACS_HT40_ENABLED,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_ACS_MAX =
+	QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST - 1
+};
+
+enum qca_wlan_vendor_acs_hw_mode {
+	QCA_ACS_MODE_IEEE80211B,
+	QCA_ACS_MODE_IEEE80211G,
+	QCA_ACS_MODE_IEEE80211A,
+	QCA_ACS_MODE_IEEE80211AD,
 };
 
 #endif /* QCA_VENDOR_H */
