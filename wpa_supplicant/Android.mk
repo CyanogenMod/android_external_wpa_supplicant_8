@@ -38,6 +38,12 @@ ifdef CONFIG_NO_ROAMING
 L_CFLAGS += -DCONFIG_NO_ROAMING
 endif
 
+# This disables setting the p2p device into station mode. The bcmdhd driver for
+# bcm4354 doesn't support this.
+ifeq ($(BOARD_WLAN_DEVICE_DISABLE_P2P_STATION_MODE), true)
+L_CFLAGS += -DANDROID_P2P_DISABLE_STATION_MODE
+endif
+
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
 L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"
