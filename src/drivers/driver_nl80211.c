@@ -8440,6 +8440,13 @@ static int wpa_driver_nl80211_set_mode(struct i802_bss *bss,
 	if (res && nlmode == nl80211_get_ifmode(bss))
 		res = 0;
 
+#ifdef ANDROID_P2P_DISABLE_STATION_MODE
+	if (strncmp(bss->ifname, "p2p", 3) == 0 &&
+	    nlmode == NL80211_IFTYPE_STATION) {
+		res = 0;
+	}
+#endif
+
 	if (res == 0) {
 		drv->nlmode = nlmode;
 		ret = 0;

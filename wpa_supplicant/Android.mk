@@ -34,6 +34,12 @@ L_CFLAGS += -DANDROID_P2P
 L_CFLAGS += -DP2P_CONCURRENT_SEARCH_DELAY=0
 endif
 
+# This disables setting the p2p device into station mode. The bcmdhd driver for
+# bcm4354 doesn't support this.
+ifeq ($(BOARD_WLAN_DEVICE_DISABLE_P2P_STATION_MODE), true)
+L_CFLAGS += -DANDROID_P2P_DISABLE_STATION_MODE
+endif
+
 ifeq ($(BOARD_NO_APSME_ATTR),true)
 L_CFLAGS += -DNO_APSME_ATTR
 endif
