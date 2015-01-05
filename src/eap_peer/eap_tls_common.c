@@ -147,6 +147,8 @@ static int eap_tls_params_from_conf(struct eap_sm *sm,
 	} else {
 		wpa_printf(MSG_DEBUG, "TLS: using phase1 config options");
 		eap_tls_params_from_conf1(params, config);
+		if (data->eap_type == EAP_TYPE_FAST)
+			params->flags |= TLS_CONN_EAP_FAST;
 	}
 
 	/*
@@ -166,6 +168,8 @@ static int eap_tls_params_from_conf(struct eap_sm *sm,
 		wpa_printf(MSG_INFO, "SSL: Failed to get configuration blobs");
 		return -1;
 	}
+
+	params->openssl_ciphers = config->openssl_ciphers;
 
 	return 0;
 }
@@ -377,15 +381,10 @@ u8 * eap_peer_tls_derive_session_id(struct eap_sm *sm,
 	struct tls_keys keys;
 	u8 *out;
 
-	/*
-	 * TLS library did not support session ID generation,
-	 * so get the needed TLS session parameters
-	 */
 	if (tls_connection_get_keys(sm->ssl_ctx, data->conn, &keys))
 		return NULL;
 
-	if (keys.client_random == NULL || keys.server_random == NULL ||
-	    keys.master_key == NULL)
+	if (keys.client_random == NULL || keys.server_random == NULL)
 		return NULL;
 
 	*len = 1 + keys.client_random_len + keys.server_random_len;
@@ -397,7 +396,7 @@ u8 * eap_peer_tls_derive_session_id(struct eap_sm *sm,
 	out[0] = eap_type;
 	os_memcpy(out + 1, keys.client_random, keys.client_random_len);
 	os_memcpy(out + 1 + keys.client_random_len, keys.server_random,
-	          keys.server_random_len);
+		  keys.server_random_len);
 
 	return out;
 }
@@ -795,8 +794,11 @@ int eap_peer_tls_status(struct eap_sm *sm, struct eap_ssl_data *data,
 	if (tls_get_cipher(data->ssl_ctx, data->conn, name, sizeof(name)) == 0)
 	{
 		ret = os_snprintf(buf + len, buflen - len,
-				  "EAP TLS cipher=%s\n", name);
-		if (ret < 0 || (size_t) ret >= buflen - len)
+				  "EAP TLS cipher=%s\n"
+				  "tls_session_reused=%d\n",
+				  name, tls_connection_resumed(data->ssl_ctx,
+							       data->conn));
+		if (os_snprintf_error(buflen - len, ret))
 			return len;
 		len += ret;
 	}

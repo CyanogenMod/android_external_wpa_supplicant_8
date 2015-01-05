@@ -42,6 +42,9 @@
 #include "scan.h"
 #include "offchannel.h"
 #include "interworking.h"
+#include "mesh.h"
+#include "mesh_mpm.h"
+#include "wmm_ac.h"
 
 
 #ifndef CONFIG_NO_SCAN_PROCESSING
@@ -199,20 +202,12 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 	bssid_changed = !is_zero_ether_addr(wpa_s->bssid);
 	os_memset(wpa_s->bssid, 0, ETH_ALEN);
 	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
-#ifdef CONFIG_SME
-	wpa_s->sme.prev_bssid_set = 0;
-#endif /* CONFIG_SME */
+	sme_clear_on_disassoc(wpa_s);
 #ifdef CONFIG_P2P
 	os_memset(wpa_s->go_dev_addr, 0, ETH_ALEN);
 #endif /* CONFIG_P2P */
 	wpa_s->current_bss = NULL;
 	wpa_s->assoc_freq = 0;
-#ifdef CONFIG_IEEE80211R
-#ifdef CONFIG_SME
-	if (wpa_s->sme.ft_ies)
-		sme_update_ft_ies(wpa_s, NULL, NULL, 0);
-#endif /* CONFIG_SME */
-#endif /* CONFIG_IEEE80211R */
 
 	if (bssid_changed)
 		wpas_notify_bssid_changed(wpa_s);
@@ -225,6 +220,8 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 	wpa_s->current_ssid = NULL;
 	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 	wpa_s->key_mgmt = 0;
+
+	wpas_rrm_reset(wpa_s);
 }
 
 
@@ -579,42 +576,6 @@ static int freq_allowed(int *freqs, int freq)
 		if (freqs[i] == freq)
 			return 1;
 	return 0;
-}
-
-
-int ht_supported(const struct hostapd_hw_modes *mode)
-{
-	if (!(mode->flags & HOSTAPD_MODE_FLAG_HT_INFO_KNOWN)) {
-		/*
-		 * The driver did not indicate whether it supports HT. Assume
-		 * it does to avoid connection issues.
-		 */
-		return 1;
-	}
-
-	/*
-	 * IEEE Std 802.11n-2009 20.1.1:
-	 * An HT non-AP STA shall support all EQM rates for one spatial stream.
-	 */
-	return mode->mcs_set[0] == 0xff;
-}
-
-
-int vht_supported(const struct hostapd_hw_modes *mode)
-{
-	if (!(mode->flags & HOSTAPD_MODE_FLAG_VHT_INFO_KNOWN)) {
-		/*
-		 * The driver did not indicate whether it supports VHT. Assume
-		 * it does to avoid connection issues.
-		 */
-		return 1;
-	}
-
-	/*
-	 * A VHT non-AP STA shall support MCS 0-7 for one spatial stream.
-	 * TODO: Verify if this complies with the standard
-	 */
-	return (mode->vht_mcs_set[0] & 0x3) != 3;
 }
 
 
@@ -1136,7 +1097,8 @@ wpa_supplicant_pick_new_network(struct wpa_supplicant *wpa_s)
 			if (wpas_network_disabled(wpa_s, ssid))
 				continue;
 			if (ssid->mode == IEEE80211_MODE_IBSS ||
-			    ssid->mode == IEEE80211_MODE_AP)
+			    ssid->mode == IEEE80211_MODE_AP ||
+			    ssid->mode == IEEE80211_MODE_MESH)
 				return ssid;
 		}
 	}
@@ -1346,6 +1308,9 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		return 0;
 	}
 
+	if (wnm_scan_process(wpa_s, 1) > 0)
+		goto scan_work_done;
+
 	if (sme_proc_obss_scan(wpa_s) > 0)
 		goto scan_work_done;
 
@@ -1416,6 +1381,13 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 		 */
 		return 1;
 	} else {
+#ifdef CONFIG_MESH
+		if (wpa_s->ifmsh) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Avoiding join because we already joined a mesh group");
+			return 0;
+		}
+#endif /* CONFIG_MESH */
 		wpa_dbg(wpa_s, MSG_DEBUG, "No suitable network found");
 		ssid = wpa_supplicant_pick_new_network(wpa_s);
 		if (ssid) {
@@ -2067,6 +2039,15 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_IBSS_RSN */
 
 	wpas_wps_notify_assoc(wpa_s, bssid);
+
+	if (data) {
+		wmm_ac_notify_assoc(wpa_s, data->assoc_info.resp_ies,
+				    data->assoc_info.resp_ies_len,
+				    &data->assoc_info.wmm_params);
+
+		if (wpa_s->reassoc_same_bss)
+			wmm_ac_restore_tspecs(wpa_s);
+	}
 }
 
 
@@ -2801,7 +2782,8 @@ static void wpa_supplicant_update_channel_list(
 
 
 static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
-				      const u8 *frame, size_t len, int freq)
+				      const u8 *frame, size_t len, int freq,
+				      int rssi)
 {
 	const struct ieee80211_mgmt *mgmt;
 	const u8 *payload;
@@ -2819,6 +2801,11 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 	wpa_dbg(wpa_s, MSG_DEBUG, "Received Action frame: SA=" MACSTR
 		" Category=%u DataLen=%d freq=%d MHz",
 		MAC2STR(mgmt->sa), category, (int) plen, freq);
+
+	if (category == WLAN_ACTION_WMM) {
+		wmm_ac_rx_action(wpa_s, mgmt->da, mgmt->sa, payload, plen);
+		return;
+	}
 
 #ifdef CONFIG_IEEE80211R
 	if (category == WLAN_ACTION_FT) {
@@ -2877,8 +2864,24 @@ static void wpas_event_rx_mgmt_action(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_INTERWORKING */
 
+	if (category == WLAN_ACTION_RADIO_MEASUREMENT &&
+	    payload[0] == WLAN_RRM_NEIGHBOR_REPORT_RESPONSE) {
+		wpas_rrm_process_neighbor_rep(wpa_s, payload + 1, plen - 1);
+		return;
+	}
+
+	if (category == WLAN_ACTION_RADIO_MEASUREMENT &&
+	    payload[0] == WLAN_RRM_LINK_MEASUREMENT_REQUEST) {
+		wpas_rrm_handle_link_measurement_request(wpa_s, mgmt->sa,
+							 payload + 1, plen - 1,
+							 rssi);
+		return;
+	}
+
 	wpas_p2p_rx_action(wpa_s, mgmt->da, mgmt->sa, mgmt->bssid,
 			   category, payload, plen, freq);
+	if (wpa_s->ifmsh)
+		mesh_mpm_action_rx(wpa_s, mgmt, len);
 }
 
 
@@ -2934,6 +2937,24 @@ static void wpa_supplicant_notify_avoid_freq(struct wpa_supplicant *wpa_s,
 }
 
 
+static void wpa_supplicant_event_assoc_auth(struct wpa_supplicant *wpa_s,
+					    union wpa_event_data *data)
+{
+	wpa_dbg(wpa_s, MSG_DEBUG,
+		"Connection authorized by device, previous state %d",
+		wpa_s->wpa_state);
+	if (wpa_s->wpa_state == WPA_ASSOCIATED) {
+		wpa_supplicant_cancel_auth_timeout(wpa_s);
+		wpa_supplicant_set_state(wpa_s, WPA_COMPLETED);
+		eapol_sm_notify_portValid(wpa_s->eapol, TRUE);
+		eapol_sm_notify_eap_success(wpa_s->eapol, TRUE);
+	}
+	wpa_sm_set_rx_replay_ctr(wpa_s->wpa, data->assoc_info.key_replay_ctr);
+	wpa_sm_set_ptk_kck_kek(wpa_s->wpa, data->assoc_info.ptk_kck,
+			       data->assoc_info.ptk_kek);
+}
+
+
 void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			  union wpa_event_data *data)
 {
@@ -2974,6 +2995,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		break;
 	case EVENT_ASSOC:
 		wpa_supplicant_event_assoc(wpa_s, data);
+		if (data && data->assoc_info.authorized)
+			wpa_supplicant_event_assoc_auth(wpa_s, data);
 		break;
 	case EVENT_DISASSOC:
 		wpas_event_disassoc(wpa_s,
@@ -3084,10 +3107,24 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		}
 		break;
 	case EVENT_AUTH_TIMED_OUT:
+		/* It is possible to get this event from earlier connection */
+		if (wpa_s->current_ssid &&
+		    wpa_s->current_ssid->mode == WPAS_MODE_MESH) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Ignore AUTH_TIMED_OUT in mesh configuration");
+			break;
+		}
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
 			sme_event_auth_timed_out(wpa_s, data);
 		break;
 	case EVENT_ASSOC_TIMED_OUT:
+		/* It is possible to get this event from earlier connection */
+		if (wpa_s->current_ssid &&
+		    wpa_s->current_ssid->mode == WPAS_MODE_MESH) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Ignore ASSOC_TIMED_OUT in mesh configuration");
+			break;
+		}
 		if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SME)
 			sme_event_assoc_timed_out(wpa_s, data);
 		break;
@@ -3228,7 +3265,9 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			}
 #endif /* CONFIG_P2P */
 #ifdef CONFIG_IBSS_RSN
-			if (stype == WLAN_FC_STYPE_AUTH &&
+			if (wpa_s->current_ssid &&
+			    wpa_s->current_ssid->mode == WPAS_MODE_IBSS &&
+			    stype == WLAN_FC_STYPE_AUTH &&
 			    data->rx_mgmt.frame_len >= 30) {
 				wpa_supplicant_event_ibss_auth(wpa_s, data);
 				break;
@@ -3239,7 +3278,13 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				wpas_event_rx_mgmt_action(
 					wpa_s, data->rx_mgmt.frame,
 					data->rx_mgmt.frame_len,
-					data->rx_mgmt.freq);
+					data->rx_mgmt.freq,
+					data->rx_mgmt.ssi_signal);
+				break;
+			}
+
+			if (wpa_s->ifmsh) {
+				mesh_mpm_mgmt_rx(wpa_s, &data->rx_mgmt);
 				break;
 			}
 
@@ -3474,6 +3519,15 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			data->connect_failed_reason.addr,
 			data->connect_failed_reason.code);
 #endif /* CONFIG_AP */
+		break;
+	case EVENT_NEW_PEER_CANDIDATE:
+#ifdef CONFIG_MESH
+		if (!wpa_s->ifmsh || !data)
+			break;
+		wpa_mesh_notify_peer(wpa_s, data->mesh_peer.peer,
+				     data->mesh_peer.ies,
+				     data->mesh_peer.ie_len);
+#endif /* CONFIG_MESH */
 		break;
 	default:
 		wpa_msg(wpa_s, MSG_INFO, "Unknown event %d", event);

@@ -508,20 +508,25 @@ static struct nai_realm * nai_realm_parse(struct wpabuf *anqp, u16 *count)
 	struct nai_realm *realm;
 	const u8 *pos, *end;
 	u16 i, num;
+	size_t left;
 
-	if (anqp == NULL || wpabuf_len(anqp) < 2)
+	if (anqp == NULL)
+		return NULL;
+	left = wpabuf_len(anqp);
+	if (left < 2)
 		return NULL;
 
 	pos = wpabuf_head_u8(anqp);
-	end = pos + wpabuf_len(anqp);
+	end = pos + left;
 	num = WPA_GET_LE16(pos);
 	wpa_printf(MSG_DEBUG, "NAI Realm Count: %u", num);
 	pos += 2;
+	left -= 2;
 
-	if (num * 5 > end - pos) {
+	if (num > left / 5) {
 		wpa_printf(MSG_DEBUG, "Invalid NAI Realm Count %u - not "
 			   "enough data (%u octets) for that many realms",
-			   num, (unsigned int) (end - pos));
+			   num, (unsigned int) left);
 		return NULL;
 	}
 
@@ -2525,6 +2530,7 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 	if (found == 0) {
 		if (wpa_s->fetch_osu_info) {
 			if (wpa_s->num_prov_found == 0 &&
+			    wpa_s->fetch_osu_waiting_scan &&
 			    wpa_s->num_osu_scans < 3) {
 				wpa_printf(MSG_DEBUG, "HS 2.0: No OSU providers seen - try to scan again");
 				hs20_start_osu_scan(wpa_s);
@@ -2808,7 +2814,9 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	end = pos + wpabuf_len(resp);
 
 	while (pos < end) {
-		if (pos + 4 > end) {
+		unsigned int left = end - pos;
+
+		if (left < 4) {
 			wpa_printf(MSG_DEBUG, "ANQP: Invalid element");
 			break;
 		}
@@ -2816,7 +2824,8 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 		pos += 2;
 		slen = WPA_GET_LE16(pos);
 		pos += 2;
-		if (pos + slen > end) {
+		left -= 4;
+		if (left < slen) {
 			wpa_printf(MSG_DEBUG, "ANQP: Invalid element length "
 				   "for Info ID %u", info_id);
 			break;

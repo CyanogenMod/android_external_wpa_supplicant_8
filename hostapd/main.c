@@ -28,8 +28,6 @@
 #include "eap_register.h"
 #include "ctrl_iface.h"
 
-struct wowlan_triggers *wpa_get_wowlan_triggers(const char *wowlan_triggers,
-						struct wpa_driver_capa *capa);
 
 struct hapd_global {
 	void **drv_priv;
@@ -186,9 +184,7 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 	}
 	params.bssid = b;
 	params.ifname = hapd->conf->iface;
-	params.ssid = hapd->conf->ssid.ssid;
-	params.ssid_len = hapd->conf->ssid.ssid_len;
-	params.test_socket = hapd->conf->test_socket;
+	params.driver_params = hapd->iconf->driver_params;
 	params.use_pae_group_addr = hapd->conf->use_pae_group_addr;
 
 	params.num_bridge = hapd->iface->num_bss;
@@ -217,6 +213,7 @@ static int hostapd_driver_init(struct hostapd_iface *iface)
 		struct wowlan_triggers *triggs;
 
 		iface->drv_flags = capa.flags;
+		iface->smps_modes = capa.smps_modes;
 		iface->probe_resp_offloads = capa.probe_resp_offloads;
 		iface->extended_capa = capa.extended_capa;
 		iface->extended_capa_mask = capa.extended_capa_mask;
@@ -411,7 +408,7 @@ static int hostapd_global_run(struct hapd_interfaces *ifaces, int daemonize,
 #endif /* EAP_SERVER_TNC */
 
 	if (daemonize && os_daemonize(pid_file)) {
-		perror("daemon");
+		wpa_printf(MSG_ERROR, "daemon: %s", strerror(errno));
 		return -1;
 	}
 
@@ -641,6 +638,8 @@ int main(int argc, char *argv[])
 
 	if (log_file)
 		wpa_debug_open_file(log_file);
+	else
+		wpa_debug_setup_stdout();
 #ifdef CONFIG_DEBUG_LINUX_TRACING
 	if (enable_trace_dbg) {
 		int tret = wpa_debug_open_linux_tracing();

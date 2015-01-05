@@ -95,6 +95,7 @@ OBJS += src/ap/preauth_auth.c
 OBJS += src/ap/pmksa_cache_auth.c
 OBJS += src/ap/ieee802_11_shared.c
 OBJS += src/ap/beacon.c
+OBJS += src/ap/bss_load.c
 OBJS_d =
 OBJS_p =
 LIBS =
@@ -199,6 +200,17 @@ OBJS += src/ap/peerkey_auth.c
 endif
 
 ifdef CONFIG_HS20
+NEED_AES_OMAC1=y
+CONFIG_PROXYARP=y
+endif
+
+ifdef CONFIG_PROXYARP
+CONFIG_L2_PACKET=y
+endif
+
+ifdef CONFIG_SUITEB
+L_CFLAGS += -DCONFIG_SUITEB
+NEED_SHA256=y
 NEED_AES_OMAC1=y
 endif
 
@@ -852,6 +864,15 @@ ifdef CONFIG_INTERWORKING
 L_CFLAGS += -DCONFIG_INTERWORKING
 OBJS += src/common/gas.c
 OBJS += src/ap/gas_serv.c
+endif
+
+ifdef CONFIG_PROXYARP
+L_CFLAGS += -DCONFIG_PROXYARP
+OBJS += src/ap/x_snoop.c
+OBJS += src/ap/dhcp_snoop.c
+ifdef CONFIG_IPV6
+OBJS += src/ap/ndisc_snoop.c
+endif
 endif
 
 OBJS += src/drivers/driver_common.c

@@ -45,14 +45,6 @@
 #define ERR_remove_thread_state(tid) ERR_remove_state(0)
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x10000000L
-/*
- * Session ticket override patch was merged into OpenSSL 0.9.9 tree on
- * 2008-11-15. This version uses a bit different API compared to the old patch.
- */
-#define CONFIG_OPENSSL_TICKET_OVERRIDE
-#endif
-
 #if defined(OPENSSL_IS_BORINGSSL)
 /* stack_index_t is the return type of OpenSSL's sk_XXX_num() functions. */
 typedef size_t stack_index_t;
@@ -700,12 +692,15 @@ static int tls_engine_load_dynamic_pkcs11(const char *pkcs11_so_path,
 		NULL, NULL
 	};
 
-	if (!pkcs11_so_path || !pkcs11_module_path)
+	if (!pkcs11_so_path)
 		return 0;
 
 	pre_cmd[1] = pkcs11_so_path;
 	pre_cmd[3] = engine_id;
-	post_cmd[1] = pkcs11_module_path;
+	if (pkcs11_module_path)
+		post_cmd[1] = pkcs11_module_path;
+	else
+		post_cmd[0] = NULL;
 
 	wpa_printf(MSG_DEBUG, "ENGINE: Loading pkcs11 Engine from %s",
 		   pkcs11_so_path);
@@ -747,6 +742,7 @@ void * tls_init(const struct tls_config *conf)
 {
 	SSL_CTX *ssl;
 	struct tls_context *context;
+	const char *ciphers;
 
 	if (tls_openssl_ref_count == 0) {
 		tls_global = context = tls_context_new(conf);
@@ -809,7 +805,7 @@ void * tls_init(const struct tls_config *conf)
 	}
 	tls_openssl_ref_count++;
 
-	ssl = SSL_CTX_new(TLSv1_method());
+	ssl = SSL_CTX_new(SSLv23_method());
 	if (ssl == NULL) {
 		tls_openssl_ref_count--;
 #ifdef OPENSSL_SUPPORTS_CTX_APP_DATA
@@ -823,19 +819,22 @@ void * tls_init(const struct tls_config *conf)
 		return NULL;
 	}
 
+	SSL_CTX_set_options(ssl, SSL_OP_NO_SSLv2);
+	SSL_CTX_set_options(ssl, SSL_OP_NO_SSLv3);
+
 	SSL_CTX_set_info_callback(ssl, ssl_info_cb);
 #ifdef OPENSSL_SUPPORTS_CTX_APP_DATA
 	SSL_CTX_set_app_data(ssl, context);
 #endif /* OPENSSL_SUPPORTS_CTX_APP_DATA */
 
 #ifndef OPENSSL_NO_ENGINE
+	wpa_printf(MSG_DEBUG, "ENGINE: Loading dynamic engine");
+	ERR_load_ENGINE_strings();
+	ENGINE_load_dynamic();
+
 	if (conf &&
 	    (conf->opensc_engine_path || conf->pkcs11_engine_path ||
 	     conf->pkcs11_module_path)) {
-		wpa_printf(MSG_DEBUG, "ENGINE: Loading dynamic engine");
-		ERR_load_ENGINE_strings();
-		ENGINE_load_dynamic();
-
 		if (tls_engine_load_dynamic_opensc(conf->opensc_engine_path) ||
 		    tls_engine_load_dynamic_pkcs11(conf->pkcs11_engine_path,
 						   conf->pkcs11_module_path)) {
@@ -844,6 +843,18 @@ void * tls_init(const struct tls_config *conf)
 		}
 	}
 #endif /* OPENSSL_NO_ENGINE */
+
+	if (conf && conf->openssl_ciphers)
+		ciphers = conf->openssl_ciphers;
+	else
+		ciphers = "DEFAULT:!EXP:!LOW";
+	if (SSL_CTX_set_cipher_list(ssl, ciphers) != 1) {
+		wpa_printf(MSG_ERROR,
+			   "OpenSSL: Failed to set cipher string '%s'",
+			   ciphers);
+		tls_deinit(ssl);
+		return NULL;
+	}
 
 	return ssl;
 }
@@ -886,16 +897,6 @@ static int tls_engine_init(struct tls_connection *conn, const char *engine_id,
 		wpa_printf(MSG_ERROR, "ENGINE: Engine ID not set");
 		return -1;
 	}
-#ifndef ANDROID
-	if (pin == NULL) {
-		wpa_printf(MSG_ERROR, "ENGINE: Smartcard PIN not set");
-		return -1;
-	}
-#endif
-	if (key_id == NULL) {
-		wpa_printf(MSG_ERROR, "ENGINE: Key Id not set");
-		return -1;
-	}
 
 	ERR_clear_error();
 #ifdef ANDROID
@@ -916,21 +917,34 @@ static int tls_engine_init(struct tls_connection *conn, const char *engine_id,
 	wpa_printf(MSG_DEBUG, "ENGINE: engine initialized");
 
 #ifndef ANDROID
-	if (ENGINE_ctrl_cmd_string(conn->engine, "PIN", pin, 0) == 0) {
+	if (pin && ENGINE_ctrl_cmd_string(conn->engine, "PIN", pin, 0) == 0) {
 		wpa_printf(MSG_ERROR, "ENGINE: cannot set pin [%s]",
 			   ERR_error_string(ERR_get_error(), NULL));
 		goto err;
 	}
 #endif
-	/* load private key first in-case PIN is required for cert */
-	conn->private_key = ENGINE_load_private_key(conn->engine,
-						    key_id, NULL, NULL);
-	if (!conn->private_key) {
-		wpa_printf(MSG_ERROR, "ENGINE: cannot load private key with id"
-				" '%s' [%s]", key_id,
-			   ERR_error_string(ERR_get_error(), NULL));
-		ret = TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
-		goto err;
+	if (key_id) {
+		/*
+		 * Ensure that the ENGINE does not attempt to use the OpenSSL
+		 * UI system to obtain a PIN, if we didn't provide one.
+		 */
+		struct {
+			const void *password;
+			const char *prompt_info;
+		} key_cb = { "", NULL };
+
+		/* load private key first in-case PIN is required for cert */
+		conn->private_key = ENGINE_load_private_key(conn->engine,
+							    key_id, NULL,
+							    &key_cb);
+		if (!conn->private_key) {
+			wpa_printf(MSG_ERROR,
+				   "ENGINE: cannot load private key with id '%s' [%s]",
+				   key_id,
+				   ERR_error_string(ERR_get_error(), NULL));
+			ret = TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
+			goto err;
+		}
 	}
 
 	/* handle a certificate and/or CA certificate */
@@ -2852,7 +2866,7 @@ int tls_connection_set_cipher_list(void *tls_ctx, struct tls_connection *conn,
 			return -1;
 		}
 		ret = os_snprintf(pos, end - pos, ":%s", suite);
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			break;
 		pos += ret;
 
@@ -2907,15 +2921,9 @@ int tls_connection_client_hello_ext(void *ssl_ctx, struct tls_connection *conn,
 	if (conn == NULL || conn->ssl == NULL || ext_type != 35)
 		return -1;
 
-#ifdef CONFIG_OPENSSL_TICKET_OVERRIDE
 	if (SSL_set_session_ticket_ext(conn->ssl, (void *) data,
 				       data_len) != 1)
 		return -1;
-#else /* CONFIG_OPENSSL_TICKET_OVERRIDE */
-	if (SSL_set_hello_extension(conn->ssl, ext_type, (void *) data,
-				    data_len) != 1)
-		return -1;
-#endif /* CONFIG_OPENSSL_TICKET_OVERRIDE */
 
 	return 0;
 }
@@ -3201,20 +3209,64 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 {
 	int ret;
 	unsigned long err;
+	int can_pkcs11 = 0;
+	const char *key_id = params->key_id;
+	const char *cert_id = params->cert_id;
+	const char *ca_cert_id = params->ca_cert_id;
+	const char *engine_id = params->engine ? params->engine_id : NULL;
 
 	if (conn == NULL)
 		return -1;
+
+	/*
+	 * If the engine isn't explicitly configured, and any of the
+	 * cert/key fields are actually PKCS#11 URIs, then automatically
+	 * use the PKCS#11 ENGINE.
+	 */
+	if (!engine_id || os_strcmp(engine_id, "pkcs11") == 0)
+		can_pkcs11 = 1;
+
+	if (!key_id && params->private_key && can_pkcs11 &&
+	    os_strncmp(params->private_key, "pkcs11:", 7) == 0) {
+		can_pkcs11 = 2;
+		key_id = params->private_key;
+	}
+
+	if (!cert_id && params->client_cert && can_pkcs11 &&
+	    os_strncmp(params->client_cert, "pkcs11:", 7) == 0) {
+		can_pkcs11 = 2;
+		cert_id = params->client_cert;
+	}
+
+	if (!ca_cert_id && params->ca_cert && can_pkcs11 &&
+	    os_strncmp(params->ca_cert, "pkcs11:", 7) == 0) {
+		can_pkcs11 = 2;
+		ca_cert_id = params->ca_cert;
+	}
+
+	/* If we need to automatically enable the PKCS#11 ENGINE, do so. */
+	if (can_pkcs11 == 2 && !engine_id)
+		engine_id = "pkcs11";
+
+	if (params->flags & TLS_CONN_EAP_FAST) {
+		wpa_printf(MSG_DEBUG,
+			   "OpenSSL: Use TLSv1_method() for EAP-FAST");
+		if (SSL_set_ssl_method(conn->ssl, TLSv1_method()) != 1) {
+			tls_show_errors(MSG_INFO, __func__,
+					"Failed to set TLSv1_method() for EAP-FAST");
+			return -1;
+		}
+	}
 
 	while ((err = ERR_get_error())) {
 		wpa_printf(MSG_INFO, "%s: Clearing pending SSL error: %s",
 			   __func__, ERR_error_string(err, NULL));
 	}
 
-	if (params->engine) {
+	if (engine_id) {
 		wpa_printf(MSG_DEBUG, "SSL: Initializing TLS engine");
-		ret = tls_engine_init(conn, params->engine_id, params->pin,
-				      params->key_id, params->cert_id,
-				      params->ca_cert_id);
+		ret = tls_engine_init(conn, engine_id, params->pin,
+				      key_id, cert_id, ca_cert_id);
 		if (ret)
 			return ret;
 	}
@@ -3224,9 +3276,9 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 					     params->suffix_match))
 		return -1;
 
-	if (params->engine && params->ca_cert_id) {
+	if (engine_id && ca_cert_id) {
 		if (tls_connection_engine_ca_cert(tls_ctx, conn,
-						  params->ca_cert_id))
+						  ca_cert_id))
 			return TLS_SET_PARAMS_ENGINE_PRV_VERIFY_FAILED;
 	} else if (tls_connection_ca_cert(tls_ctx, conn, params->ca_cert,
 					  params->ca_cert_blob,
@@ -3234,15 +3286,15 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 					  params->ca_path))
 		return -1;
 
-	if (params->engine && params->cert_id) {
-		if (tls_connection_engine_client_cert(conn, params->cert_id))
+	if (engine_id && cert_id) {
+		if (tls_connection_engine_client_cert(conn, cert_id))
 			return TLS_SET_PARAMS_ENGINE_PRV_VERIFY_FAILED;
 	} else if (tls_connection_client_cert(conn, params->client_cert,
 					      params->client_cert_blob,
 					      params->client_cert_blob_len))
 		return -1;
 
-	if (params->engine && params->key_id) {
+	if (engine_id && key_id) {
 		wpa_printf(MSG_DEBUG, "TLS: Using private key from engine");
 		if (tls_connection_engine_private_key(conn))
 			return TLS_SET_PARAMS_ENGINE_PRV_VERIFY_FAILED;
@@ -3259,6 +3311,14 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 	if (tls_connection_dh(conn, params->dh_file)) {
 		wpa_printf(MSG_INFO, "TLS: Failed to load DH file '%s'",
 			   params->dh_file);
+		return -1;
+	}
+
+	if (params->openssl_ciphers &&
+	    SSL_set_cipher_list(conn->ssl, params->openssl_ciphers) != 1) {
+		wpa_printf(MSG_INFO,
+			   "OpenSSL: Failed to set cipher string '%s'",
+			   params->openssl_ciphers);
 		return -1;
 	}
 
@@ -3325,6 +3385,14 @@ int tls_global_set_params(void *tls_ctx,
 	if (tls_global_dh(ssl_ctx, params->dh_file)) {
 		wpa_printf(MSG_INFO, "TLS: Failed to load DH file '%s'",
 			   params->dh_file);
+		return -1;
+	}
+
+	if (params->openssl_ciphers &&
+	    SSL_CTX_set_cipher_list(ssl_ctx, params->openssl_ciphers) != 1) {
+		wpa_printf(MSG_INFO,
+			   "OpenSSL: Failed to set cipher string '%s'",
+			   params->openssl_ciphers);
 		return -1;
 	}
 
@@ -3432,7 +3500,6 @@ static int tls_sess_sec_cb(SSL *s, void *secret, int *secret_len,
 }
 
 
-#ifdef CONFIG_OPENSSL_TICKET_OVERRIDE
 static int tls_session_ticket_ext_cb(SSL *s, const unsigned char *data,
 				     int len, void *arg)
 {
@@ -3458,62 +3525,6 @@ static int tls_session_ticket_ext_cb(SSL *s, const unsigned char *data,
 
 	return 1;
 }
-#else /* CONFIG_OPENSSL_TICKET_OVERRIDE */
-#ifdef SSL_OP_NO_TICKET
-static void tls_hello_ext_cb(SSL *s, int client_server, int type,
-			     unsigned char *data, int len, void *arg)
-{
-	struct tls_connection *conn = arg;
-
-	if (conn == NULL || conn->session_ticket_cb == NULL)
-		return;
-
-	wpa_printf(MSG_DEBUG, "OpenSSL: %s: type=%d length=%d", __func__,
-		   type, len);
-
-	if (type == TLSEXT_TYPE_session_ticket && !client_server) {
-		os_free(conn->session_ticket);
-		conn->session_ticket = NULL;
-
-		wpa_hexdump(MSG_DEBUG, "OpenSSL: ClientHello SessionTicket "
-			    "extension", data, len);
-		conn->session_ticket = os_malloc(len);
-		if (conn->session_ticket == NULL)
-			return;
-
-		os_memcpy(conn->session_ticket, data, len);
-		conn->session_ticket_len = len;
-	}
-}
-#else /* SSL_OP_NO_TICKET */
-static int tls_hello_ext_cb(SSL *s, TLS_EXTENSION *ext, void *arg)
-{
-	struct tls_connection *conn = arg;
-
-	if (conn == NULL || conn->session_ticket_cb == NULL)
-		return 0;
-
-	wpa_printf(MSG_DEBUG, "OpenSSL: %s: type=%d length=%d", __func__,
-		   ext->type, ext->length);
-
-	os_free(conn->session_ticket);
-	conn->session_ticket = NULL;
-
-	if (ext->type == 35) {
-		wpa_hexdump(MSG_DEBUG, "OpenSSL: ClientHello SessionTicket "
-			    "extension", ext->data, ext->length);
-		conn->session_ticket = os_malloc(ext->length);
-		if (conn->session_ticket == NULL)
-			return SSL_AD_INTERNAL_ERROR;
-
-		os_memcpy(conn->session_ticket, ext->data, ext->length);
-		conn->session_ticket_len = ext->length;
-	}
-
-	return 0;
-}
-#endif /* SSL_OP_NO_TICKET */
-#endif /* CONFIG_OPENSSL_TICKET_OVERRIDE */
 #endif /* EAP_FAST || EAP_FAST_DYNAMIC || EAP_SERVER_FAST */
 
 
@@ -3530,33 +3541,12 @@ int tls_connection_set_session_ticket_cb(void *tls_ctx,
 		if (SSL_set_session_secret_cb(conn->ssl, tls_sess_sec_cb,
 					      conn) != 1)
 			return -1;
-#ifdef CONFIG_OPENSSL_TICKET_OVERRIDE
 		SSL_set_session_ticket_ext_cb(conn->ssl,
 					      tls_session_ticket_ext_cb, conn);
-#else /* CONFIG_OPENSSL_TICKET_OVERRIDE */
-#ifdef SSL_OP_NO_TICKET
-		SSL_set_tlsext_debug_callback(conn->ssl, tls_hello_ext_cb);
-		SSL_set_tlsext_debug_arg(conn->ssl, conn);
-#else /* SSL_OP_NO_TICKET */
-		if (SSL_set_hello_extension_cb(conn->ssl, tls_hello_ext_cb,
-					       conn) != 1)
-			return -1;
-#endif /* SSL_OP_NO_TICKET */
-#endif /* CONFIG_OPENSSL_TICKET_OVERRIDE */
 	} else {
 		if (SSL_set_session_secret_cb(conn->ssl, NULL, NULL) != 1)
 			return -1;
-#ifdef CONFIG_OPENSSL_TICKET_OVERRIDE
 		SSL_set_session_ticket_ext_cb(conn->ssl, NULL, NULL);
-#else /* CONFIG_OPENSSL_TICKET_OVERRIDE */
-#ifdef SSL_OP_NO_TICKET
-		SSL_set_tlsext_debug_callback(conn->ssl, NULL);
-		SSL_set_tlsext_debug_arg(conn->ssl, conn);
-#else /* SSL_OP_NO_TICKET */
-		if (SSL_set_hello_extension_cb(conn->ssl, NULL, NULL) != 1)
-			return -1;
-#endif /* SSL_OP_NO_TICKET */
-#endif /* CONFIG_OPENSSL_TICKET_OVERRIDE */
 	}
 
 	return 0;

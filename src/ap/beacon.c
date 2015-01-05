@@ -32,18 +32,47 @@
 
 #ifdef NEED_AP_MLME
 
+static u8 * hostapd_eid_rm_enabled_capab(struct hostapd_data *hapd, u8 *eid,
+					 size_t len)
+{
+	if (!hapd->conf->radio_measurements || len < 2 + 4)
+		return eid;
+
+	*eid++ = WLAN_EID_RRM_ENABLED_CAPABILITIES;
+	*eid++ = 5;
+	*eid++ = (hapd->conf->radio_measurements & BIT(0)) ?
+		WLAN_RRM_CAPS_NEIGHBOR_REPORT : 0x00;
+	*eid++ = 0x00;
+	*eid++ = 0x00;
+	*eid++ = 0x00;
+	*eid++ = 0x00;
+	return eid;
+}
+
+
 static u8 * hostapd_eid_bss_load(struct hostapd_data *hapd, u8 *eid, size_t len)
 {
+	if (len < 2 + 5)
+		return eid;
+
 #ifdef CONFIG_TESTING_OPTIONS
 	if (hapd->conf->bss_load_test_set) {
-		if (2 + 5 > len)
-			return eid;
 		*eid++ = WLAN_EID_BSS_LOAD;
 		*eid++ = 5;
 		os_memcpy(eid, hapd->conf->bss_load_test, 5);
 		eid += 5;
+		return eid;
 	}
 #endif /* CONFIG_TESTING_OPTIONS */
+	if (hapd->conf->bss_load_update_period) {
+		*eid++ = WLAN_EID_BSS_LOAD;
+		*eid++ = 5;
+		WPA_PUT_LE16(eid, hapd->num_sta);
+		eid += 2;
+		*eid++ = hapd->iface->channel_utilization;
+		WPA_PUT_LE16(eid, 0); /* no available admission capabity */
+		eid += 2;
+	}
 	return eid;
 }
 
@@ -397,6 +426,8 @@ static u8 * hostapd_gen_probe_resp(struct hostapd_data *hapd,
 	pos = hostapd_eid_wpa(hapd, pos, epos - pos);
 
 	pos = hostapd_eid_bss_load(hapd, pos, epos - pos);
+
+	pos = hostapd_eid_rm_enabled_capab(hapd, pos, epos - pos);
 
 #ifdef CONFIG_IEEE80211N
 	pos = hostapd_eid_ht_capabilities(hapd, pos);
@@ -808,6 +839,10 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	tailpos = hostapd_eid_wpa(hapd, tailpos, tail + BEACON_TAIL_BUF_SIZE -
 				  tailpos);
 
+	tailpos = hostapd_eid_rm_enabled_capab(hapd, tailpos,
+					       tail + BEACON_TAIL_BUF_SIZE -
+					       tailpos);
+
 	tailpos = hostapd_eid_bss_load(hapd, tailpos,
 				       tail + BEACON_TAIL_BUF_SIZE - tailpos);
 
@@ -908,6 +943,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 		break;
 	}
 	params->isolate = hapd->conf->isolate;
+	params->smps_mode = hapd->iconf->ht_capab & HT_CAP_INFO_SMPS_MASK;
 #ifdef NEED_AP_MLME
 	params->cts_protect = !!(ieee802_11_erp_info(hapd) &
 				ERP_INFO_USE_PROTECTION);

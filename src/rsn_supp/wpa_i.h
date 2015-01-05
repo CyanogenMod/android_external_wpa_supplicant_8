@@ -92,6 +92,7 @@ struct wpa_sm {
 #ifdef CONFIG_TDLS
 	struct wpa_tdls_peer *tdls;
 	int tdls_prohibited;
+	int tdls_chan_switch_prohibited;
 	int tdls_disabled;
 
 	/* The driver supports TDLS */
@@ -102,6 +103,9 @@ struct wpa_sm {
 	 * to it via tdls_mgmt.
 	 */
 	int tdls_external_setup;
+
+	/* The driver supports TDLS channel switching */
+	int tdls_chan_switch;
 #endif /* CONFIG_TDLS */
 
 #ifdef CONFIG_IEEE80211R
@@ -257,11 +261,12 @@ static inline void wpa_sm_set_rekey_offload(struct wpa_sm *sm)
 #ifdef CONFIG_TDLS
 static inline int wpa_sm_tdls_get_capa(struct wpa_sm *sm,
 				       int *tdls_supported,
-				       int *tdls_ext_setup)
+				       int *tdls_ext_setup,
+				       int *tdls_chan_switch)
 {
 	if (sm->ctx->tdls_get_capa)
 		return sm->ctx->tdls_get_capa(sm->ctx->ctx, tdls_supported,
-					      tdls_ext_setup);
+					      tdls_ext_setup, tdls_chan_switch);
 	return -1;
 }
 
@@ -310,7 +315,37 @@ wpa_sm_tdls_peer_addset(struct wpa_sm *sm, const u8 *addr, int add,
 						 supp_oper_classes_len);
 	return -1;
 }
+
+static inline int
+wpa_sm_tdls_enable_channel_switch(struct wpa_sm *sm, const u8 *addr,
+				  u8 oper_class,
+				  const struct hostapd_freq_params *freq_params)
+{
+	if (sm->ctx->tdls_enable_channel_switch)
+		return sm->ctx->tdls_enable_channel_switch(sm->ctx->ctx, addr,
+							   oper_class,
+							   freq_params);
+	return -1;
+}
+
+static inline int
+wpa_sm_tdls_disable_channel_switch(struct wpa_sm *sm, const u8 *addr)
+{
+	if (sm->ctx->tdls_disable_channel_switch)
+		return sm->ctx->tdls_disable_channel_switch(sm->ctx->ctx, addr);
+	return -1;
+}
 #endif /* CONFIG_TDLS */
+
+static inline int wpa_sm_key_mgmt_set_pmk(struct wpa_sm *sm,
+					  const u8 *pmk, size_t pmk_len)
+{
+	if (!sm->proactive_key_caching)
+		return 0;
+	if (!sm->ctx->key_mgmt_set_pmk)
+		return -1;
+	return sm->ctx->key_mgmt_set_pmk(sm->ctx->ctx, pmk, pmk_len);
+}
 
 void wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck,
 			int ver, const u8 *dest, u16 proto,

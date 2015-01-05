@@ -49,6 +49,7 @@ typedef enum { FALSE = 0, TRUE = 1 } Boolean;
 #define WPA_KEY_MGMT_WAPI_CERT BIT(13)
 #define WPA_KEY_MGMT_CCKM BIT(14)
 #define WPA_KEY_MGMT_OSEN BIT(15)
+#define WPA_KEY_MGMT_IEEE8021X_SUITE_B BIT(16)
 
 static inline int wpa_key_mgmt_wpa_ieee8021x(int akm)
 {
@@ -56,7 +57,8 @@ static inline int wpa_key_mgmt_wpa_ieee8021x(int akm)
 			 WPA_KEY_MGMT_FT_IEEE8021X |
 			 WPA_KEY_MGMT_CCKM |
 			 WPA_KEY_MGMT_OSEN |
-			 WPA_KEY_MGMT_IEEE8021X_SHA256));
+			 WPA_KEY_MGMT_IEEE8021X_SHA256 |
+			 WPA_KEY_MGMT_IEEE8021X_SUITE_B));
 }
 
 static inline int wpa_key_mgmt_wpa_psk(int akm)
@@ -85,7 +87,13 @@ static inline int wpa_key_mgmt_sha256(int akm)
 {
 	return !!(akm & (WPA_KEY_MGMT_PSK_SHA256 |
 			 WPA_KEY_MGMT_IEEE8021X_SHA256 |
-			 WPA_KEY_MGMT_OSEN));
+			 WPA_KEY_MGMT_OSEN |
+			 WPA_KEY_MGMT_IEEE8021X_SUITE_B));
+}
+
+static inline int wpa_key_mgmt_suite_b(int akm)
+{
+	return !!(akm & WPA_KEY_MGMT_IEEE8021X_SUITE_B);
 }
 
 static inline int wpa_key_mgmt_wpa(int akm)
@@ -299,5 +307,26 @@ enum wpa_ctrl_req_type {
 
 /* Maximum number of EAP methods to store for EAP server user information */
 #define EAP_MAX_METHODS 8
+
+/**
+ * enum ht_mode - channel width and offset
+ */
+enum ht_mode {
+	CHAN_UNDEFINED = 0,
+	CHAN_NO_HT,
+	CHAN_HT20,
+	CHAN_HT40PLUS,
+	CHAN_HT40MINUS,
+};
+
+enum mesh_plink_state {
+	PLINK_LISTEN = 1,
+	PLINK_OPEN_SENT,
+	PLINK_OPEN_RCVD,
+	PLINK_CNF_RCVD,
+	PLINK_ESTAB,
+	PLINK_HOLDING,
+	PLINK_BLOCKED,
+};
 
 #endif /* DEFS_H */
