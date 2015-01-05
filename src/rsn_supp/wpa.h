@@ -17,6 +17,7 @@
 struct wpa_sm;
 struct eapol_sm;
 struct wpa_config_blob;
+struct hostapd_freq_params;
 
 struct wpa_sm_ctx {
 	void *ctx; /* pointer to arbitrary upper level context */
@@ -51,7 +52,7 @@ struct wpa_sm_ctx {
 	int (*mark_authenticated)(void *ctx, const u8 *target_ap);
 #ifdef CONFIG_TDLS
 	int (*tdls_get_capa)(void *ctx, int *tdls_supported,
-			     int *tdls_ext_setup);
+			     int *tdls_ext_setup, int *tdls_chan_switch);
 	int (*send_tdls_mgmt)(void *ctx, const u8 *dst,
 			      u8 action_code, u8 dialog_token,
 			      u16 status_code, u32 peer_capab,
@@ -67,9 +68,14 @@ struct wpa_sm_ctx {
 				size_t supp_channels_len,
 				const u8 *supp_oper_classes,
 				size_t supp_oper_classes_len);
+	int (*tdls_enable_channel_switch)(
+		void *ctx, const u8 *addr, u8 oper_class,
+		const struct hostapd_freq_params *params);
+	int (*tdls_disable_channel_switch)(void *ctx, const u8 *addr);
 #endif /* CONFIG_TDLS */
 	void (*set_rekey_offload)(void *ctx, const u8 *kek, const u8 *kck,
 				  const u8 *replay_ctr);
+	int (*key_mgmt_set_pmk)(void *ctx, const u8 *pmk, size_t pmk_len);
 };
 
 
@@ -105,7 +111,8 @@ struct wpa_sm * wpa_sm_init(struct wpa_sm_ctx *ctx);
 void wpa_sm_deinit(struct wpa_sm *sm);
 void wpa_sm_notify_assoc(struct wpa_sm *sm, const u8 *bssid);
 void wpa_sm_notify_disassoc(struct wpa_sm *sm);
-void wpa_sm_set_pmk(struct wpa_sm *sm, const u8 *pmk, size_t pmk_len);
+void wpa_sm_set_pmk(struct wpa_sm *sm, const u8 *pmk, size_t pmk_len,
+		    const u8 *bssid);
 void wpa_sm_set_pmk_from_pmksa(struct wpa_sm *sm);
 void wpa_sm_set_fast_reauth(struct wpa_sm *sm, int fast_reauth);
 void wpa_sm_set_scard_ctx(struct wpa_sm *sm, void *scard_ctx);
@@ -146,6 +153,10 @@ void wpa_sm_update_replay_ctr(struct wpa_sm *sm, const u8 *replay_ctr);
 void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm, void *network_ctx);
 
 int wpa_sm_get_p2p_ip_addr(struct wpa_sm *sm, u8 *buf);
+
+void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm, const u8 *rx_replay_counter);
+void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm, const u8 *ptk_kck,
+			    const u8 *ptk_kek);
 
 #else /* CONFIG_NO_WPA */
 
@@ -301,6 +312,16 @@ static inline void wpa_sm_pmksa_cache_flush(struct wpa_sm *sm,
 {
 }
 
+static inline void wpa_sm_set_rx_replay_ctr(struct wpa_sm *sm,
+					    const u8 *rx_replay_counter)
+{
+}
+
+static inline void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm, const u8 *ptk_kck,
+					  const u8 *ptk_kek)
+{
+}
+
 #endif /* CONFIG_NO_WPA */
 
 #ifdef CONFIG_PEERKEY
@@ -388,6 +409,10 @@ void wpa_tdls_enable(struct wpa_sm *sm, int enabled);
 void wpa_tdls_disable_unreachable_link(struct wpa_sm *sm, const u8 *addr);
 const char * wpa_tdls_get_link_status(struct wpa_sm *sm, const u8 *addr);
 int wpa_tdls_is_external_setup(struct wpa_sm *sm);
+int wpa_tdls_enable_chan_switch(struct wpa_sm *sm, const u8 *addr,
+				u8 oper_class,
+				struct hostapd_freq_params *freq_params);
+int wpa_tdls_disable_chan_switch(struct wpa_sm *sm, const u8 *addr);
 
 int wpa_wnmsleep_install_key(struct wpa_sm *sm, u8 subelem_id, u8 *buf);
 

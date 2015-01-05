@@ -107,7 +107,8 @@ int hostapd_get_hw_features(struct hostapd_iface *iface)
 
 			/*
 			 * Disable all channels that are marked not to allow
-			 * IBSS operation or active scanning.
+			 * to initiate radiation (a.k.a. passive scan and no
+			 * IBSS).
 			 * Use radar channels only if the driver supports DFS.
 			 */
 			if ((feature->channels[j].flag &
@@ -118,8 +119,7 @@ int hostapd_get_hw_features(struct hostapd_iface *iface)
 				    !(iface->drv_flags &
 				      WPA_DRIVER_FLAGS_DFS_OFFLOAD)) ||
 				   (feature->channels[j].flag &
-				    (HOSTAPD_CHAN_NO_IBSS |
-				     HOSTAPD_CHAN_PASSIVE_SCAN))) {
+				    HOSTAPD_CHAN_NO_IR)) {
 				feature->channels[j].flag |=
 					HOSTAPD_CHAN_DISABLED;
 			}
@@ -746,11 +746,24 @@ static int ieee80211n_supported_ht_capab(struct hostapd_iface *iface)
 		return 0;
 	}
 
-	if ((conf & HT_CAP_INFO_SMPS_MASK) != (hw & HT_CAP_INFO_SMPS_MASK) &&
-	    (conf & HT_CAP_INFO_SMPS_MASK) != HT_CAP_INFO_SMPS_DISABLED) {
-		wpa_printf(MSG_ERROR, "Driver does not support configured "
-			   "HT capability [SMPS-*]");
-		return 0;
+	switch (conf & HT_CAP_INFO_SMPS_MASK) {
+	case HT_CAP_INFO_SMPS_STATIC:
+		if (!(iface->smps_modes & WPA_DRIVER_SMPS_MODE_STATIC)) {
+			wpa_printf(MSG_ERROR,
+				   "Driver does not support configured HT capability [SMPS-STATIC]");
+			return 0;
+		}
+		break;
+	case HT_CAP_INFO_SMPS_DYNAMIC:
+		if (!(iface->smps_modes & WPA_DRIVER_SMPS_MODE_DYNAMIC)) {
+			wpa_printf(MSG_ERROR,
+				   "Driver does not support configured HT capability [SMPS-DYNAMIC]");
+			return 0;
+		}
+		break;
+	case HT_CAP_INFO_SMPS_DISABLED:
+	default:
+		break;
 	}
 
 	if ((conf & HT_CAP_INFO_GREEN_FIELD) &&
@@ -839,16 +852,16 @@ static int ieee80211ac_cap_check(u32 hw, u32 conf, u32 cap, const char *name)
 }
 
 
-static int ieee80211ac_cap_check_max(u32 hw, u32 conf, u32 cap,
+static int ieee80211ac_cap_check_max(u32 hw, u32 conf, u32 mask,
+				     unsigned int shift,
 				     const char *name)
 {
-	u32 hw_max = hw & cap;
-	u32 conf_val = conf & cap;
+	u32 hw_max = hw & mask;
+	u32 conf_val = conf & mask;
 
 	if (conf_val > hw_max) {
-		int offset = find_first_bit(cap);
 		wpa_printf(MSG_ERROR, "Configured VHT capability [%s] exceeds max value supported by the driver (%d > %d)",
-			   name, conf_val >> offset, hw_max >> offset);
+			   name, conf_val >> shift, hw_max >> shift);
 		return 0;
 	}
 	return 1;
@@ -871,7 +884,8 @@ static int ieee80211ac_supported_vht_capab(struct hostapd_iface *iface)
 
 #define VHT_CAP_CHECK_MAX(cap) \
 	do { \
-		if (!ieee80211ac_cap_check_max(hw, conf, cap, #cap)) \
+		if (!ieee80211ac_cap_check_max(hw, conf, cap, cap ## _SHIFT, \
+					       #cap)) \
 			return 0; \
 	} while (0)
 
@@ -945,12 +959,10 @@ static int hostapd_is_usable_chan(struct hostapd_iface *iface,
 			return 1;
 
 		wpa_printf(MSG_DEBUG,
-			   "%schannel [%i] (%i) is disabled for use in AP mode, flags: 0x%x%s%s%s",
+			   "%schannel [%i] (%i) is disabled for use in AP mode, flags: 0x%x%s%s",
 			   primary ? "" : "Configured HT40 secondary ",
 			   i, chan->chan, chan->flag,
-			   chan->flag & HOSTAPD_CHAN_NO_IBSS ? " NO-IBSS" : "",
-			   chan->flag & HOSTAPD_CHAN_PASSIVE_SCAN ?
-			   " PASSIVE-SCAN" : "",
+			   chan->flag & HOSTAPD_CHAN_NO_IR ? " NO-IR" : "",
 			   chan->flag & HOSTAPD_CHAN_RADAR ? " RADAR" : "");
 	}
 

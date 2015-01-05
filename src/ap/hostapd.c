@@ -35,6 +35,10 @@
 #include "gas_serv.h"
 #include "dfs.h"
 #include "ieee802_11.h"
+#include "bss_load.h"
+#include "x_snoop.h"
+#include "dhcp_snoop.h"
+#include "ndisc_snoop.h"
 
 
 static int hostapd_flush_old_stations(struct hostapd_data *hapd, u16 reason);
@@ -252,6 +256,16 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 
 static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 {
+	os_free(hapd->probereq_cb);
+	hapd->probereq_cb = NULL;
+
+#ifdef CONFIG_P2P
+	wpabuf_free(hapd->p2p_beacon_ie);
+	hapd->p2p_beacon_ie = NULL;
+	wpabuf_free(hapd->p2p_probe_resp_ie);
+	hapd->p2p_probe_resp_ie = NULL;
+#endif /* CONFIG_P2P */
+
 	if (!hapd->started) {
 		wpa_printf(MSG_ERROR, "%s: Interface %s wasn't started",
 			   __func__, hapd->conf->iface);
@@ -294,21 +308,16 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 		}
 	}
 
-	os_free(hapd->probereq_cb);
-	hapd->probereq_cb = NULL;
-
-#ifdef CONFIG_P2P
-	wpabuf_free(hapd->p2p_beacon_ie);
-	hapd->p2p_beacon_ie = NULL;
-	wpabuf_free(hapd->p2p_probe_resp_ie);
-	hapd->p2p_probe_resp_ie = NULL;
-#endif /* CONFIG_P2P */
-
 	wpabuf_free(hapd->time_adv);
 
 #ifdef CONFIG_INTERWORKING
 	gas_serv_deinit(hapd);
 #endif /* CONFIG_INTERWORKING */
+
+	bss_load_update_deinit(hapd);
+	ndisc_snoop_deinit(hapd);
+	dhcp_snoop_deinit(hapd);
+	x_snoop_deinit(hapd);
 
 #ifdef CONFIG_SQLITE
 	bin_clear_free(hapd->tmp_eap_user.identity,
@@ -316,6 +325,11 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 	bin_clear_free(hapd->tmp_eap_user.password,
 		       hapd->tmp_eap_user.password_len);
 #endif /* CONFIG_SQLITE */
+
+#ifdef CONFIG_MESH
+	wpabuf_free(hapd->mesh_pending_auth);
+	hapd->mesh_pending_auth = NULL;
+#endif /* CONFIG_MESH */
 }
 
 
@@ -691,6 +705,7 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	int ssid_len, set_ssid;
 	char force_ifname[IFNAMSIZ];
 	u8 if_addr[ETH_ALEN];
+	int flush_old_stations = 1;
 
 	wpa_printf(MSG_DEBUG, "%s(hapd=%p (%s), first=%d)",
 		   __func__, hapd, conf->iface, first);
@@ -745,7 +760,14 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	if (conf->wmm_enabled < 0)
 		conf->wmm_enabled = hapd->iconf->ieee80211n;
 
-	hostapd_flush_old_stations(hapd, WLAN_REASON_PREV_AUTH_NOT_VALID);
+#ifdef CONFIG_MESH
+	if (hapd->iface->mconf == NULL)
+		flush_old_stations = 0;
+#endif /* CONFIG_MESH */
+
+	if (flush_old_stations)
+		hostapd_flush_old_stations(hapd,
+					   WLAN_REASON_PREV_AUTH_NOT_VALID);
 	hostapd_set_privacy(hapd, 0);
 
 	hostapd_broadcast_wep_clear(hapd);
@@ -875,6 +897,31 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 	}
 #endif /* CONFIG_INTERWORKING */
 
+	if (conf->bss_load_update_period && bss_load_update_init(hapd)) {
+		wpa_printf(MSG_ERROR, "BSS Load initialization failed");
+		return -1;
+	}
+
+	if (conf->proxy_arp) {
+		if (x_snoop_init(hapd)) {
+			wpa_printf(MSG_ERROR,
+				   "Generic snooping infrastructure initialization failed");
+			return -1;
+		}
+
+		if (dhcp_snoop_init(hapd)) {
+			wpa_printf(MSG_ERROR,
+				   "DHCP snooping initialization failed");
+			return -1;
+		}
+
+		if (ndisc_snoop_init(hapd)) {
+			wpa_printf(MSG_ERROR,
+				   "Neighbor Discovery snooping initialization failed");
+			return -1;
+		}
+	}
+
 	if (!hostapd_drv_none(hapd) && vlan_init(hapd)) {
 		wpa_printf(MSG_ERROR, "VLAN initialization failed.");
 		return -1;
@@ -898,6 +945,11 @@ static void hostapd_tx_queue_params(struct hostapd_iface *iface)
 	struct hostapd_data *hapd = iface->bss[0];
 	int i;
 	struct hostapd_tx_queue_params *p;
+
+#ifdef CONFIG_MESH
+	if (iface->mconf == NULL)
+		return;
+#endif /* CONFIG_MESH */
 
 	for (i = 0; i < NUM_TX_QUEUES; i++) {
 		p = &iface->conf->tx_queue[i];
@@ -1164,6 +1216,7 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 	struct hostapd_data *hapd = iface->bss[0];
 	size_t j;
 	u8 *prev_addr;
+	int delay_apply_cfg = 0;
 
 	if (err)
 		goto fail;
@@ -1193,7 +1246,17 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 		}
 #endif /* NEED_AP_MLME */
 
-		if (hostapd_set_freq(hapd, hapd->iconf->hw_mode, iface->freq,
+#ifdef CONFIG_MESH
+		if (iface->mconf != NULL) {
+			wpa_printf(MSG_DEBUG,
+				   "%s: Mesh configuration will be applied while joining the mesh network",
+				   iface->bss[0]->conf->iface);
+			delay_apply_cfg = 1;
+		}
+#endif /* CONFIG_MESH */
+
+		if (!delay_apply_cfg &&
+		    hostapd_set_freq(hapd, hapd->iconf->hw_mode, iface->freq,
 				     hapd->iconf->channel,
 				     hapd->iconf->ieee80211n,
 				     hapd->iconf->ieee80211ac,
@@ -1820,7 +1883,7 @@ static struct hostapd_iface * hostapd_data_alloc(
 	hapd_iface->conf = conf;
 	hapd_iface->num_bss = conf->num_bss;
 
-	hapd_iface->bss = os_zalloc(conf->num_bss *
+	hapd_iface->bss = os_calloc(conf->num_bss,
 				    sizeof(struct hostapd_data *));
 	if (hapd_iface->bss == NULL)
 		return NULL;
@@ -1882,9 +1945,17 @@ int hostapd_add_iface(struct hapd_interfaces *interfaces, char *buf)
 		}
 
 		if (new_iface) {
-			if (interfaces->driver_init(hapd_iface) ||
-			    hostapd_setup_interface(hapd_iface)) {
+			if (interfaces->driver_init(hapd_iface)) {
 				interfaces->count--;
+				goto fail;
+			}
+
+			if (hostapd_setup_interface(hapd_iface)) {
+				interfaces->count--;
+				hostapd_deinit_driver(
+					hapd_iface->bss[0]->driver,
+					hapd_iface->bss[0]->drv_priv,
+					hapd_iface);
 				goto fail;
 			}
 		} else {
@@ -1978,14 +2049,14 @@ fail:
 				wpa_printf(MSG_DEBUG, "%s: free hapd %p (%s)",
 					   __func__, hapd_iface->bss[i],
 					   hapd->conf->iface);
+				hostapd_cleanup(hapd);
 				os_free(hapd);
 				hapd_iface->bss[i] = NULL;
 			}
 			os_free(hapd_iface->bss);
+			hapd_iface->bss = NULL;
 		}
-		wpa_printf(MSG_DEBUG, "%s: free iface %p",
-			   __func__, hapd_iface);
-		os_free(hapd_iface);
+		hostapd_cleanup_iface(hapd_iface);
 	}
 	return -1;
 }
@@ -2367,6 +2438,12 @@ int hostapd_switch_channel(struct hostapd_data *hapd,
 			   struct csa_settings *settings)
 {
 	int ret;
+
+	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_AP_CSA)) {
+		wpa_printf(MSG_INFO, "CSA is not supported");
+		return -1;
+	}
+
 	ret = hostapd_fill_csa_settings(hapd, settings);
 	if (ret)
 		return ret;

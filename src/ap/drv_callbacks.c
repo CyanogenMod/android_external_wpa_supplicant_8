@@ -442,9 +442,10 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	int channel, chwidth, seg0_idx = 0, seg1_idx = 0;
 
 	hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
-		       HOSTAPD_LEVEL_INFO, "driver had channel switch: "
-		       "freq=%d, ht=%d, offset=%d, width=%d, cf1=%d, cf2=%d",
-		       freq, ht, offset, width, cf1, cf2);
+		       HOSTAPD_LEVEL_INFO,
+		       "driver had channel switch: freq=%d, ht=%d, offset=%d, width=%d (%s), cf1=%d, cf2=%d",
+		       freq, ht, offset, width, channel_width_to_string(width),
+		       cf1, cf2);
 
 	hapd->iface->freq = freq;
 
@@ -489,6 +490,8 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 
 	hapd->iconf->channel = channel;
 	hapd->iconf->ieee80211n = ht;
+	if (!ht)
+		hapd->iconf->ieee80211ac = 0;
 	hapd->iconf->secondary_channel = offset;
 	hapd->iconf->vht_oper_chwidth = chwidth;
 	hapd->iconf->vht_oper_centr_freq_seg0_idx = seg0_idx;
@@ -520,6 +523,51 @@ void hostapd_event_connect_failed_reason(struct hostapd_data *hapd,
 		break;
 	}
 }
+
+
+#ifdef CONFIG_ACS
+static void hostapd_acs_channel_selected(struct hostapd_data *hapd,
+					 u8 pri_channel, u8 sec_channel)
+{
+	int channel;
+	int ret;
+
+	if (hapd->iconf->channel) {
+		wpa_printf(MSG_INFO, "ACS: Channel was already set to %d",
+			   hapd->iconf->channel);
+		return;
+	}
+
+	hapd->iface->freq = hostapd_hw_get_freq(hapd, pri_channel);
+
+	channel = pri_channel;
+	if (!channel) {
+		hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_WARNING,
+			       "driver switched to bad channel");
+		return;
+	}
+
+	hapd->iconf->channel = channel;
+
+	if (sec_channel == 0)
+		hapd->iconf->secondary_channel = 0;
+	else if (sec_channel < pri_channel)
+		hapd->iconf->secondary_channel = -1;
+	else if (sec_channel > pri_channel)
+		hapd->iconf->secondary_channel = 1;
+	else {
+		wpa_printf(MSG_ERROR, "Invalid secondary channel!");
+		return;
+	}
+
+	ret = hostapd_acs_completed(hapd->iface, 0);
+	if (ret) {
+		wpa_printf(MSG_ERROR,
+			   "ACS: Possibly channel configuration is invalid");
+	}
+}
+#endif /* CONFIG_ACS */
 
 
 int hostapd_probe_req_rx(struct hostapd_data *hapd, const u8 *sa, const u8 *da,
@@ -858,6 +906,42 @@ static void hostapd_update_nf(struct hostapd_iface *iface,
 }
 
 
+static void hostapd_single_channel_get_survey(struct hostapd_iface *iface,
+					      struct survey_results *survey_res)
+{
+	struct hostapd_channel_data *chan;
+	struct freq_survey *survey;
+	u64 divisor, dividend;
+
+	survey = dl_list_first(&survey_res->survey_list, struct freq_survey,
+			       list);
+	if (!survey || !survey->freq)
+		return;
+
+	chan = hostapd_get_mode_channel(iface, survey->freq);
+	if (!chan || chan->flag & HOSTAPD_CHAN_DISABLED)
+		return;
+
+	wpa_printf(MSG_DEBUG, "Single Channel Survey: (freq=%d channel_time=%ld channel_time_busy=%ld)",
+		   survey->freq,
+		   (unsigned long int) survey->channel_time,
+		   (unsigned long int) survey->channel_time_busy);
+
+	if (survey->channel_time > iface->last_channel_time &&
+	    survey->channel_time > survey->channel_time_busy) {
+		dividend = survey->channel_time_busy -
+			iface->last_channel_time_busy;
+		divisor = survey->channel_time - iface->last_channel_time;
+
+		iface->channel_utilization = dividend * 255 / divisor;
+		wpa_printf(MSG_DEBUG, "Channel Utilization: %d",
+			   iface->channel_utilization);
+	}
+	iface->last_channel_time = survey->channel_time;
+	iface->last_channel_time_busy = survey->channel_time_busy;
+}
+
+
 static void hostapd_event_get_survey(struct hostapd_data *hapd,
 				     struct survey_results *survey_results)
 {
@@ -867,6 +951,11 @@ static void hostapd_event_get_survey(struct hostapd_data *hapd,
 
 	if (dl_list_empty(&survey_results->survey_list)) {
 		wpa_printf(MSG_DEBUG, "No survey data received");
+		return;
+	}
+
+	if (survey_results->freq_filter) {
+		hostapd_single_channel_get_survey(iface, survey_results);
 		return;
 	}
 
@@ -979,12 +1068,6 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		if (hapd->iface->scan_cb)
 			hapd->iface->scan_cb(hapd->iface);
 		break;
-#ifdef CONFIG_IEEE80211R
-	case EVENT_FT_RRB_RX:
-		wpa_ft_rrb_rx(hapd->wpa_auth, data->ft_rrb_rx.src,
-			      data->ft_rrb_rx.data, data->ft_rrb_rx.data_len);
-		break;
-#endif /* CONFIG_IEEE80211R */
 	case EVENT_WPS_BUTTON_PUSHED:
 		hostapd_wps_button_pushed(hapd, NULL);
 		break;
@@ -1125,6 +1208,19 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			hapd->iface, data->channel_list_changed.initiator);
 		break;
 #endif /* NEED_AP_MLME */
+	case EVENT_INTERFACE_ENABLED:
+		wpa_msg(hapd->msg_ctx, MSG_INFO, INTERFACE_ENABLED);
+		break;
+	case EVENT_INTERFACE_DISABLED:
+		wpa_msg(hapd->msg_ctx, MSG_INFO, INTERFACE_DISABLED);
+		break;
+#ifdef CONFIG_ACS
+	case EVENT_ACS_CHANNEL_SELECTED:
+		hostapd_acs_channel_selected(
+			hapd, data->acs_selected_channels.pri_channel,
+			data->acs_selected_channels.sec_channel);
+		break;
+#endif /* CONFIG_ACS */
 	default:
 		wpa_printf(MSG_DEBUG, "Unknown event %d", event);
 		break;

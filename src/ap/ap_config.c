@@ -425,6 +425,7 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->eap_user_sqlite);
 
 	os_free(conf->eap_req_id_text);
+	os_free(conf->erp_domain);
 	os_free(conf->accept_mac);
 	os_free(conf->deny_mac);
 	os_free(conf->nas_identifier);
@@ -444,12 +445,12 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->private_key_passwd);
 	os_free(conf->ocsp_stapling_response);
 	os_free(conf->dh_file);
+	os_free(conf->openssl_ciphers);
 	os_free(conf->pac_opaque_encr_key);
 	os_free(conf->eap_fast_a_id);
 	os_free(conf->eap_fast_a_id_info);
 	os_free(conf->eap_sim_db);
 	os_free(conf->radius_server_clients);
-	os_free(conf->test_socket);
 	os_free(conf->radius);
 	os_free(conf->radius_das_shared_secret);
 	hostapd_config_free_vlan(conf);
@@ -495,6 +496,12 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->model_description);
 	os_free(conf->model_url);
 	os_free(conf->upc);
+	{
+		unsigned int i;
+
+		for (i = 0; i < MAX_WPS_VENDOR_EXTENSIONS; i++)
+			wpabuf_free(conf->wps_vendor_ext[i]);
+	}
 	wpabuf_free(conf->wps_nfc_dh_pubkey);
 	wpabuf_free(conf->wps_nfc_dh_privkey);
 	wpabuf_free(conf->wps_nfc_dev_pw);
@@ -566,6 +573,7 @@ void hostapd_config_free(struct hostapd_config *conf)
 	os_free(conf->supported_rates);
 	os_free(conf->basic_rates);
 	os_free(conf->chanlist);
+	os_free(conf->driver_params);
 
 	os_free(conf);
 }
@@ -888,12 +896,20 @@ void hostapd_set_security_params(struct hostapd_bss_config *bss,
 		int cipher = WPA_CIPHER_NONE;
 		bss->ssid.security_policy = SECURITY_IEEE_802_1X;
 		bss->ssid.wep.default_len = bss->default_wep_key_len;
-		if (bss->default_wep_key_len)
+		if (full_config && bss->default_wep_key_len) {
 			cipher = bss->default_wep_key_len >= 13 ?
 				WPA_CIPHER_WEP104 : WPA_CIPHER_WEP40;
+		} else if (full_config && bss->ssid.wep.keys_set) {
+			if (bss->ssid.wep.len[0] >= 13)
+				cipher = WPA_CIPHER_WEP104;
+			else
+				cipher = WPA_CIPHER_WEP40;
+		}
 		bss->wpa_group = cipher;
 		bss->wpa_pairwise = cipher;
 		bss->rsn_pairwise = cipher;
+		if (full_config)
+			bss->wpa_key_mgmt = WPA_KEY_MGMT_IEEE8021X_NO_WPA;
 	} else if (bss->ssid.wep.keys_set) {
 		int cipher = WPA_CIPHER_WEP40;
 		if (bss->ssid.wep.len[0] >= 13)
@@ -902,6 +918,8 @@ void hostapd_set_security_params(struct hostapd_bss_config *bss,
 		bss->wpa_group = cipher;
 		bss->wpa_pairwise = cipher;
 		bss->rsn_pairwise = cipher;
+		if (full_config)
+			bss->wpa_key_mgmt = WPA_KEY_MGMT_NONE;
 	} else if (bss->osen) {
 		bss->ssid.security_policy = SECURITY_OSEN;
 		bss->wpa_group = WPA_CIPHER_CCMP;
@@ -912,5 +930,7 @@ void hostapd_set_security_params(struct hostapd_bss_config *bss,
 		bss->wpa_group = WPA_CIPHER_NONE;
 		bss->wpa_pairwise = WPA_CIPHER_NONE;
 		bss->rsn_pairwise = WPA_CIPHER_NONE;
+		if (full_config)
+			bss->wpa_key_mgmt = WPA_KEY_MGMT_NONE;
 	}
 }

@@ -143,6 +143,15 @@ static int wpa_config_validate_network(struct wpa_ssid *ssid, int line)
 		ssid->group_cipher &= ~WPA_CIPHER_CCMP;
 	}
 
+	if (ssid->mode == WPAS_MODE_MESH &&
+	    (ssid->key_mgmt != WPA_KEY_MGMT_NONE &&
+	    ssid->key_mgmt != WPA_KEY_MGMT_SAE)) {
+		wpa_printf(MSG_ERROR,
+			   "Line %d: key_mgmt for mesh network should be open or SAE",
+			   line);
+		errors++;
+	}
+
 	return errors;
 }
 
@@ -599,7 +608,7 @@ static void write_wep_key(FILE *f, int idx, struct wpa_ssid *ssid)
 	int res;
 
 	res = os_snprintf(field, sizeof(field), "wep_key%d", idx);
-	if (res < 0 || (size_t) res >= sizeof(field))
+	if (os_snprintf_error(sizeof(field), res))
 		return;
 	value = wpa_config_get(ssid, field);
 	if (value) {
@@ -707,6 +716,7 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INTe(engine);
 	INTe(engine2);
 	INT_DEF(eapol_flags, DEFAULT_EAPOL_FLAGS);
+	INTe(erp);
 #endif /* IEEE8021X_EAPOL */
 	for (i = 0; i < 4; i++)
 		write_wep_key(f, i, ssid);
@@ -743,6 +753,14 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(update_identifier);
 #endif /* CONFIG_HS20 */
 	write_int(f, "mac_addr", ssid->mac_addr, -1);
+#ifdef CONFIG_MESH
+	STR(mesh_ht_mode);
+	STR(mesh_basic_rates);
+	INT_DEF(dot11MeshMaxRetries, DEFAULT_MESH_MAX_RETRIES);
+	INT_DEF(dot11MeshRetryTimeout, DEFAULT_MESH_RETRY_TIMEOUT);
+	INT_DEF(dot11MeshConfirmTimeout, DEFAULT_MESH_CONFIRM_TIMEOUT);
+	INT_DEF(dot11MeshHoldingTimeout, DEFAULT_MESH_HOLDING_TIMEOUT);
+#endif /* CONFIG_MESH */
 
 #undef STR
 #undef INT
@@ -938,6 +956,8 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->pkcs11_module_path)
 		fprintf(f, "pkcs11_module_path=%s\n",
 			config->pkcs11_module_path);
+	if (config->openssl_ciphers)
+		fprintf(f, "openssl_ciphers=%s\n", config->openssl_ciphers);
 	if (config->pcsc_reader)
 		fprintf(f, "pcsc_reader=%s\n", config->pcsc_reader);
 	if (config->pcsc_pin)
@@ -1190,6 +1210,15 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 
 	if (config->preassoc_mac_addr)
 		fprintf(f, "preassoc_mac_addr=%d\n", config->preassoc_mac_addr);
+
+	if (config->key_mgmt_offload != DEFAULT_KEY_MGMT_OFFLOAD)
+		fprintf(f, "key_mgmt_offload=%u\n", config->key_mgmt_offload);
+
+	if (config->user_mpm != DEFAULT_USER_MPM)
+		fprintf(f, "user_mpm=%d\n", config->user_mpm);
+
+	if (config->max_peer_links != DEFAULT_MAX_PEER_LINKS)
+		fprintf(f, "max_peer_links=%d\n", config->max_peer_links);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */

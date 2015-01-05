@@ -242,7 +242,8 @@ static int wpa_supplicant_process_smk_m2(
 	peerkey->cipher = cipher;
 #ifdef CONFIG_IEEE80211W
 	if (ie.key_mgmt & (WPA_KEY_MGMT_IEEE8021X_SHA256 |
-			   WPA_KEY_MGMT_PSK_SHA256))
+			   WPA_KEY_MGMT_PSK_SHA256 |
+			   WPA_KEY_MGMT_IEEE8021X_SUITE_B))
 		peerkey->use_sha256 = 1;
 #endif /* CONFIG_IEEE80211W */
 
@@ -927,8 +928,8 @@ int peerkey_verify_eapol_key_mic(struct wpa_sm *sm,
 	os_memcpy(mic, key->key_mic, 16);
 	if (peerkey->tstk_set) {
 		os_memset(key->key_mic, 0, 16);
-		wpa_eapol_key_mic(peerkey->tstk.kck, ver, buf, len,
-				  key->key_mic);
+		wpa_eapol_key_mic(peerkey->tstk.kck, sm->key_mgmt, ver, buf,
+				  len, key->key_mic);
 		if (os_memcmp_const(mic, key->key_mic, 16) != 0) {
 			wpa_printf(MSG_WARNING, "RSN: Invalid EAPOL-Key MIC "
 				   "when using TSTK - ignoring TSTK");
@@ -943,7 +944,7 @@ int peerkey_verify_eapol_key_mic(struct wpa_sm *sm,
 
 	if (!ok && peerkey->stk_set) {
 		os_memset(key->key_mic, 0, 16);
-		wpa_eapol_key_mic(peerkey->stk.kck, ver, buf, len,
+		wpa_eapol_key_mic(peerkey->stk.kck, sm->key_mgmt, ver, buf, len,
 				  key->key_mic);
 		if (os_memcmp_const(mic, key->key_mic, 16) != 0) {
 			wpa_printf(MSG_WARNING, "RSN: Invalid EAPOL-Key MIC "

@@ -329,6 +329,9 @@ static inline void WPA_PUT_LE64(u8 *a, u64 val)
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
 #endif
+#ifndef ETH_HLEN
+#define ETH_HLEN 14
+#endif
 #ifndef IFNAMSIZ
 #define IFNAMSIZ 16
 #endif
@@ -474,6 +477,7 @@ int hex2byte(const char *hex);
 int hexstr2bin(const char *hex, u8 *buf, size_t len);
 void inc_byte_array(u8 *counter, size_t len);
 void wpa_get_ntp_timestamp(u8 *buf);
+int wpa_scnprintf(char *buf, size_t size, const char *fmt, ...);
 int wpa_snprintf_hex(char *buf, size_t buf_size, const u8 *data, size_t len);
 int wpa_snprintf_hex_uppercase(char *buf, size_t buf_size, const u8 *data,
 			       size_t len);
@@ -493,7 +497,6 @@ const char * wpa_ssid_txt(const u8 *ssid, size_t ssid_len);
 
 char * wpa_config_parse_string(const char *value, size_t *len);
 int is_hex(const u8 *data, size_t len);
-int find_first_bit(u32 value);
 size_t merge_byte_arrays(u8 *res, size_t res_len,
 			 const u8 *src1, size_t src1_len,
 			 const u8 *src2, size_t src2_len);
@@ -534,12 +537,13 @@ void int_array_add_unique(int **res, int a);
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
-
 void str_clear_free(char *str);
 void bin_clear_free(void *bin, size_t len);
 
 int random_mac_addr(u8 *addr);
 int random_mac_addr_keep_oui(u8 *addr);
+
+char * str_token(char *str, const char *delim, char **context);
 
 
 /*

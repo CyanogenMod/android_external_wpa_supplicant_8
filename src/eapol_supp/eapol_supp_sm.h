@@ -59,6 +59,8 @@ struct eapol_config {
 	 */
 	int external_sim;
 
+#define EAPOL_LOCAL_WPS_IN_USE BIT(0)
+#define EAPOL_PEER_IS_WPS20_AP BIT(1)
 	/**
 	 * wps - Whether this connection is used for WPS
 	 */
@@ -210,6 +212,15 @@ struct eapol_ctx {
 	const char *pkcs11_module_path;
 
 	/**
+	 * openssl_ciphers - OpenSSL cipher string
+	 *
+	 * This is an OpenSSL specific configuration option for configuring the
+	 * default ciphers. If not set, "DEFAULT:!EXP:!LOW" is used as the
+	 * default.
+	 */
+	const char *openssl_ciphers;
+
+	/**
 	 * wps - WPS context data
 	 *
 	 * This is only used by EAP-WSC and can be left %NULL if not available.
@@ -305,6 +316,7 @@ const char * eapol_sm_get_method_name(struct eapol_sm *sm);
 void eapol_sm_set_ext_pw_ctx(struct eapol_sm *sm,
 			     struct ext_password_data *ext);
 int eapol_sm_failed(struct eapol_sm *sm);
+void eapol_sm_erp_flush(struct eapol_sm *sm);
 int eapol_sm_get_eap_proxy_imsi(struct eapol_sm *sm, char *imsi, size_t *len);
 #else /* IEEE8021X_EAPOL */
 static inline struct eapol_sm *eapol_sm_init(struct eapol_ctx *ctx)
@@ -404,6 +416,9 @@ static inline void eapol_sm_set_ext_pw_ctx(struct eapol_sm *sm,
 static inline int eapol_sm_failed(struct eapol_sm *sm)
 {
 	return 0;
+}
+static inline void eapol_sm_erp_flush(struct eapol_sm *sm)
+{
 }
 #endif /* IEEE8021X_EAPOL */
 

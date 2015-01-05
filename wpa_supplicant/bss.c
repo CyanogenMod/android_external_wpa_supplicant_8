@@ -306,8 +306,9 @@ static int wpa_bss_known(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 static int wpa_bss_in_use(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
 	return bss == wpa_s->current_bss ||
-		os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) == 0 ||
-		os_memcmp(bss->bssid, wpa_s->pending_bssid, ETH_ALEN) == 0;
+		(!is_zero_ether_addr(bss->bssid) &&
+		 (os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) == 0 ||
+		  os_memcmp(bss->bssid, wpa_s->pending_bssid, ETH_ALEN) == 0));
 }
 
 
@@ -620,7 +621,7 @@ void wpa_bss_update_scan_res(struct wpa_supplicant *wpa_s,
 			     struct wpa_scan_res *res,
 			     struct os_reltime *fetch_time)
 {
-	const u8 *ssid, *p2p;
+	const u8 *ssid, *p2p, *mesh;
 	struct wpa_bss *bss;
 
 	if (wpa_s->conf->ignore_old_scan_res) {
@@ -670,6 +671,11 @@ void wpa_bss_update_scan_res(struct wpa_supplicant *wpa_s,
 
 	/* TODO: add option for ignoring BSSes we are not interested in
 	 * (to save memory) */
+
+	mesh = wpa_scan_get_ie(res, WLAN_EID_MESH_ID);
+	if (mesh && mesh[1] <= 32)
+		ssid = mesh;
+
 	bss = wpa_bss_get(wpa_s, res->bssid, ssid + 2, ssid[1]);
 	if (bss == NULL)
 		bss = wpa_bss_add(wpa_s, ssid + 2, ssid[1], res, fetch_time);

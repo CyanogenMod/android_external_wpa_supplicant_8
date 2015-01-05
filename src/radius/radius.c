@@ -233,6 +233,17 @@ static struct radius_attr_type radius_attrs[] =
 	{ RADIUS_ATTR_NAS_IPV6_ADDRESS, "NAS-IPv6-Address", RADIUS_ATTR_IPV6 },
 	{ RADIUS_ATTR_ERROR_CAUSE, "Error-Cause", RADIUS_ATTR_INT32 },
 	{ RADIUS_ATTR_EAP_KEY_NAME, "EAP-Key-Name", RADIUS_ATTR_HEXDUMP },
+	{ RADIUS_ATTR_OPERATOR_NAME, "Operator-Name", RADIUS_ATTR_TEXT },
+	{ RADIUS_ATTR_LOCATION_INFO, "Location-Information",
+	  RADIUS_ATTR_HEXDUMP },
+	{ RADIUS_ATTR_LOCATION_DATA, "Location-Data", RADIUS_ATTR_HEXDUMP },
+	{ RADIUS_ATTR_BASIC_LOCATION_POLICY_RULES,
+	  "Basic-Location-Policy-Rules", RADIUS_ATTR_HEXDUMP },
+	{ RADIUS_ATTR_EXTENDED_LOCATION_POLICY_RULES,
+	  "Extended-Location-Policy-Rules", RADIUS_ATTR_HEXDUMP },
+	{ RADIUS_ATTR_LOCATION_CAPABLE, "Location-Capable", RADIUS_ATTR_INT32 },
+	{ RADIUS_ATTR_REQUESTED_LOCATION_INFO, "Requested-Location-Info",
+	  RADIUS_ATTR_INT32 },
 	{ RADIUS_ATTR_MOBILITY_DOMAIN_ID, "Mobility-Domain-Id",
 	  RADIUS_ATTR_INT32 },
 	{ RADIUS_ATTR_WLAN_HESSID, "WLAN-HESSID", RADIUS_ATTR_TEXT },
@@ -945,7 +956,6 @@ static u8 *radius_msg_get_vendor_attr(struct radius_msg *msg, u32 vendor,
 			vhdr = (struct radius_attr_vendor *) pos;
 			if (vhdr->vendor_length > left ||
 			    vhdr->vendor_length < sizeof(*vhdr)) {
-				left = 0;
 				break;
 			}
 			if (vhdr->vendor_type != subtype) {

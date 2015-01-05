@@ -286,7 +286,9 @@ static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
 		/* compare security parameters */
 		if (ssid->auth_alg != new_ssid->auth_alg ||
 		    ssid->key_mgmt != new_ssid->key_mgmt ||
-		    ssid->group_cipher != new_ssid->group_cipher)
+		    (ssid->group_cipher != new_ssid->group_cipher &&
+		     !(ssid->group_cipher & new_ssid->group_cipher &
+		       WPA_CIPHER_CCMP)))
 			continue;
 
 		/*
@@ -337,6 +339,8 @@ static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
 		/* Remove the duplicated older network entry. */
 		wpa_printf(MSG_DEBUG, "Remove duplicate network %d", ssid->id);
 		wpas_notify_network_removed(wpa_s, ssid);
+		if (wpa_s->current_ssid == ssid)
+			wpa_s->current_ssid = NULL;
 		wpa_config_remove_network(wpa_s->conf, ssid->id);
 	}
 }
@@ -471,6 +475,11 @@ static int wpa_supplicant_wps_cred(void *ctx,
 		break;
 	case WPS_ENCR_AES:
 		ssid->pairwise_cipher = WPA_CIPHER_CCMP;
+		if (wpa_s->drv_capa_known &&
+		    (wpa_s->drv_enc & WPA_DRIVER_CAPA_ENC_GCMP)) {
+			ssid->pairwise_cipher |= WPA_CIPHER_GCMP;
+			ssid->group_cipher |= WPA_CIPHER_GCMP;
+		}
 		break;
 	}
 
@@ -1082,6 +1091,14 @@ int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		       int p2p_group)
 {
 	struct wpa_ssid *ssid;
+
+#ifdef CONFIG_AP
+	if (wpa_s->ap_iface) {
+		wpa_printf(MSG_DEBUG,
+			   "WPS: Reject request to start Registrar(as station) operation while AP mode is enabled");
+		return -1;
+	}
+#endif /* CONFIG_AP */
 	wpas_clear_wps(wpa_s);
 	ssid = wpas_wps_add_network(wpa_s, 0, NULL, bssid);
 	if (ssid == NULL)
@@ -1122,6 +1139,13 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 	unsigned int rpin = 0;
 	char hash[2 * WPS_OOB_PUBKEY_HASH_LEN + 10];
 
+#ifdef CONFIG_AP
+	if (wpa_s->ap_iface) {
+		wpa_printf(MSG_DEBUG,
+			   "WPS: Reject request to start Registrar(as station) operation while AP mode is enabled");
+		return -1;
+	}
+#endif /* CONFIG_AP */
 	wpas_clear_wps(wpa_s);
 	if (bssid && is_zero_ether_addr(bssid))
 		bssid = NULL;
@@ -1235,6 +1259,13 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 	char *pos, *end;
 	int res;
 
+#ifdef CONFIG_AP
+	if (wpa_s->ap_iface) {
+		wpa_printf(MSG_DEBUG,
+			   "WPS: Reject request to start Registrar(as station) operation while AP mode is enabled");
+		return -1;
+	}
+#endif /* CONFIG_AP */
 	if (!pin)
 		return -1;
 	wpas_clear_wps(wpa_s);
@@ -1245,7 +1276,7 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 	pos = val;
 	end = pos + sizeof(val);
 	res = os_snprintf(pos, end - pos, "\"pin=%s", pin);
-	if (res < 0 || res >= end - pos)
+	if (os_snprintf_error(end - pos, res))
 		return -1;
 	pos += res;
 	if (settings) {
@@ -1253,12 +1284,12 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 				  "new_encr=%s new_key=%s",
 				  settings->ssid_hex, settings->auth,
 				  settings->encr, settings->key_hex);
-		if (res < 0 || res >= end - pos)
+		if (os_snprintf_error(end - pos, res))
 			return -1;
 		pos += res;
 	}
 	res = os_snprintf(pos, end - pos, "\"");
-	if (res < 0 || res >= end - pos)
+	if (os_snprintf_error(end - pos, res))
 		return -1;
 	if (wpa_config_set(ssid, "phase1", val, 0) < 0)
 		return -1;
@@ -1309,7 +1340,7 @@ static void wpas_wps_pin_needed_cb(void *ctx, const u8 *uuid_e,
 			  dev->model_number, dev->serial_number,
 			  wps_dev_type_bin2str(dev->pri_dev_type, devtype,
 					       sizeof(devtype)));
-	if (len > 0 && len < (int) sizeof(txt))
+	if (!os_snprintf_error(sizeof(txt), len))
 		wpa_printf(MSG_INFO, "%s", txt);
 }
 
@@ -1697,6 +1728,10 @@ int wpas_wps_scan_pbc_overlap(struct wpa_supplicant *wpa_s,
 		uuid = wps_get_uuid_e(ie);
 		wpa_hexdump(MSG_DEBUG, "WPS: UUID of the other BSS",
 			    uuid, UUID_LEN);
+		if (os_memcmp(selected->bssid, bss->bssid, ETH_ALEN) == 0) {
+			wpabuf_free(ie);
+			continue;
+		}
 		if (sel_uuid == NULL || uuid == NULL ||
 		    os_memcmp(sel_uuid, uuid, UUID_LEN) != 0) {
 			ret = 1; /* PBC overlap */
@@ -1800,13 +1835,12 @@ int wpas_wps_er_start(struct wpa_supplicant *wpa_s, const char *filter)
 }
 
 
-int wpas_wps_er_stop(struct wpa_supplicant *wpa_s)
+void wpas_wps_er_stop(struct wpa_supplicant *wpa_s)
 {
 #ifdef CONFIG_WPS_ER
 	wps_er_deinit(wpa_s->wps_er, NULL, NULL);
 	wpa_s->wps_er = NULL;
 #endif /* CONFIG_WPS_ER */
-	return 0;
 }
 
 
@@ -1907,6 +1941,7 @@ int wpas_wps_er_set_config(struct wpa_supplicant *wpa_s, const char *uuid,
 	u8 addr[ETH_ALEN], *use_addr = NULL;
 	struct wpa_ssid *ssid;
 	struct wps_credential cred;
+	int ret;
 
 	if (uuid_str2bin(uuid, u) == 0)
 		use_uuid = u;
@@ -1920,7 +1955,9 @@ int wpas_wps_er_set_config(struct wpa_supplicant *wpa_s, const char *uuid,
 
 	if (wpas_wps_network_to_cred(ssid, &cred) < 0)
 		return -1;
-	return wps_er_set_config(wpa_s->wps_er, use_uuid, use_addr, &cred);
+	ret = wps_er_set_config(wpa_s->wps_er, use_uuid, use_addr, &cred);
+	os_memset(&cred, 0, sizeof(cred));
+	return ret;
 }
 
 

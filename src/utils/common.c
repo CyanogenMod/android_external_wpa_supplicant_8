@@ -183,6 +183,35 @@ void wpa_get_ntp_timestamp(u8 *buf)
 	os_memcpy(buf + 4, (u8 *) &tmp, 4);
 }
 
+/**
+ * wpa_scnprintf - Simpler-to-use snprintf function
+ * @buf: Output buffer
+ * @size: Buffer size
+ * @fmt: format
+ *
+ * Simpler snprintf version that doesn't require further error checks - the
+ * return value only indicates how many bytes were actually written, excluding
+ * the NULL byte (i.e., 0 on error, size-1 if buffer is not big enough).
+ */
+int wpa_scnprintf(char *buf, size_t size, const char *fmt, ...)
+{
+	va_list ap;
+	int ret;
+
+	if (!size)
+		return 0;
+
+	va_start(ap, fmt);
+	ret = vsnprintf(buf, size, fmt, ap);
+	va_end(ap);
+
+	if (ret < 0)
+		return 0;
+	if ((size_t) ret >= size)
+		return size - 1;
+
+	return ret;
+}
 
 static inline int _wpa_snprintf_hex(char *buf, size_t buf_size, const u8 *data,
 				    size_t len, int uppercase)
@@ -195,7 +224,7 @@ static inline int _wpa_snprintf_hex(char *buf, size_t buf_size, const u8 *data,
 	for (i = 0; i < len; i++) {
 		ret = os_snprintf(pos, end - pos, uppercase ? "%02X" : "%02x",
 				  data[i]);
-		if (ret < 0 || ret >= end - pos) {
+		if (os_snprintf_error(end - pos, ret)) {
 			end[-1] = '\0';
 			return pos - buf;
 		}
@@ -578,21 +607,6 @@ int is_hex(const u8 *data, size_t len)
 }
 
 
-int find_first_bit(u32 value)
-{
-	int pos = 0;
-
-	while (value) {
-		if (value & 0x1)
-			return pos;
-		value >>= 1;
-		pos++;
-	}
-
-	return -1;
-}
-
-
 size_t merge_byte_arrays(u8 *res, size_t res_len,
 			 const u8 *src1, size_t src1_len,
 			 const u8 *src2, size_t src2_len)
@@ -726,7 +740,7 @@ char * freq_range_list_str(const struct wpa_freq_range_list *list)
 			res = os_snprintf(pos, end - pos, "%s%u-%u",
 					  i == 0 ? "" : ",",
 					  range->min, range->max);
-		if (res < 0 || res > end - pos) {
+		if (os_snprintf_error(end - pos, res)) {
 			os_free(buf);
 			return NULL;
 		}
@@ -865,4 +879,36 @@ int random_mac_addr_keep_oui(u8 *addr)
 	addr[0] &= 0xfe; /* unicast */
 	addr[0] |= 0x02; /* locally administered */
 	return 0;
+}
+
+
+/**
+ * str_token - Get next token from a string
+ * @buf: String to tokenize. Note that the string might be modified.
+ * @delim: String of delimiters
+ * @context: Pointer to save our context. Should be initialized with
+ *	NULL on the first call, and passed for any further call.
+ * Returns: The next token, NULL if there are no more valid tokens.
+ */
+char * str_token(char *str, const char *delim, char **context)
+{
+	char *end, *pos = str;
+
+	if (*context)
+		pos = *context;
+
+	while (*pos && os_strchr(delim, *pos))
+		pos++;
+	if (!*pos)
+		return NULL;
+
+	end = pos + 1;
+	while (*end && !os_strchr(delim, *end))
+		end++;
+
+	if (*end)
+		*end++ = '\0';
+
+	*context = end;
+	return pos;
 }

@@ -213,6 +213,9 @@ struct wpa_auth_callbacks {
 	int (*add_tspec)(void *ctx, const u8 *sta_addr, u8 *tspec_ie,
 			 size_t tspec_ielen);
 #endif /* CONFIG_IEEE80211R */
+#ifdef CONFIG_MESH
+	int (*start_ampe)(void *ctx, const u8 *sta_addr);
+#endif /* CONFIG_MESH */
 };
 
 struct wpa_authenticator * wpa_init(const u8 *addr,
@@ -276,6 +279,8 @@ int wpa_auth_pmksa_add_preauth(struct wpa_authenticator *wpa_auth,
 			       const u8 *pmk, size_t len, const u8 *sta_addr,
 			       int session_timeout,
 			       struct eapol_state_machine *eapol);
+int wpa_auth_pmksa_add_sae(struct wpa_authenticator *wpa_auth, const u8 *addr,
+			   const u8 *pmk);
 void wpa_auth_pmksa_remove(struct wpa_authenticator *wpa_auth,
 			   const u8 *sta_addr);
 int wpa_auth_sta_set_vlan(struct wpa_state_machine *sm, int vlan_id);
