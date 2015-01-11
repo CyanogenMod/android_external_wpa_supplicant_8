@@ -586,7 +586,9 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 
 	if (priv->sock > -1) {
 		char *fname;
+#ifndef ANDROID
 		char *buf, *dir = NULL;
+#endif
 		eloop_unregister_read_sock(priv->sock);
 		if (!dl_list_empty(&priv->ctrl_dst)) {
 			/*
@@ -606,6 +608,7 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 			os_free(fname);
 		}
 
+#ifndef ANDROID
 		if (priv->wpa_s->conf->ctrl_interface == NULL)
 			goto free_dst;
 		buf = os_strdup(priv->wpa_s->conf->ctrl_interface);
@@ -632,9 +635,12 @@ void wpa_supplicant_ctrl_iface_deinit(struct ctrl_iface_priv *priv)
 			}
 		}
 		os_free(buf);
+#endif
 	}
 
+#ifndef ANDROID
 free_dst:
+#endif
 	dl_list_for_each_safe(dst, prev, &priv->ctrl_dst, struct wpa_ctrl_dst,
 			      list)
 		os_free(dst);

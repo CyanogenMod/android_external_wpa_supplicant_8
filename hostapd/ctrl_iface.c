@@ -1761,6 +1761,7 @@ void hostapd_ctrl_iface_deinit(struct hostapd_data *hapd)
 			unlink(fname);
 		os_free(fname);
 
+#ifndef ANDROID
 		if (hapd->conf->ctrl_interface &&
 		    rmdir(hapd->conf->ctrl_interface) < 0) {
 			if (errno == ENOTEMPTY) {
@@ -1774,6 +1775,7 @@ void hostapd_ctrl_iface_deinit(struct hostapd_data *hapd)
 					   strerror(errno));
 			}
 		}
+#endif
 	}
 
 	dst = hapd->ctrl_dst;
