@@ -134,6 +134,7 @@ OBJS += src/utils/ip_addr.c
 
 OBJS += src/common/ieee802_11_common.c
 OBJS += src/common/wpa_common.c
+OBJS += src/common/hw_features_common.c
 
 OBJS += src/eapol_auth/eapol_auth_sm.c
 
@@ -562,22 +563,6 @@ OBJS += src/crypto/crypto_cryptoapi.c
 OBJS_p += src/crypto/crypto_cryptoapi.c
 CONFIG_INTERNAL_SHA256=y
 CONFIG_INTERNAL_RC4=y
-CONFIG_INTERNAL_DH_GROUP5=y
-endif
-
-ifeq ($(CONFIG_TLS), nss)
-ifdef TLS_FUNCS
-OBJS += src/crypto/tls_nss.c
-LIBS += -lssl3
-endif
-OBJS += src/crypto/crypto_nss.c
-ifdef NEED_FIPS186_2_PRF
-OBJS += src/crypto/fips_prf_internal.c
-OBJS += src/crypto/sha1-internal.c
-endif
-LIBS += -lnss3
-LIBS_h += -lnss3
-CONFIG_INTERNAL_MD4=y
 CONFIG_INTERNAL_DH_GROUP5=y
 endif
 

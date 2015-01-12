@@ -698,6 +698,33 @@ static int bss_is_ess(struct wpa_bss *bss)
 }
 
 
+static int match_mac_mask(const u8 *addr_a, const u8 *addr_b, const u8 *mask)
+{
+	size_t i;
+
+	for (i = 0; i < ETH_ALEN; i++) {
+		if ((addr_a[i] & mask[i]) != (addr_b[i] & mask[i]))
+			return 0;
+	}
+	return 1;
+}
+
+
+static int addr_in_list(const u8 *addr, const u8 *list, size_t num)
+{
+	size_t i;
+
+	for (i = 0; i < num; i++) {
+		const u8 *a = list + i * ETH_ALEN * 2;
+		const u8 *m = a + ETH_ALEN;
+
+		if (match_mac_mask(a, addr, m))
+			return 1;
+	}
+	return 0;
+}
+
+
 static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 					    int i, struct wpa_bss *bss,
 					    struct wpa_ssid *group,
@@ -819,6 +846,24 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 		if (ssid->bssid_set &&
 		    os_memcmp(bss->bssid, ssid->bssid, ETH_ALEN) != 0) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - BSSID mismatch");
+			continue;
+		}
+
+		/* check blacklist */
+		if (ssid->num_bssid_blacklist &&
+		    addr_in_list(bss->bssid, ssid->bssid_blacklist,
+				 ssid->num_bssid_blacklist)) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"   skip - BSSID blacklisted");
+			continue;
+		}
+
+		/* if there is a whitelist, only accept those APs */
+		if (ssid->num_bssid_whitelist &&
+		    !addr_in_list(bss->bssid, ssid->bssid_whitelist,
+				  ssid->num_bssid_whitelist)) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"   skip - BSSID not in whitelist");
 			continue;
 		}
 
@@ -3383,6 +3428,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			if (!wpa_s->ap_iface) {
 				wpa_supplicant_set_state(wpa_s,
 							 WPA_DISCONNECTED);
+				wpa_s->scan_req = NORMAL_SCAN_REQ;
 				wpa_supplicant_req_scan(wpa_s, 0, 0);
 			} else
 				wpa_supplicant_set_state(wpa_s,
@@ -3400,11 +3446,24 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		    (wpa_s->current_ssid && wpa_s->current_ssid->p2p_group &&
 		     wpa_s->current_ssid->mode == WPAS_MODE_P2P_GO)) {
 			/*
+			 * Mark interface disabled if this happens to end up not
+			 * being removed as a separate P2P group interface.
+			 */
+			wpa_supplicant_set_state(wpa_s, WPA_INTERFACE_DISABLED);
+			/*
 			 * The interface was externally disabled. Remove
 			 * it assuming an external entity will start a
 			 * new session if needed.
 			 */
-			wpas_p2p_disconnect(wpa_s);
+			if (wpa_s->current_ssid &&
+			    wpa_s->current_ssid->p2p_group)
+				wpas_p2p_interface_unavailable(wpa_s);
+			else
+				wpas_p2p_disconnect(wpa_s);
+			/*
+			 * wpa_s instance may have been freed, so must not use
+			 * it here anymore.
+			 */
 			break;
 		}
 		if (wpa_s->p2p_scan_work && wpa_s->global->p2p &&

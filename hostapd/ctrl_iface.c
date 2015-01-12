@@ -23,6 +23,7 @@
 #include "utils/eloop.h"
 #include "common/version.h"
 #include "common/ieee802_11_defs.h"
+#include "crypto/tls.h"
 #include "drivers/driver.h"
 #include "radius/radius_client.h"
 #include "radius/radius_server.h"
@@ -1326,6 +1327,11 @@ static int hostapd_ctrl_iface_get(struct hostapd_data *hapd, char *cmd,
 		if (os_snprintf_error(buflen, res))
 			return -1;
 		return res;
+	} else if (os_strcmp(cmd, "tls_library") == 0) {
+		res = tls_get_library_version(buf, buflen);
+		if (os_snprintf_error(buflen, res))
+			return -1;
+		return res;
 	}
 
 	return -1;
@@ -1692,6 +1698,45 @@ done:
 	return res < 0 ? -1 : 0;
 }
 
+
+static int hostapd_ctrl_test_alloc_fail(struct hostapd_data *hapd, char *cmd)
+{
+#ifdef WPA_TRACE_BFD
+	extern char wpa_trace_fail_func[256];
+	extern unsigned int wpa_trace_fail_after;
+	char *pos;
+
+	wpa_trace_fail_after = atoi(cmd);
+	pos = os_strchr(cmd, ':');
+	if (pos) {
+		pos++;
+		os_strlcpy(wpa_trace_fail_func, pos,
+			   sizeof(wpa_trace_fail_func));
+	} else {
+		wpa_trace_fail_after = 0;
+	}
+
+	return 0;
+#else /* WPA_TRACE_BFD */
+	return -1;
+#endif /* WPA_TRACE_BFD */
+}
+
+
+static int hostapd_ctrl_get_alloc_fail(struct hostapd_data *hapd,
+				       char *buf, size_t buflen)
+{
+#ifdef WPA_TRACE_BFD
+	extern char wpa_trace_fail_func[256];
+	extern unsigned int wpa_trace_fail_after;
+
+	return os_snprintf(buf, buflen, "%u:%s", wpa_trace_fail_after,
+			   wpa_trace_fail_func);
+#else /* WPA_TRACE_BFD */
+	return -1;
+#endif /* WPA_TRACE_BFD */
+}
+
 #endif /* CONFIG_TESTING_OPTIONS */
 
 
@@ -2013,6 +2058,12 @@ static void hostapd_ctrl_iface_receive(int sock, void *eloop_ctx,
 	} else if (os_strncmp(buf, "DATA_TEST_FRAME ", 16) == 0) {
 		if (hostapd_ctrl_iface_data_test_frame(hapd, buf + 16) < 0)
 			reply_len = -1;
+	} else if (os_strncmp(buf, "TEST_ALLOC_FAIL ", 16) == 0) {
+		if (hostapd_ctrl_test_alloc_fail(hapd, buf + 16) < 0)
+			reply_len = -1;
+	} else if (os_strcmp(buf, "GET_ALLOC_FAIL") == 0) {
+		reply_len = hostapd_ctrl_get_alloc_fail(hapd, reply,
+							reply_size);
 #endif /* CONFIG_TESTING_OPTIONS */
 	} else if (os_strncmp(buf, "CHAN_SWITCH ", 12) == 0) {
 		if (hostapd_ctrl_iface_chan_switch(hapd->iface, buf + 12))
@@ -2206,8 +2257,11 @@ int hostapd_ctrl_iface_init(struct hostapd_data *hapd)
 	os_free(fname);
 
 	hapd->ctrl_sock = s;
-	eloop_register_read_sock(s, hostapd_ctrl_iface_receive, hapd,
-				 NULL);
+	if (eloop_register_read_sock(s, hostapd_ctrl_iface_receive, hapd,
+				     NULL) < 0) {
+		hostapd_ctrl_iface_deinit(hapd);
+		return -1;
+	}
 	hapd->msg_ctx = hapd;
 	wpa_msg_register_cb(hostapd_ctrl_iface_msg_cb);
 
@@ -2254,6 +2308,7 @@ void hostapd_ctrl_iface_deinit(struct hostapd_data *hapd)
 	}
 
 	dst = hapd->ctrl_dst;
+	hapd->ctrl_dst = NULL;
 	while (dst) {
 		prev = dst;
 		dst = dst->next;

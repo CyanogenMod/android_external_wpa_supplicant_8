@@ -27,7 +27,6 @@
 #define DEFAULT_FRAGMENT_SIZE 1398
 
 #define DEFAULT_BG_SCAN_PERIOD -1
-#define DEFAULT_MESH_HT_MODE CHAN_UNDEFINED /* undefined */
 #define DEFAULT_MESH_MAX_RETRIES 2
 #define DEFAULT_MESH_RETRY_TIMEOUT 40
 #define DEFAULT_MESH_CONFIRM_TIMEOUT 40
@@ -131,6 +130,18 @@ struct wpa_ssid {
 	 * Device Address.
 	 */
 	u8 bssid[ETH_ALEN];
+
+	/**
+	 * bssid_blacklist - List of inacceptable BSSIDs
+	 */
+	u8 *bssid_blacklist;
+	size_t num_bssid_blacklist;
+
+	/**
+	 * bssid_blacklist - List of acceptable BSSIDs
+	 */
+	u8 *bssid_whitelist;
+	size_t num_bssid_whitelist;
 
 	/**
 	 * bssid_set - Whether BSSID is configured for this network
@@ -407,15 +418,6 @@ struct wpa_ssid {
 	 * will be used instead of this configured value.
 	 */
 	int frequency;
-
-	/**
-	 * mesh_ht_mode - definition of HT mode in mesh mode
-	 *
-	 * Use the given HT mode for mesh networks. The driver will
-	 * adapt to other stations if neccesary, but advertise the
-	 * configured HT mode (HT20/HT40-/HT40+/NOHT).
-	 */
-	int mesh_ht_mode;
 
 	/**
 	 * mesh_basic_rates - BSS Basic rate set for mesh network

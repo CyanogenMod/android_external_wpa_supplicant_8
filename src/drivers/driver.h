@@ -198,7 +198,6 @@ struct hostapd_hw_modes {
 #define WPA_SCAN_NOISE_INVALID		BIT(1)
 #define WPA_SCAN_LEVEL_INVALID		BIT(2)
 #define WPA_SCAN_LEVEL_DBM		BIT(3)
-#define WPA_SCAN_AUTHENTICATED		BIT(4)
 #define WPA_SCAN_ASSOCIATED		BIT(5)
 
 /**
@@ -1049,10 +1048,9 @@ struct wpa_driver_mesh_join_params {
 	const int *basic_rates;
 	const u8 *ies;
 	int ie_len;
-	int freq;
+	struct hostapd_freq_params freq;
 	int beacon_int;
 	int max_peer_links;
-	enum ht_mode ht_mode;
 	struct wpa_driver_mesh_bss_params conf;
 #define WPA_DRIVER_MESH_FLAG_USER_MPM	0x00000001
 #define WPA_DRIVER_MESH_FLAG_DRIVER_MPM	0x00000002
@@ -1183,6 +1181,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_KEY_MGMT_OFFLOAD	0x0000000400000000ULL
 /** Driver supports TDLS channel switching */
 #define WPA_DRIVER_FLAGS_TDLS_CHANNEL_SWITCH	0x0000000800000000ULL
+/** Driver supports IBSS with HT datarates */
+#define WPA_DRIVER_FLAGS_HT_IBSS		0x0000001000000000ULL
 	u64 flags;
 
 #define WPA_DRIVER_SMPS_MODE_STATIC			0x00000001

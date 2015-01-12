@@ -292,13 +292,13 @@ static DBusHandlerResult wpas_iface_message_handler(DBusConnection *connection,
 	}
 
 	/* If the message was handled, send back the reply */
+out:
 	if (reply) {
 		if (!dbus_message_get_no_reply(message))
 			dbus_connection_send(connection, reply, NULL);
 		dbus_message_unref(reply);
 	}
 
-out:
 	os_free(iface_obj_path);
 	os_free(network);
 	os_free(bssid);
@@ -712,7 +712,7 @@ int wpas_dbus_unregister_iface(struct wpa_supplicant *wpa_s)
 	if (wpa_s == NULL || wpa_s->global == NULL)
 		return 0;
 	ctrl_iface = wpa_s->global->dbus;
-	if (ctrl_iface == NULL)
+	if (ctrl_iface == NULL || wpa_s->dbus_path == NULL)
 		return 0;
 
 	con = ctrl_iface->con;
