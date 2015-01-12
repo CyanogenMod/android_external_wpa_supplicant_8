@@ -115,6 +115,7 @@ OBJS += ../src/utils/ip_addr.o
 
 OBJS += ../src/common/ieee802_11_common.o
 OBJS += ../src/common/wpa_common.o
+OBJS += ../src/common/hw_features_common.o
 
 OBJS += ../src/eapol_auth/eapol_auth_sm.o
 
@@ -559,22 +560,6 @@ CONFIG_INTERNAL_RC4=y
 CONFIG_INTERNAL_DH_GROUP5=y
 endif
 
-ifeq ($(CONFIG_TLS), nss)
-ifdef TLS_FUNCS
-OBJS += ../src/crypto/tls_nss.o
-LIBS += -lssl3
-endif
-OBJS += ../src/crypto/crypto_nss.o
-ifdef NEED_FIPS186_2_PRF
-OBJS += ../src/crypto/fips_prf_internal.o
-SHA1OBJS += ../src/crypto/sha1-internal.o
-endif
-LIBS += -lnss3
-LIBS_h += -lnss3
-CONFIG_INTERNAL_MD4=y
-CONFIG_INTERNAL_DH_GROUP5=y
-endif
-
 ifeq ($(CONFIG_TLS), internal)
 ifndef CONFIG_CRYPTO
 CONFIG_CRYPTO=internal
@@ -962,6 +947,7 @@ hostapd_cli: $(OBJS_c)
 	@$(E) "  LD " $@
 
 NOBJS = nt_password_hash.o ../src/crypto/ms_funcs.o $(SHA1OBJS) ../src/crypto/md5.o
+NOBJS += ../src/utils/common.o
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
 NOBJS += ../src/crypto/rc4.o

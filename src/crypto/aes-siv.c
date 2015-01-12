@@ -11,6 +11,7 @@
 #include "common.h"
 #include "aes.h"
 #include "aes_wrap.h"
+#include "aes_siv.h"
 
 
 static const u8 zero[AES_BLOCK_SIZE];
@@ -60,8 +61,8 @@ static void pad_block(u8 *pad, const u8 *addr, size_t len)
 }
 
 
-int aes_s2v(const u8 *key, size_t num_elem, const u8 *addr[],
-	    size_t *len, u8 *mac)
+static int aes_s2v(const u8 *key, size_t num_elem, const u8 *addr[],
+		   size_t *len, u8 *mac)
 {
 	u8 tmp[AES_BLOCK_SIZE], tmp2[AES_BLOCK_SIZE];
 	u8 *buf = NULL;
@@ -94,7 +95,7 @@ int aes_s2v(const u8 *key, size_t num_elem, const u8 *addr[],
 		os_memcpy(buf, addr[i], len[i]);
 		xorend(buf, len[i], tmp, AES_BLOCK_SIZE);
 		ret = omac1_aes_128(key, buf, len[i], mac);
-		os_free(buf);
+		bin_clear_free(buf, len[i]);
 		return ret;
 	}
 

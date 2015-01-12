@@ -164,6 +164,7 @@ static inline unsigned int wpa_swap_32(unsigned int v)
 #define be_to_host16(n) wpa_swap_16(n)
 #define host_to_be16(n) wpa_swap_16(n)
 #define le_to_host32(n) (n)
+#define host_to_le32(n) (n)
 #define be_to_host32(n) wpa_swap_32(n)
 #define host_to_be32(n) wpa_swap_32(n)
 
@@ -471,6 +472,7 @@ typedef u64 __bitwise le64;
 #endif /* __must_check */
 
 int hwaddr_aton(const char *txt, u8 *addr);
+int hwaddr_masked_aton(const char *txt, u8 *addr, u8 *mask, u8 maskable);
 int hwaddr_compact_aton(const char *txt, u8 *addr);
 int hwaddr_aton2(const char *txt, u8 *addr);
 int hex2byte(const char *hex);
@@ -481,6 +483,8 @@ int wpa_scnprintf(char *buf, size_t size, const char *fmt, ...);
 int wpa_snprintf_hex(char *buf, size_t buf_size, const u8 *data, size_t len);
 int wpa_snprintf_hex_uppercase(char *buf, size_t buf_size, const u8 *data,
 			       size_t len);
+
+int hwaddr_mask_txt(char *buf, size_t len, const u8 *addr, const u8 *mask);
 
 #ifdef CONFIG_NATIVE_WINDOWS
 void wpa_unicode2ascii_inplace(TCHAR *str);

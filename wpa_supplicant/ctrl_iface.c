@@ -19,6 +19,7 @@
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "common/wpa_ctrl.h"
+#include "crypto/tls.h"
 #include "ap/hostapd.h"
 #include "eap_peer/eap.h"
 #include "eapol_supp/eapol_supp_sm.h"
@@ -493,6 +494,8 @@ static int wpa_supplicant_ctrl_iface_get(struct wpa_supplicant *wpa_s,
 				       wpa_s->last_gtk_len);
 		return res;
 #endif /* CONFIG_TESTING_GET_GTK */
+	} else if (os_strcmp(cmd, "tls_library") == 0) {
+		res = tls_get_library_version(buf, buflen);
 	}
 
 	if (os_snprintf_error(buflen, res))
@@ -3496,7 +3499,8 @@ static int ctrl_iface_get_capability_proto(int res, char *strict,
 }
 
 
-static int ctrl_iface_get_capability_auth_alg(int res, char *strict,
+static int ctrl_iface_get_capability_auth_alg(struct wpa_supplicant *wpa_s,
+					      int res, char *strict,
 					      struct wpa_driver_capa *capa,
 					      char *buf, size_t buflen)
 {
@@ -3540,6 +3544,16 @@ static int ctrl_iface_get_capability_auth_alg(int res, char *strict,
 		pos += ret;
 	}
 
+#ifdef CONFIG_SAE
+	if (wpa_s->drv_flags & WPA_DRIVER_FLAGS_SAE) {
+		ret = os_snprintf(pos, end - pos, "%sSAE",
+				  pos == buf ? "" : " ");
+		if (os_snprintf_error(end - pos, ret))
+			return pos - buf;
+		pos += ret;
+	}
+#endif /* CONFIG_SAE */
+
 	return pos - buf;
 }
 
@@ -3579,6 +3593,16 @@ static int ctrl_iface_get_capability_modes(int res, char *strict,
 			return pos - buf;
 		pos += ret;
 	}
+
+#ifdef CONFIG_MESH
+	if (capa->flags & WPA_DRIVER_FLAGS_MESH) {
+		ret = os_snprintf(pos, end - pos, "%sMESH",
+				  pos == buf ? "" : " ");
+		if (os_snprintf_error(end - pos, ret))
+			return pos - buf;
+		pos += ret;
+	}
+#endif /* CONFIG_MESH */
 
 	return pos - buf;
 }
@@ -3738,8 +3762,8 @@ static int wpa_supplicant_ctrl_iface_get_capability(
 						       buf, buflen);
 
 	if (os_strcmp(field, "auth_alg") == 0)
-		return ctrl_iface_get_capability_auth_alg(res, strict, &capa,
-							  buf, buflen);
+		return ctrl_iface_get_capability_auth_alg(wpa_s, res, strict,
+							  &capa, buf, buflen);
 
 	if (os_strcmp(field, "modes") == 0)
 		return ctrl_iface_get_capability_modes(res, strict, &capa,
@@ -6859,6 +6883,44 @@ done:
 	return res < 0 ? -1 : 0;
 }
 
+
+static int wpas_ctrl_test_alloc_fail(struct wpa_supplicant *wpa_s, char *cmd)
+{
+#ifdef WPA_TRACE_BFD
+	extern char wpa_trace_fail_func[256];
+	extern unsigned int wpa_trace_fail_after;
+	char *pos;
+
+	wpa_trace_fail_after = atoi(cmd);
+	pos = os_strchr(cmd, ':');
+	if (pos) {
+		pos++;
+		os_strlcpy(wpa_trace_fail_func, pos,
+			   sizeof(wpa_trace_fail_func));
+	} else {
+		wpa_trace_fail_after = 0;
+	}
+	return 0;
+#else /* WPA_TRACE_BFD */
+	return -1;
+#endif /* WPA_TRACE_BFD */
+}
+
+
+static int wpas_ctrl_get_alloc_fail(struct wpa_supplicant *wpa_s,
+				    char *buf, size_t buflen)
+{
+#ifdef WPA_TRACE_BFD
+	extern char wpa_trace_fail_func[256];
+	extern unsigned int wpa_trace_fail_after;
+
+	return os_snprintf(buf, buflen, "%u:%s", wpa_trace_fail_after,
+			   wpa_trace_fail_func);
+#else /* WPA_TRACE_BFD */
+	return -1;
+#endif /* WPA_TRACE_BFD */
+}
+
 #endif /* CONFIG_TESTING_OPTIONS */
 
 
@@ -7841,6 +7903,11 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "DATA_TEST_FRAME ", 16) == 0) {
 		if (wpas_ctrl_iface_data_test_frame(wpa_s, buf + 16) < 0)
 			reply_len = -1;
+	} else if (os_strncmp(buf, "TEST_ALLOC_FAIL ", 16) == 0) {
+		if (wpas_ctrl_test_alloc_fail(wpa_s, buf + 16) < 0)
+			reply_len = -1;
+	} else if (os_strcmp(buf, "GET_ALLOC_FAIL") == 0) {
+		reply_len = wpas_ctrl_get_alloc_fail(wpa_s, reply, reply_size);
 #endif /* CONFIG_TESTING_OPTIONS */
 	} else if (os_strncmp(buf, "VENDOR_ELEM_ADD ", 16) == 0) {
 		if (wpas_ctrl_vendor_elem_add(wpa_s, buf + 16) < 0)
