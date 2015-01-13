@@ -1920,6 +1920,23 @@ static void mlme_event_unprot_disconnect(struct wpa_driver_nl80211_data *drv,
 		event.unprot_deauth.reason_code = reason_code;
 	}
 
+#ifdef ANDROID
+	/*
+	 * The driver uses one of the reason codes to indicate that the
+	 * firmware has crashed. This event trigger reloading of the
+	 * driver to recover.
+	 *
+	 */
+	if (is_zero_ether_addr(mgmt->sa) &&
+			is_zero_ether_addr(mgmt->da) &&
+			(reason_code == WLAN_REASON_DISASSOC_LOW_ACK)) {
+		wpa_printf(MSG_ERROR, "nl80211: restarting the driver");
+		wpa_msg(drv->ctx, MSG_INFO,
+				WPA_EVENT_DRIVER_STATE "HANGED");
+		return;
+	}
+#endif
+
 	wpa_supplicant_event(drv->ctx, type, &event);
 }
 
