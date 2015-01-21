@@ -35,6 +35,7 @@
 #define WLAN_STA_VHT BIT(18)
 #define WLAN_STA_WNM_SLEEP_MODE BIT(19)
 #define WLAN_STA_VHT_OPMODE_ENABLED BIT(20)
+#define WLAN_STA_VENDOR_VHT BIT(21)
 #define WLAN_STA_PENDING_DISASSOC_CB BIT(29)
 #define WLAN_STA_PENDING_DEAUTH_CB BIT(30)
 #define WLAN_STA_NONERP BIT(31)
@@ -84,6 +85,7 @@ struct sta_info {
 	unsigned int remediation:1;
 	unsigned int hs20_deauth_requested:1;
 	unsigned int session_timeout_set:1;
+	unsigned int radius_das_match:1;
 
 	u16 auth_alg;
 

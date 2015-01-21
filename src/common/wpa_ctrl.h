@@ -42,6 +42,8 @@ extern "C" {
 #define WPA_EVENT_EAP_METHOD "CTRL-EVENT-EAP-METHOD "
 /** EAP peer certificate from TLS */
 #define WPA_EVENT_EAP_PEER_CERT "CTRL-EVENT-EAP-PEER-CERT "
+/** EAP peer certificate alternative subject name component from TLS */
+#define WPA_EVENT_EAP_PEER_ALT "CTRL-EVENT-EAP-PEER-ALT "
 /** EAP TLS certificate chain validation error */
 #define WPA_EVENT_EAP_TLS_CERT_ERROR "CTRL-EVENT-EAP-TLS-CERT-ERROR "
 /** EAP status */
@@ -194,6 +196,9 @@ extern "C" {
 /* parameters: <addr> <dialog_token> <freq> <status_code> <result> */
 #define GAS_QUERY_DONE "GAS-QUERY-DONE "
 
+/* parameters: <addr> <result> */
+#define ANQP_QUERY_DONE "ANQP-QUERY-DONE "
+
 #define HS20_SUBSCRIPTION_REMEDIATION "HS20-SUBSCRIPTION-REMEDIATION "
 #define HS20_DEAUTH_IMMINENT_NOTICE "HS20-DEAUTH-IMMINENT-NOTICE "
 
@@ -277,6 +282,7 @@ enum wpa_vendor_elem_frame {
 	VENDOR_ELEM_P2P_INV_RESP = 10,
 	VENDOR_ELEM_P2P_ASSOC_REQ = 11,
 	VENDOR_ELEM_P2P_ASSOC_RESP = 12,
+	VENDOR_ELEM_ASSOC_REQ = 13,
 	NUM_VENDOR_ELEM_FRAMES
 };
 

@@ -1818,6 +1818,7 @@ static const struct parse_data ssid_fields[] = {
 	{ STRe(subject_match) },
 	{ STRe(altsubject_match) },
 	{ STRe(domain_suffix_match) },
+	{ STRe(domain_match) },
 	{ STRe(ca_cert2) },
 	{ STRe(ca_path2) },
 	{ STRe(client_cert2) },
@@ -1827,6 +1828,7 @@ static const struct parse_data ssid_fields[] = {
 	{ STRe(subject_match2) },
 	{ STRe(altsubject_match2) },
 	{ STRe(domain_suffix_match2) },
+	{ STRe(domain_match2) },
 	{ STRe(phase1) },
 	{ STRe(phase2) },
 	{ STRe(pcsc) },
@@ -2052,6 +2054,7 @@ static void eap_peer_config_free(struct eap_peer_config *eap)
 	os_free(eap->subject_match);
 	os_free(eap->altsubject_match);
 	os_free(eap->domain_suffix_match);
+	os_free(eap->domain_match);
 	os_free(eap->ca_cert2);
 	os_free(eap->ca_path2);
 	os_free(eap->client_cert2);
@@ -2061,6 +2064,7 @@ static void eap_peer_config_free(struct eap_peer_config *eap)
 	os_free(eap->subject_match2);
 	os_free(eap->altsubject_match2);
 	os_free(eap->domain_suffix_match2);
+	os_free(eap->domain_match2);
 	os_free(eap->phase1);
 	os_free(eap->phase2);
 	os_free(eap->pcsc);
@@ -2230,6 +2234,7 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->sae_groups);
 	wpabuf_free(config->ap_vendor_elements);
 	os_free(config->osu_dir);
+	os_free(config->bgscan);
 	os_free(config->wowlan_triggers);
 	os_free(config);
 }
@@ -3472,6 +3477,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->ap_scan = DEFAULT_AP_SCAN;
 	config->user_mpm = DEFAULT_USER_MPM;
 	config->max_peer_links = DEFAULT_MAX_PEER_LINKS;
+	config->mesh_max_inactivity = DEFAULT_MESH_MAX_INACTIVITY;
 	config->fast_reauth = DEFAULT_FAST_REAUTH;
 	config->p2p_go_intent = DEFAULT_P2P_GO_INTENT;
 	config->p2p_intra_bss = DEFAULT_P2P_INTRA_BSS;
@@ -3490,6 +3496,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->p2p_search_delay = DEFAULT_P2P_SEARCH_DELAY;
 	config->rand_addr_lifetime = DEFAULT_RAND_ADDR_LIFETIME;
 	config->key_mgmt_offload = DEFAULT_KEY_MGMT_OFFLOAD;
+	config->cert_in_cb = DEFAULT_CERT_IN_CB;
 
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
@@ -4021,6 +4028,7 @@ static const struct global_parse_data global_fields[] = {
 #ifdef CONFIG_MESH
 	{ INT(user_mpm), 0 },
 	{ INT_RANGE(max_peer_links, 0, 255), 0 },
+	{ INT(mesh_max_inactivity), 0 },
 #endif /* CONFIG_MESH */
 	{ INT(disable_scan_offload), 0 },
 	{ INT(fast_reauth), 0 },

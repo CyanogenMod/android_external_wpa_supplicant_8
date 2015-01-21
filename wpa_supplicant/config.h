@@ -17,6 +17,7 @@
 #endif /* CONFIG_NO_SCAN_PROCESSING */
 #define DEFAULT_USER_MPM 1
 #define DEFAULT_MAX_PEER_LINKS 99
+#define DEFAULT_MESH_MAX_INACTIVITY 300
 #define DEFAULT_FAST_REAUTH 1
 #define DEFAULT_P2P_GO_INTENT 7
 #define DEFAULT_P2P_INTRA_BSS 1
@@ -31,6 +32,7 @@
 #define DEFAULT_P2P_SEARCH_DELAY 500
 #define DEFAULT_RAND_ADDR_LIFETIME 60
 #define DEFAULT_KEY_MGMT_OFFLOAD 1
+#define DEFAULT_CERT_IN_CB 1
 
 #include "config_ssid.h"
 #include "wps/wps.h"
@@ -1119,6 +1121,22 @@ struct wpa_config {
 	 * Maximum number of mesh peering currently maintained by the STA.
 	 */
 	int max_peer_links;
+
+	/**
+	 * cert_in_cb - Whether to include a peer certificate dump in events
+	 *
+	 * This controls whether peer certificates for authentication server and
+	 * its certificate chain are included in EAP peer certificate events.
+	 */
+	int cert_in_cb;
+
+	/**
+	 * mesh_max_inactivity - Timeout in seconds to detect STA inactivity
+	 *
+	 * This timeout value is used in mesh STA to clean up inactive stations.
+	 * By default: 300 seconds.
+	 */
+	int mesh_max_inactivity;
 };
 
 

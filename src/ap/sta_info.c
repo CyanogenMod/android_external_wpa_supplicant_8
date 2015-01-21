@@ -370,8 +370,14 @@ void ap_handle_timer(void *eloop_ctx, void *timeout_ctx)
 			 * but do not disconnect the station now.
 			 */
 			next_time = hapd->conf->ap_max_inactivity + fuzz;
-		} else if (inactive_sec < hapd->conf->ap_max_inactivity &&
-			   sta->flags & WLAN_STA_ASSOC) {
+		} else if (inactive_sec == -ENOENT) {
+			wpa_msg(hapd->msg_ctx, MSG_DEBUG,
+				"Station " MACSTR " has lost its driver entry",
+				MAC2STR(sta->addr));
+
+			if (hapd->conf->skip_inactivity_poll)
+				sta->timeout_next = STA_DISASSOC;
+		} else if (inactive_sec < hapd->conf->ap_max_inactivity) {
 			/* station activity detected; reset timeout state */
 			wpa_msg(hapd->msg_ctx, MSG_DEBUG,
 				"Station " MACSTR " has been active %is ago",
@@ -1101,7 +1107,7 @@ int ap_sta_flags_txt(u32 flags, char *buf, size_t buflen)
 	int res;
 
 	buf[0] = '\0';
-	res = os_snprintf(buf, buflen, "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+	res = os_snprintf(buf, buflen, "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
 			  (flags & WLAN_STA_AUTH ? "[AUTH]" : ""),
 			  (flags & WLAN_STA_ASSOC ? "[ASSOC]" : ""),
 			  (flags & WLAN_STA_AUTHORIZED ? "[AUTHORIZED]" : ""),
@@ -1119,6 +1125,7 @@ int ap_sta_flags_txt(u32 flags, char *buf, size_t buflen)
 			  (flags & WLAN_STA_WPS2 ? "[WPS2]" : ""),
 			  (flags & WLAN_STA_GAS ? "[GAS]" : ""),
 			  (flags & WLAN_STA_VHT ? "[VHT]" : ""),
+			  (flags & WLAN_STA_VENDOR_VHT ? "[VENDOR_VHT]" : ""),
 			  (flags & WLAN_STA_WNM_SLEEP_MODE ?
 			   "[WNM_SLEEP_MODE]" : ""));
 	if (os_snprintf_error(buflen, res))

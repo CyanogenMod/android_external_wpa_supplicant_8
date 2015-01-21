@@ -3158,14 +3158,14 @@ static u8 wpas_invitation_process(void *ctx, const u8 *sa, const u8 *bssid,
 		}
 
 #ifdef CONFIG_WPS_NFC
-		if (dev_pw_id >= 0 && wpa_s->parent->p2p_nfc_tag_enabled &&
-		    dev_pw_id == wpa_s->parent->p2p_oob_dev_pw_id) {
+		if (dev_pw_id >= 0 && wpa_s->p2p_nfc_tag_enabled &&
+		    dev_pw_id == wpa_s->p2p_oob_dev_pw_id) {
 			wpa_printf(MSG_DEBUG, "P2P: Accept invitation based on local enabled NFC Tag");
-			wpa_s->parent->p2p_wps_method = WPS_NFC;
-			wpa_s->parent->pending_join_wps_method = WPS_NFC;
-			os_memcpy(wpa_s->parent->pending_join_dev_addr,
+			wpa_s->p2p_wps_method = WPS_NFC;
+			wpa_s->pending_join_wps_method = WPS_NFC;
+			os_memcpy(wpa_s->pending_join_dev_addr,
 				  go_dev_addr, ETH_ALEN);
-			os_memcpy(wpa_s->parent->pending_join_iface_addr,
+			os_memcpy(wpa_s->pending_join_iface_addr,
 				  bssid, ETH_ALEN);
 			goto accept_inv;
 		}
@@ -6176,6 +6176,12 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 			   pref_freq);
 		pref_freq = 0;
 	}
+
+	/*
+	 * Stop any find/listen operations before invitation and possibly
+	 * connection establishment.
+	 */
+	wpas_p2p_stop_find_oper(wpa_s);
 
 	return p2p_invite(wpa_s->global->p2p, peer_addr, role, bssid,
 			  ssid->ssid, ssid->ssid_len, force_freq, go_dev_addr,

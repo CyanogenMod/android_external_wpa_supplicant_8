@@ -860,12 +860,14 @@ static void wpa_supplicant_port_cb(void *ctx, int authorized)
 
 
 static void wpa_supplicant_cert_cb(void *ctx, int depth, const char *subject,
+				   const char *altsubject[], int num_altsubject,
 				   const char *cert_hash,
 				   const struct wpabuf *cert)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 
-	wpas_notify_certification(wpa_s, depth, subject, cert_hash, cert);
+	wpas_notify_certification(wpa_s, depth, subject, altsubject,
+				  num_altsubject, cert_hash, cert);
 }
 
 
@@ -948,6 +950,7 @@ int wpa_supplicant_init_eapol(struct wpa_supplicant *wpa_s)
 	ctx->port_cb = wpa_supplicant_port_cb;
 	ctx->cb = wpa_supplicant_eapol_cb;
 	ctx->cert_cb = wpa_supplicant_cert_cb;
+	ctx->cert_in_cb = wpa_s->conf->cert_in_cb;
 	ctx->status_cb = wpa_supplicant_status_cb;
 	ctx->set_anon_id = wpa_supplicant_set_anon_id;
 	ctx->cb_ctx = wpa_s;
