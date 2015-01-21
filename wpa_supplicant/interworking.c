@@ -73,6 +73,8 @@ static int cred_prio_cmp(const struct wpa_cred *a, const struct wpa_cred *b)
 
 static void interworking_reconnect(struct wpa_supplicant *wpa_s)
 {
+	unsigned int tried;
+
 	if (wpa_s->wpa_state >= WPA_AUTHENTICATING) {
 		wpa_supplicant_cancel_sched_scan(wpa_s);
 		wpa_supplicant_deauthenticate(wpa_s,
@@ -80,10 +82,13 @@ static void interworking_reconnect(struct wpa_supplicant *wpa_s)
 	}
 	wpa_s->disconnected = 0;
 	wpa_s->reassociate = 1;
+	tried = wpa_s->interworking_fast_assoc_tried;
+	wpa_s->interworking_fast_assoc_tried = 1;
 
-	if (wpa_supplicant_fast_associate(wpa_s) >= 0)
+	if (!tried && wpa_supplicant_fast_associate(wpa_s) >= 0)
 		return;
 
+	wpa_s->interworking_fast_assoc_tried = 0;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
 }
 
@@ -2556,7 +2561,12 @@ void interworking_start_fetch_anqp(struct wpa_supplicant *wpa_s)
 		bss->flags &= ~WPA_BSS_ANQP_FETCH_TRIED;
 
 	wpa_s->fetch_anqp_in_progress = 1;
-	interworking_next_anqp_fetch(wpa_s);
+
+	/*
+	 * Start actual ANQP operation from eloop call to make sure the loop
+	 * does not end up using excessive recursion.
+	 */
+	eloop_register_timeout(0, 0, interworking_continue_anqp, wpa_s, NULL);
 }
 
 
@@ -2739,8 +2749,8 @@ static void interworking_parse_rx_anqp_resp(struct wpa_supplicant *wpa_s,
 
 			switch (type) {
 			case HS20_ANQP_OUI_TYPE:
-				hs20_parse_rx_hs20_anqp_resp(wpa_s, sa, pos,
-							     slen);
+				hs20_parse_rx_hs20_anqp_resp(wpa_s, bss, sa,
+							     pos, slen);
 				break;
 			default:
 				wpa_printf(MSG_DEBUG, "HS20: Unsupported ANQP "
@@ -2775,6 +2785,7 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	u16 info_id;
 	u16 slen;
 	struct wpa_bss *bss = NULL, *tmp;
+	const char *anqp_result = "SUCCESS";
 
 	wpa_printf(MSG_DEBUG, "Interworking: anqp_resp_cb dst=" MACSTR
 		   " dialog_token=%u result=%d status_code=%u",
@@ -2782,7 +2793,8 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	if (result != GAS_QUERY_SUCCESS) {
 		if (wpa_s->fetch_osu_icon_in_progress)
 			hs20_icon_fetch_failed(wpa_s);
-		return;
+		anqp_result = "FAILURE";
+		goto out;
 	}
 
 	pos = wpabuf_head(adv_proto);
@@ -2792,7 +2804,8 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 			   "Protocol in response");
 		if (wpa_s->fetch_osu_icon_in_progress)
 			hs20_icon_fetch_failed(wpa_s);
-		return;
+		anqp_result = "INVALID_FRAME";
+		goto out;
 	}
 
 	/*
@@ -2818,7 +2831,8 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 
 		if (left < 4) {
 			wpa_printf(MSG_DEBUG, "ANQP: Invalid element");
-			break;
+			anqp_result = "INVALID_FRAME";
+			goto out_parse_done;
 		}
 		info_id = WPA_GET_LE16(pos);
 		pos += 2;
@@ -2828,14 +2842,19 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 		if (left < slen) {
 			wpa_printf(MSG_DEBUG, "ANQP: Invalid element length "
 				   "for Info ID %u", info_id);
-			break;
+			anqp_result = "INVALID_FRAME";
+			goto out_parse_done;
 		}
 		interworking_parse_rx_anqp_resp(wpa_s, bss, dst, info_id, pos,
 						slen);
 		pos += slen;
 	}
 
+out_parse_done:
 	hs20_notify_parse_done(wpa_s);
+out:
+	wpa_msg(wpa_s, MSG_INFO, ANQP_QUERY_DONE "addr=" MACSTR " result=%s",
+		MAC2STR(dst), anqp_result);
 }
 
 

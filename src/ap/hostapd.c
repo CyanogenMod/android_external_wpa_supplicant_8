@@ -15,6 +15,8 @@
 #include "radius/radius_client.h"
 #include "radius/radius_das.h"
 #include "eap_server/tncs.h"
+#include "eapol_auth/eapol_auth_sm.h"
+#include "eapol_auth/eapol_auth_sm_i.h"
 #include "hostapd.h"
 #include "authsrv.h"
 #include "sta_info.h"
@@ -614,51 +616,190 @@ static int hostapd_das_nas_mismatch(struct hostapd_data *hapd,
 
 
 static struct sta_info * hostapd_das_find_sta(struct hostapd_data *hapd,
-					      struct radius_das_attrs *attr)
+					      struct radius_das_attrs *attr,
+					      int *multi)
 {
-	struct sta_info *sta = NULL;
+	struct sta_info *selected, *sta;
 	char buf[128];
+	int num_attr = 0;
+	int count;
 
-	if (attr->sta_addr)
+	*multi = 0;
+
+	for (sta = hapd->sta_list; sta; sta = sta->next)
+		sta->radius_das_match = 1;
+
+	if (attr->sta_addr) {
+		num_attr++;
 		sta = ap_get_sta(hapd, attr->sta_addr);
+		if (!sta) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: No Calling-Station-Id match");
+			return NULL;
+		}
 
-	if (sta == NULL && attr->acct_session_id &&
-	    attr->acct_session_id_len == 17) {
+		selected = sta;
 		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			if (sta != selected)
+				sta->radius_das_match = 0;
+		}
+		wpa_printf(MSG_DEBUG, "RADIUS DAS: Calling-Station-Id match");
+	}
+
+	if (attr->acct_session_id) {
+		num_attr++;
+		if (attr->acct_session_id_len != 17) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: Acct-Session-Id cannot match");
+			return NULL;
+		}
+		count = 0;
+
+		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			if (!sta->radius_das_match)
+				continue;
 			os_snprintf(buf, sizeof(buf), "%08X-%08X",
 				    sta->acct_session_id_hi,
 				    sta->acct_session_id_lo);
-			if (os_memcmp(attr->acct_session_id, buf, 17) == 0)
-				break;
+			if (os_memcmp(attr->acct_session_id, buf, 17) != 0)
+				sta->radius_das_match = 0;
+			else
+				count++;
 		}
+
+		if (count == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: No matches remaining after Acct-Session-Id check");
+			return NULL;
+		}
+		wpa_printf(MSG_DEBUG, "RADIUS DAS: Acct-Session-Id match");
 	}
 
-	if (sta == NULL && attr->cui) {
+	if (attr->acct_multi_session_id) {
+		num_attr++;
+		if (attr->acct_multi_session_id_len != 17) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: Acct-Multi-Session-Id cannot match");
+			return NULL;
+		}
+		count = 0;
+
+		for (sta = hapd->sta_list; sta; sta = sta->next) {
+			if (!sta->radius_das_match)
+				continue;
+			if (!sta->eapol_sm ||
+			    !sta->eapol_sm->acct_multi_session_id_hi) {
+				sta->radius_das_match = 0;
+				continue;
+			}
+			os_snprintf(buf, sizeof(buf), "%08X+%08X",
+				    sta->eapol_sm->acct_multi_session_id_hi,
+				    sta->eapol_sm->acct_multi_session_id_lo);
+			if (os_memcmp(attr->acct_multi_session_id, buf, 17) !=
+			    0)
+				sta->radius_das_match = 0;
+			else
+				count++;
+		}
+
+		if (count == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: No matches remaining after Acct-Multi-Session-Id check");
+			return NULL;
+		}
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS DAS: Acct-Multi-Session-Id match");
+	}
+
+	if (attr->cui) {
+		num_attr++;
+		count = 0;
+
 		for (sta = hapd->sta_list; sta; sta = sta->next) {
 			struct wpabuf *cui;
+
+			if (!sta->radius_das_match)
+				continue;
 			cui = ieee802_1x_get_radius_cui(sta->eapol_sm);
-			if (cui && wpabuf_len(cui) == attr->cui_len &&
+			if (!cui || wpabuf_len(cui) != attr->cui_len ||
 			    os_memcmp(wpabuf_head(cui), attr->cui,
-				      attr->cui_len) == 0)
-				break;
+				      attr->cui_len) != 0)
+				sta->radius_das_match = 0;
+			else
+				count++;
 		}
+
+		if (count == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: No matches remaining after Chargeable-User-Identity check");
+			return NULL;
+		}
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS DAS: Chargeable-User-Identity match");
 	}
 
-	if (sta == NULL && attr->user_name) {
+	if (attr->user_name) {
+		num_attr++;
+		count = 0;
+
 		for (sta = hapd->sta_list; sta; sta = sta->next) {
 			u8 *identity;
 			size_t identity_len;
+
+			if (!sta->radius_das_match)
+				continue;
 			identity = ieee802_1x_get_identity(sta->eapol_sm,
 							   &identity_len);
-			if (identity &&
-			    identity_len == attr->user_name_len &&
+			if (!identity ||
+			    identity_len != attr->user_name_len ||
 			    os_memcmp(identity, attr->user_name, identity_len)
-			    == 0)
-				break;
+			    != 0)
+				sta->radius_das_match = 0;
+			else
+				count++;
+		}
+
+		if (count == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: No matches remaining after User-Name check");
+			return NULL;
+		}
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS DAS: User-Name match");
+	}
+
+	if (num_attr == 0) {
+		/*
+		 * In theory, we could match all current associations, but it
+		 * seems safer to just reject requests that do not include any
+		 * session identification attributes.
+		 */
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS DAS: No session identification attributes included");
+		return NULL;
+	}
+
+	selected = NULL;
+	for (sta = hapd->sta_list; sta; sta = sta->next) {
+		if (sta->radius_das_match) {
+			if (selected) {
+				*multi = 1;
+				return NULL;
+			}
+			selected = sta;
 		}
 	}
 
-	return sta;
+	return selected;
+}
+
+
+static int hostapd_das_disconnect_pmksa(struct hostapd_data *hapd,
+					struct radius_das_attrs *attr)
+{
+	if (!hapd->wpa_auth)
+		return -1;
+	return wpa_auth_radius_das_disconnect_pmksa(hapd->wpa_auth, attr);
 }
 
 
@@ -667,14 +808,29 @@ hostapd_das_disconnect(void *ctx, struct radius_das_attrs *attr)
 {
 	struct hostapd_data *hapd = ctx;
 	struct sta_info *sta;
+	int multi;
 
 	if (hostapd_das_nas_mismatch(hapd, attr))
 		return RADIUS_DAS_NAS_MISMATCH;
 
-	sta = hostapd_das_find_sta(hapd, attr);
-	if (sta == NULL)
+	sta = hostapd_das_find_sta(hapd, attr, &multi);
+	if (sta == NULL) {
+		if (multi) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: Multiple sessions match - not supported");
+			return RADIUS_DAS_MULTI_SESSION_MATCH;
+		}
+		if (hostapd_das_disconnect_pmksa(hapd, attr) == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "RADIUS DAS: PMKSA cache entry matched");
+			return RADIUS_DAS_SUCCESS;
+		}
+		wpa_printf(MSG_DEBUG, "RADIUS DAS: No matching session found");
 		return RADIUS_DAS_SESSION_NOT_FOUND;
+	}
 
+	wpa_printf(MSG_DEBUG, "RADIUS DAS: Found a matching session " MACSTR
+		   " - disconnecting", MAC2STR(sta->addr));
 	wpa_auth_pmksa_remove(hapd->wpa_auth, sta->addr);
 
 	hostapd_drv_sta_deauth(hapd, sta->addr,

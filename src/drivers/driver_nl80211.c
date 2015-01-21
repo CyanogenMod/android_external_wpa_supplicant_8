@@ -4214,6 +4214,48 @@ static int nl80211_leave_ibss(struct wpa_driver_nl80211_data *drv,
 }
 
 
+static int nl80211_ht_vht_overrides(struct nl_msg *msg,
+				    struct wpa_driver_associate_params *params)
+{
+	if (params->disable_ht && nla_put_flag(msg, NL80211_ATTR_DISABLE_HT))
+		return -1;
+
+	if (params->htcaps && params->htcaps_mask) {
+		int sz = sizeof(struct ieee80211_ht_capabilities);
+		wpa_hexdump(MSG_DEBUG, "  * htcaps", params->htcaps, sz);
+		wpa_hexdump(MSG_DEBUG, "  * htcaps_mask",
+			    params->htcaps_mask, sz);
+		if (nla_put(msg, NL80211_ATTR_HT_CAPABILITY, sz,
+			    params->htcaps) ||
+		    nla_put(msg, NL80211_ATTR_HT_CAPABILITY_MASK, sz,
+			    params->htcaps_mask))
+			return -1;
+	}
+
+#ifdef CONFIG_VHT_OVERRIDES
+	if (params->disable_vht) {
+		wpa_printf(MSG_DEBUG, "  * VHT disabled");
+		if (nla_put_flag(msg, NL80211_ATTR_DISABLE_VHT))
+			return -1;
+	}
+
+	if (params->vhtcaps && params->vhtcaps_mask) {
+		int sz = sizeof(struct ieee80211_vht_capabilities);
+		wpa_hexdump(MSG_DEBUG, "  * vhtcaps", params->vhtcaps, sz);
+		wpa_hexdump(MSG_DEBUG, "  * vhtcaps_mask",
+			    params->vhtcaps_mask, sz);
+		if (nla_put(msg, NL80211_ATTR_VHT_CAPABILITY, sz,
+			    params->vhtcaps) ||
+		    nla_put(msg, NL80211_ATTR_VHT_CAPABILITY_MASK, sz,
+			    params->vhtcaps_mask))
+			return -1;
+	}
+#endif /* CONFIG_VHT_OVERRIDES */
+
+	return 0;
+}
+
+
 static int wpa_driver_nl80211_ibss(struct wpa_driver_nl80211_data *drv,
 				   struct wpa_driver_associate_params *params)
 {
@@ -4273,6 +4315,9 @@ retry:
 			    params->wpa_ie))
 			goto fail;
 	}
+
+	if (nl80211_ht_vht_overrides(msg, params) < 0)
+		return -1;
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	msg = NULL;
@@ -4455,40 +4500,8 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 			return -1;
 	}
 
-	if (params->disable_ht && nla_put_flag(msg, NL80211_ATTR_DISABLE_HT))
+	if (nl80211_ht_vht_overrides(msg, params) < 0)
 		return -1;
-
-	if (params->htcaps && params->htcaps_mask) {
-		int sz = sizeof(struct ieee80211_ht_capabilities);
-		wpa_hexdump(MSG_DEBUG, "  * htcaps", params->htcaps, sz);
-		wpa_hexdump(MSG_DEBUG, "  * htcaps_mask",
-			    params->htcaps_mask, sz);
-		if (nla_put(msg, NL80211_ATTR_HT_CAPABILITY, sz,
-			    params->htcaps) ||
-		    nla_put(msg, NL80211_ATTR_HT_CAPABILITY_MASK, sz,
-			    params->htcaps_mask))
-			return -1;
-	}
-
-#ifdef CONFIG_VHT_OVERRIDES
-	if (params->disable_vht) {
-		wpa_printf(MSG_DEBUG, "  * VHT disabled");
-		if (nla_put_flag(msg, NL80211_ATTR_DISABLE_VHT))
-			return -1;
-	}
-
-	if (params->vhtcaps && params->vhtcaps_mask) {
-		int sz = sizeof(struct ieee80211_vht_capabilities);
-		wpa_hexdump(MSG_DEBUG, "  * vhtcaps", params->vhtcaps, sz);
-		wpa_hexdump(MSG_DEBUG, "  * vhtcaps_mask",
-			    params->vhtcaps_mask, sz);
-		if (nla_put(msg, NL80211_ATTR_VHT_CAPABILITY, sz,
-			    params->vhtcaps) ||
-		    nla_put(msg, NL80211_ATTR_VHT_CAPABILITY_MASK, sz,
-			    params->vhtcaps_mask))
-			return -1;
-	}
-#endif /* CONFIG_VHT_OVERRIDES */
 
 	if (params->p2p)
 		wpa_printf(MSG_DEBUG, "  * P2P group");
@@ -5219,6 +5232,8 @@ static int i802_get_inact_sec(void *priv, const u8 *addr)
 
 	data.inactive_msec = (unsigned long) -1;
 	ret = i802_read_sta_data(priv, &data, addr);
+	if (ret == -ENOENT)
+		return -ENOENT;
 	if (ret || data.inactive_msec == (unsigned long) -1)
 		return -1;
 	return data.inactive_msec / 1000;
@@ -7818,7 +7833,8 @@ wpa_driver_nl80211_join_mesh(void *priv,
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	struct nlattr *container;
-	int ret = 0;
+	int ret = -1;
+	u32 timeout;
 
 	wpa_printf(MSG_DEBUG, "nl80211: mesh join (ifindex=%d)", drv->ifindex);
 	msg = nl80211_drv_msg(drv, 0, NL80211_CMD_JOIN_MESH);
@@ -7866,6 +7882,22 @@ wpa_driver_nl80211_join_mesh(void *priv,
 	    nla_put_u16(msg, NL80211_MESHCONF_MAX_PEER_LINKS,
 			params->max_peer_links))
 		goto fail;
+
+	/*
+	 * Set NL80211_MESHCONF_PLINK_TIMEOUT even if user mpm is used because
+	 * the timer could disconnect stations even in that case.
+	 *
+	 * Set 0xffffffff instead of 0 because NL80211_MESHCONF_PLINK_TIMEOUT
+	 * does not allow 0.
+	 */
+	timeout = params->conf.peer_link_timeout;
+	if ((params->flags & WPA_DRIVER_MESH_FLAG_USER_MPM) || timeout == 0)
+		timeout = 0xffffffff;
+	if (nla_put_u32(msg, NL80211_MESHCONF_PLINK_TIMEOUT, timeout)) {
+		wpa_printf(MSG_ERROR, "nl80211: Failed to set PLINK_TIMEOUT");
+		goto fail;
+	}
+
 	nla_nest_end(msg, container);
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
