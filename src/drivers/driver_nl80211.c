@@ -1,6 +1,6 @@
 /*
  * Driver interaction with Linux nl80211/cfg80211
- * Copyright (c) 2002-2014, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2015, Jouni Malinen <j@w1.fi>
  * Copyright (c) 2003-2004, Instant802 Networks, Inc.
  * Copyright (c) 2005-2006, Devicescape Software, Inc.
  * Copyright (c) 2007, Johannes Berg <johannes@sipsolutions.net>
@@ -132,6 +132,22 @@ static void nl80211_register_eloop_read(struct nl_handle **handle,
 					eloop_sock_handler handler,
 					void *eloop_data)
 {
+#ifdef CONFIG_LIBNL20
+	/*
+	 * libnl uses a pretty small buffer (32 kB that gets converted to 64 kB)
+	 * by default. It is possible to hit that limit in some cases where
+	 * operations are blocked, e.g., with a burst of Deauthentication frames
+	 * to hostapd and STA entry deletion. Try to increase the buffer to make
+	 * this less likely to occur.
+	 */
+	if (nl_socket_set_buffer_size(*handle, 262144, 0) < 0) {
+		wpa_printf(MSG_DEBUG,
+			   "nl80211: Could not set nl_socket RX buffer size: %s",
+			   strerror(errno));
+		/* continue anyway with the default (smaller) buffer */
+	}
+#endif /* CONFIG_LIBNL20 */
+
 	nl_socket_set_nonblocking(*handle);
 	eloop_register_read_sock(nl_socket_get_fd(*handle), handler,
 				 eloop_data, *handle);
@@ -2479,7 +2495,10 @@ static int wpa_driver_nl80211_set_key(const char *ifname, struct i802_bss *bss,
 	msg = nl80211_ifindex_msg(drv, ifindex, 0, NL80211_CMD_SET_KEY);
 	if (!msg ||
 	    nla_put_u8(msg, NL80211_ATTR_KEY_IDX, key_idx) ||
-	    nla_put_flag(msg, alg == WPA_ALG_IGTK ?
+	    nla_put_flag(msg, (alg == WPA_ALG_IGTK ||
+			       alg == WPA_ALG_BIP_GMAC_128 ||
+			       alg == WPA_ALG_BIP_GMAC_256 ||
+			       alg == WPA_ALG_BIP_CMAC_256) ?
 			 NL80211_ATTR_KEY_DEFAULT_MGMT :
 			 NL80211_ATTR_KEY_DEFAULT))
 		goto fail;
@@ -4446,7 +4465,8 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 	    params->key_mgmt_suite == WPA_KEY_MGMT_OSEN ||
 	    params->key_mgmt_suite == WPA_KEY_MGMT_IEEE8021X_SHA256 ||
 	    params->key_mgmt_suite == WPA_KEY_MGMT_PSK_SHA256 ||
-	    params->key_mgmt_suite == WPA_KEY_MGMT_IEEE8021X_SUITE_B) {
+	    params->key_mgmt_suite == WPA_KEY_MGMT_IEEE8021X_SUITE_B ||
+	    params->key_mgmt_suite == WPA_KEY_MGMT_IEEE8021X_SUITE_B_192) {
 		int mgmt = WLAN_AKM_SUITE_PSK;
 
 		switch (params->key_mgmt_suite) {
@@ -4473,6 +4493,9 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 			break;
 		case WPA_KEY_MGMT_IEEE8021X_SUITE_B:
 			mgmt = WLAN_AKM_SUITE_8021X_SUITE_B;
+			break;
+		case WPA_KEY_MGMT_IEEE8021X_SUITE_B_192:
+			mgmt = WLAN_AKM_SUITE_8021X_SUITE_B_192;
 			break;
 		case WPA_KEY_MGMT_PSK:
 		default:
@@ -6764,7 +6787,8 @@ static int wpa_driver_nl80211_get_survey(void *priv, unsigned int freq)
 }
 
 
-static void nl80211_set_rekey_info(void *priv, const u8 *kek, const u8 *kck,
+static void nl80211_set_rekey_info(void *priv, const u8 *kek, size_t kek_len,
+				   const u8 *kck, size_t kck_len,
 				   const u8 *replay_ctr)
 {
 	struct i802_bss *bss = priv;
@@ -6779,8 +6803,8 @@ static void nl80211_set_rekey_info(void *priv, const u8 *kek, const u8 *kck,
 	wpa_printf(MSG_DEBUG, "nl80211: Set rekey offload");
 	if (!(msg = nl80211_bss_msg(bss, 0, NL80211_CMD_SET_REKEY_OFFLOAD)) ||
 	    !(replay_nested = nla_nest_start(msg, NL80211_ATTR_REKEY_DATA)) ||
-	    nla_put(msg, NL80211_REKEY_DATA_KEK, NL80211_KEK_LEN, kek) ||
-	    nla_put(msg, NL80211_REKEY_DATA_KCK, NL80211_KCK_LEN, kck) ||
+	    nla_put(msg, NL80211_REKEY_DATA_KEK, kek_len, kek) ||
+	    nla_put(msg, NL80211_REKEY_DATA_KCK, kck_len, kck) ||
 	    nla_put(msg, NL80211_REKEY_DATA_REPLAY_CTR, NL80211_REPLAY_CTR_LEN,
 		    replay_ctr)) {
 		nl80211_nlmsg_clear(msg);
