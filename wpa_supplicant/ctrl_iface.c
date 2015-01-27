@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant / Control interface (shared code for all backends)
- * Copyright (c) 2004-2014, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -2323,6 +2323,7 @@ static char * wpa_supplicant_ie_txt(char *pos, char *end, const char *proto,
 	}
 #endif /* CONFIG_IEEE80211W */
 
+#ifdef CONFIG_SUITEB
 	if (data.key_mgmt & WPA_KEY_MGMT_IEEE8021X_SUITE_B) {
 		ret = os_snprintf(pos, end - pos, "%sEAP-SUITE-B",
 				  pos == start ? "" : "+");
@@ -2330,6 +2331,17 @@ static char * wpa_supplicant_ie_txt(char *pos, char *end, const char *proto,
 			return pos;
 		pos += ret;
 	}
+#endif /* CONFIG_SUITEB */
+
+#ifdef CONFIG_SUITEB192
+	if (data.key_mgmt & WPA_KEY_MGMT_IEEE8021X_SUITE_B_192) {
+		ret = os_snprintf(pos, end - pos, "%sEAP-SUITE-B-192",
+				  pos == start ? "" : "+");
+		if (os_snprintf_error(end - pos, ret))
+			return pos;
+		pos += ret;
+	}
+#endif /* CONFIG_SUITEB192 */
 
 	pos = wpa_supplicant_cipher_txt(pos, end, data.pairwise_cipher);
 
@@ -3333,6 +3345,13 @@ static const struct cipher_info ciphers[] = {
 	{ WPA_DRIVER_CAPA_ENC_WEP40, "WEP40", 1 }
 };
 
+static const struct cipher_info ciphers_group_mgmt[] = {
+	{ WPA_DRIVER_CAPA_ENC_BIP, "AES-128-CMAC", 1 },
+	{ WPA_DRIVER_CAPA_ENC_BIP_GMAC_128, "BIP-GMAC-128", 1 },
+	{ WPA_DRIVER_CAPA_ENC_BIP_GMAC_256, "BIP-GMAC-256", 1 },
+	{ WPA_DRIVER_CAPA_ENC_BIP_CMAC_256, "BIP-CMAC-256", 1 },
+};
+
 
 static int ctrl_iface_get_capability_pairwise(int res, char *strict,
 					      struct wpa_driver_capa *capa,
@@ -3406,6 +3425,35 @@ static int ctrl_iface_get_capability_group(int res, char *strict,
 }
 
 
+static int ctrl_iface_get_capability_group_mgmt(int res, char *strict,
+						struct wpa_driver_capa *capa,
+						char *buf, size_t buflen)
+{
+	int ret;
+	char *pos, *end;
+	unsigned int i;
+
+	pos = buf;
+	end = pos + buflen;
+
+	if (res < 0)
+		return 0;
+
+	for (i = 0; i < ARRAY_SIZE(ciphers_group_mgmt); i++) {
+		if (capa->enc & ciphers_group_mgmt[i].capa) {
+			ret = os_snprintf(pos, end - pos, "%s%s",
+					  pos == buf ? "" : " ",
+					  ciphers_group_mgmt[i].name);
+			if (os_snprintf_error(end - pos, ret))
+				return pos - buf;
+			pos += ret;
+		}
+	}
+
+	return pos - buf;
+}
+
+
 static int ctrl_iface_get_capability_key_mgmt(int res, char *strict,
 					      struct wpa_driver_capa *capa,
 					      char *buf, size_t buflen)
@@ -3454,6 +3502,23 @@ static int ctrl_iface_get_capability_key_mgmt(int res, char *strict,
 			return pos - buf;
 		pos += ret;
 	}
+
+#ifdef CONFIG_SUITEB
+	if (capa->key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SUITE_B) {
+		ret = os_snprintf(pos, end - pos, " WPA-EAP-SUITE-B");
+		if (os_snprintf_error(end - pos, ret))
+			return pos - buf;
+		pos += ret;
+	}
+#endif /* CONFIG_SUITEB */
+#ifdef CONFIG_SUITEB192
+	if (capa->key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SUITE_B_192) {
+		ret = os_snprintf(pos, end - pos, " WPA-EAP-SUITE-B-192");
+		if (os_snprintf_error(end - pos, ret))
+			return pos - buf;
+		pos += ret;
+	}
+#endif /* CONFIG_SUITEB192 */
 
 	return pos - buf;
 }
@@ -3754,6 +3819,10 @@ static int wpa_supplicant_ctrl_iface_get_capability(
 	if (os_strcmp(field, "group") == 0)
 		return ctrl_iface_get_capability_group(res, strict, &capa,
 						       buf, buflen);
+
+	if (os_strcmp(field, "group_mgmt") == 0)
+		return ctrl_iface_get_capability_group_mgmt(res, strict, &capa,
+							    buf, buflen);
 
 	if (os_strcmp(field, "key_mgmt") == 0)
 		return ctrl_iface_get_capability_key_mgmt(res, strict, &capa,

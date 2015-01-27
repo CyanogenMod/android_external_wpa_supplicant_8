@@ -1,6 +1,6 @@
 /*
  * Wrapper functions for OpenSSL libcrypto
- * Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -28,6 +28,7 @@
 #include "dh_group5.h"
 #include "sha1.h"
 #include "sha256.h"
+#include "sha384.h"
 #include "crypto.h"
 
 #if OPENSSL_VERSION_NUMBER < 0x00907000
@@ -786,6 +787,40 @@ int hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
 #endif /* CONFIG_SHA256 */
 
 
+#ifdef CONFIG_SHA384
+
+int hmac_sha384_vector(const u8 *key, size_t key_len, size_t num_elem,
+		       const u8 *addr[], const size_t *len, u8 *mac)
+{
+	HMAC_CTX ctx;
+	size_t i;
+	unsigned int mdlen;
+	int res;
+
+	HMAC_CTX_init(&ctx);
+	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha384(), NULL) != 1)
+		return -1;
+
+	for (i = 0; i < num_elem; i++)
+		HMAC_Update(&ctx, addr[i], len[i]);
+
+	mdlen = 32;
+	res = HMAC_Final(&ctx, mac, &mdlen);
+	HMAC_CTX_cleanup(&ctx);
+
+	return res == 1 ? 0 : -1;
+}
+
+
+int hmac_sha384(const u8 *key, size_t key_len, const u8 *data,
+		size_t data_len, u8 *mac)
+{
+	return hmac_sha384_vector(key, key_len, 1, &data, &data_len, mac);
+}
+
+#endif /* CONFIG_SHA384 */
+
+
 int crypto_get_random(void *buf, size_t len)
 {
 	if (RAND_bytes(buf, len) != 1)
@@ -795,8 +830,8 @@ int crypto_get_random(void *buf, size_t len)
 
 
 #ifdef CONFIG_OPENSSL_CMAC
-int omac1_aes_128_vector(const u8 *key, size_t num_elem,
-			 const u8 *addr[], const size_t *len, u8 *mac)
+int omac1_aes_vector(const u8 *key, size_t key_len, size_t num_elem,
+		     const u8 *addr[], const size_t *len, u8 *mac)
 {
 	CMAC_CTX *ctx;
 	int ret = -1;
@@ -806,8 +841,15 @@ int omac1_aes_128_vector(const u8 *key, size_t num_elem,
 	if (ctx == NULL)
 		return -1;
 
-	if (!CMAC_Init(ctx, key, 16, EVP_aes_128_cbc(), NULL))
+	if (key_len == 32) {
+		if (!CMAC_Init(ctx, key, 32, EVP_aes_256_cbc(), NULL))
+			goto fail;
+	} else if (key_len == 16) {
+		if (!CMAC_Init(ctx, key, 16, EVP_aes_128_cbc(), NULL))
+			goto fail;
+	} else {
 		goto fail;
+	}
 	for (i = 0; i < num_elem; i++) {
 		if (!CMAC_Update(ctx, addr[i], len[i]))
 			goto fail;
@@ -822,9 +864,22 @@ fail:
 }
 
 
+int omac1_aes_128_vector(const u8 *key, size_t num_elem,
+			 const u8 *addr[], const size_t *len, u8 *mac)
+{
+	return omac1_aes_vector(key, 16, num_elem, addr, len, mac);
+}
+
+
 int omac1_aes_128(const u8 *key, const u8 *data, size_t data_len, u8 *mac)
 {
 	return omac1_aes_128_vector(key, 1, &data, &data_len, mac);
+}
+
+
+int omac1_aes_256(const u8 *key, const u8 *data, size_t data_len, u8 *mac)
+{
+	return omac1_aes_vector(key, 32, 1, &data, &data_len, mac);
 }
 #endif /* CONFIG_OPENSSL_CMAC */
 

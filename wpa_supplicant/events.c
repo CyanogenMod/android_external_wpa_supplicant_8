@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant - Driver event processing
- * Copyright (c) 2003-2014, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -476,8 +476,7 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211W
 		if (!(ie.capabilities & WPA_CAPABILITY_MFPC) &&
-		    (ssid->ieee80211w == MGMT_FRAME_PROTECTION_DEFAULT ?
-		     wpa_s->conf->pmf : ssid->ieee80211w) ==
+		    wpas_get_ssid_pmf(wpa_s, ssid) ==
 		    MGMT_FRAME_PROTECTION_REQUIRED) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip RSN IE - no mgmt "
 				"frame protection");
@@ -2996,7 +2995,9 @@ static void wpa_supplicant_event_assoc_auth(struct wpa_supplicant *wpa_s,
 	}
 	wpa_sm_set_rx_replay_ctr(wpa_s->wpa, data->assoc_info.key_replay_ctr);
 	wpa_sm_set_ptk_kck_kek(wpa_s->wpa, data->assoc_info.ptk_kck,
-			       data->assoc_info.ptk_kek);
+			       data->assoc_info.ptk_kck_len,
+			       data->assoc_info.ptk_kek,
+			       data->assoc_info.ptk_kek_len);
 }
 
 
