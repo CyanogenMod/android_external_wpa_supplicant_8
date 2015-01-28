@@ -39,7 +39,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "eapol_supp_sm.h"
 
 /*msec Response Timeout*/
-#define QMI_RESP_TIME_OUT 650
+#define QMI_RESP_TIME_OUT 2000
 #define EAP_PROXY_KEYING_DATA_LEN 64
 
 #ifdef CONFIG_EAP_PROXY_DUAL_SIM
