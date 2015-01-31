@@ -6,5 +6,6 @@ ifneq ($(filter VER_0_8_X VER_2_1_DEVEL,$(WPA_SUPPLICANT_VERSION)),)
 # end of each Android.mk, so that one Android.mk doesn't depend on variables
 # set up in the other Android.mk.
 include $(LOCAL_PATH)/hostapd/Android.mk \
-        $(LOCAL_PATH)/wpa_supplicant/Android.mk
+        $(LOCAL_PATH)/wpa_supplicant/Android.mk \
+        $(LOCAL_PATH)/hs20/client/Android.mk
 endif
