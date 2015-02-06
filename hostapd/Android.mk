@@ -181,8 +181,6 @@ OBJS += ctrl_iface.c
 OBJS += src/ap/ctrl_iface_ap.c
 endif
 
-OBJS += src/crypto/md5.c
-
 L_CFLAGS += -DCONFIG_CTRL_IFACE -DCONFIG_CTRL_IFACE_UNIX
 
 ifdef CONFIG_IAPP
@@ -677,7 +675,9 @@ ifdef CONFIG_INTERNAL_AES
 AESOBJS += src/crypto/aes-internal.c src/crypto/aes-internal-enc.c
 endif
 
+ifneq ($(CONFIG_TLS), openssl)
 AESOBJS += src/crypto/aes-wrap.c
+endif
 ifdef NEED_AES_EAX
 AESOBJS += src/crypto/aes-eax.c
 NEED_AES_CTR=y
@@ -692,8 +692,10 @@ ifdef NEED_AES_OMAC1
 AESOBJS += src/crypto/aes-omac1.c
 endif
 ifdef NEED_AES_UNWRAP
+ifneq ($(CONFIG_TLS), openssl)
 NEED_AES_DEC=y
 AESOBJS += src/crypto/aes-unwrap.c
+endif
 endif
 ifdef NEED_AES_CBC
 NEED_AES_DEC=y
@@ -733,6 +735,10 @@ endif
 
 ifdef NEED_SHA1
 OBJS += $(SHA1OBJS)
+endif
+
+ifneq ($(CONFIG_TLS), openssl)
+OBJS += src/crypto/md5.c
 endif
 
 ifdef NEED_MD5
