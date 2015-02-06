@@ -20,6 +20,9 @@
 #include "eap_peer/eap_methods.h"
 #include "eap_peer/eap.h"
 
+#ifdef ANDROID
+#include <sys/stat.h>
+#endif
 
 static int newline_terminated(const char *buf, size_t buflen)
 {
@@ -1245,12 +1248,21 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 	struct wpa_config_blob *blob;
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 	int ret = 0;
+	int tmp_len = os_strlen(name) + 5;       /* allow space for .tmp suffix */
+	char *tmp_name = os_malloc(tmp_len);
 
-	wpa_printf(MSG_DEBUG, "Writing configuration file '%s'", name);
+	if (tmp_name == NULL)
+		tmp_name = (char *)name;
+	else
+		os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
 
-	f = fopen(name, "w");
+	wpa_printf(MSG_DEBUG, "Writing configuration file '%s'", tmp_name);
+
+	f = fopen(tmp_name, "w");
 	if (f == NULL) {
-		wpa_printf(MSG_DEBUG, "Failed to open '%s' for writing", name);
+		wpa_printf(MSG_DEBUG, "Failed to open '%s' for writing", tmp_name);
+		if (tmp_name != name)
+			os_free(tmp_name);
 		return -1;
 	}
 
@@ -1284,6 +1296,17 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 
 	fclose(f);
+
+	if (tmp_name != name) {
+		int chmod_ret = 0;
+#ifdef ANDROID
+		chmod_ret = chmod(tmp_name, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+#endif
+		if (chmod_ret != 0 || rename(tmp_name, name) != 0)
+			ret = -1;
+
+		os_free(tmp_name);
+	}
 
 	wpa_printf(MSG_DEBUG, "Configuration file '%s' written %ssuccessfully",
 		   name, ret ? "un" : "");
