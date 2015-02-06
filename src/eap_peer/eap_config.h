@@ -418,6 +418,16 @@ struct eap_peer_config {
 	 *
 	 * EAP-WSC (WPS) uses following options: pin=Device_Password and
 	 * uuid=Device_UUID
+	 *
+	 * For wired IEEE 802.1X authentication, "allow_canned_success=1" can be
+	 * used to configure a mode that allows EAP-Success (and EAP-Failure)
+	 * without going through authentication step. Some switches use such
+	 * sequence when forcing the port to be authorized/unauthorized or as a
+	 * fallback option if the authentication server is unreachable. By
+	 * default, wpa_supplicant discards such frames to protect against
+	 * potential attacks by rogue devices, but this option can be used to
+	 * disable that protection for cases where the server/authenticator does
+	 * not need to be authenticated.
 	 */
 	char *phase1;
 
@@ -425,7 +435,9 @@ struct eap_peer_config {
 	 * phase2 - Phase2 (inner authentication with TLS tunnel) parameters
 	 *
 	 * String with field-value pairs, e.g., "auth=MSCHAPV2" for EAP-PEAP or
-	 * "autheap=MSCHAPV2 autheap=MD5" for EAP-TTLS.
+	 * "autheap=MSCHAPV2 autheap=MD5" for EAP-TTLS. "mschapv2_retry=0" can
+	 * be used to disable MSCHAPv2 password retry in authentication failure
+	 * cases.
 	 */
 	char *phase2;
 

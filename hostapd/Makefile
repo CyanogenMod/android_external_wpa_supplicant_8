@@ -6,6 +6,7 @@ ifndef CFLAGS
 CFLAGS = -MMD -O2 -Wall -g
 endif
 
+CFLAGS += $(EXTRA_CFLAGS)
 CFLAGS += -I$(abspath ../src)
 CFLAGS += -I$(abspath ../src/utils)
 
@@ -169,8 +170,6 @@ else
 OBJS += ctrl_iface.o
 OBJS += ../src/ap/ctrl_iface_ap.o
 endif
-
-OBJS += ../src/crypto/md5.o
 
 CFLAGS += -DCONFIG_CTRL_IFACE -DCONFIG_CTRL_IFACE_UNIX
 
@@ -671,7 +670,9 @@ ifdef CONFIG_INTERNAL_AES
 AESOBJS += ../src/crypto/aes-internal.o ../src/crypto/aes-internal-enc.o
 endif
 
+ifneq ($(CONFIG_TLS), openssl)
 AESOBJS += ../src/crypto/aes-wrap.o
+endif
 ifdef NEED_AES_EAX
 AESOBJS += ../src/crypto/aes-eax.o
 NEED_AES_CTR=y
@@ -686,8 +687,10 @@ ifdef NEED_AES_OMAC1
 AESOBJS += ../src/crypto/aes-omac1.o
 endif
 ifdef NEED_AES_UNWRAP
+ifneq ($(CONFIG_TLS), openssl)
 NEED_AES_DEC=y
 AESOBJS += ../src/crypto/aes-unwrap.o
+endif
 endif
 ifdef NEED_AES_CBC
 NEED_AES_DEC=y
@@ -726,6 +729,10 @@ endif
 
 ifdef NEED_SHA1
 OBJS += $(SHA1OBJS)
+endif
+
+ifneq ($(CONFIG_TLS), openssl)
+OBJS += ../src/crypto/md5.o
 endif
 
 ifdef NEED_MD5
@@ -954,7 +961,7 @@ hostapd_cli: $(OBJS_c)
 	$(Q)$(CC) $(LDFLAGS) -o hostapd_cli $(OBJS_c) $(LIBS_c)
 	@$(E) "  LD " $@
 
-NOBJS = nt_password_hash.o ../src/crypto/ms_funcs.o $(SHA1OBJS) ../src/crypto/md5.o
+NOBJS = nt_password_hash.o ../src/crypto/ms_funcs.o $(SHA1OBJS)
 NOBJS += ../src/utils/common.o
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4

@@ -31,17 +31,9 @@
 #include "sha384.h"
 #include "crypto.h"
 
-#if OPENSSL_VERSION_NUMBER < 0x00907000
-#define DES_key_schedule des_key_schedule
-#define DES_cblock des_cblock
-#define DES_set_key(key, schedule) des_set_key((key), *(schedule))
-#define DES_ecb_encrypt(input, output, ks, enc) \
-	des_ecb_encrypt((input), (output), *(ks), (enc))
-#endif /* openssl < 0.9.7 */
-
 static BIGNUM * get_group5_prime(void)
 {
-#if OPENSSL_VERSION_NUMBER < 0x00908000 || defined(OPENSSL_IS_BORINGSSL)
+#ifdef OPENSSL_IS_BORINGSSL
 	static const unsigned char RFC3526_PRIME_1536[] = {
 		0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xC9,0x0F,0xDA,0xA2,
 		0x21,0x68,0xC2,0x34,0xC4,0xC6,0x62,0x8B,0x80,0xDC,0x1C,0xD1,
@@ -61,19 +53,10 @@ static BIGNUM * get_group5_prime(void)
 		0xCA,0x23,0x73,0x27,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
 	};
         return BN_bin2bn(RFC3526_PRIME_1536, sizeof(RFC3526_PRIME_1536), NULL);
-#else /* openssl < 0.9.8 */
+#else /* OPENSSL_IS_BORINGSSL */
 	return get_rfc3526_prime_1536(NULL);
-#endif /* openssl < 0.9.8 */
+#endif /* OPENSSL_IS_BORINGSSL */
 }
-
-#if OPENSSL_VERSION_NUMBER < 0x00908000
-#ifndef OPENSSL_NO_SHA256
-#ifndef OPENSSL_FIPS
-#define NO_SHA256_WRAPPER
-#endif
-#endif
-
-#endif /* openssl < 0.9.8 */
 
 #ifdef OPENSSL_NO_SHA256
 #define NO_SHA256_WRAPPER
@@ -311,6 +294,33 @@ void aes_decrypt_deinit(void *ctx)
 	}
 	EVP_CIPHER_CTX_cleanup(c);
 	bin_clear_free(c, sizeof(*c));
+}
+
+
+int aes_wrap(const u8 *kek, size_t kek_len, int n, const u8 *plain, u8 *cipher)
+{
+	AES_KEY actx;
+	int res;
+
+	if (AES_set_encrypt_key(kek, kek_len << 3, &actx))
+		return -1;
+	res = AES_wrap_key(&actx, NULL, cipher, plain, n * 8);
+	OPENSSL_cleanse(&actx, sizeof(actx));
+	return res <= 0 ? -1 : 0;
+}
+
+
+int aes_unwrap(const u8 *kek, size_t kek_len, int n, const u8 *cipher,
+	       u8 *plain)
+{
+	AES_KEY actx;
+	int res;
+
+	if (AES_set_decrypt_key(kek, kek_len << 3, &actx))
+		return -1;
+	res = AES_unwrap_key(&actx, NULL, plain, cipher, (n + 1) * 8);
+	OPENSSL_cleanse(&actx, sizeof(actx));
+	return res <= 0 ? -1 : 0;
 }
 
 
@@ -688,43 +698,26 @@ int crypto_hash_finish(struct crypto_hash *ctx, u8 *mac, size_t *len)
 }
 
 
-int pbkdf2_sha1(const char *passphrase, const u8 *ssid, size_t ssid_len,
-		int iterations, u8 *buf, size_t buflen)
-{
-#if OPENSSL_VERSION_NUMBER < 0x00908000
-	if (PKCS5_PBKDF2_HMAC_SHA1(passphrase, os_strlen(passphrase),
-				   (unsigned char *) ssid,
-				   ssid_len, iterations, buflen, buf) != 1)
-		return -1;
-#else /* openssl < 0.9.8 */
-	if (PKCS5_PBKDF2_HMAC_SHA1(passphrase, os_strlen(passphrase), ssid,
-				   ssid_len, iterations, buflen, buf) != 1)
-		return -1;
-#endif /* openssl < 0.9.8 */
-	return 0;
-}
-
-
-int hmac_sha1_vector(const u8 *key, size_t key_len, size_t num_elem,
-		     const u8 *addr[], const size_t *len, u8 *mac)
+static int openssl_hmac_vector(const EVP_MD *type, const u8 *key,
+			       size_t key_len, size_t num_elem,
+			       const u8 *addr[], const size_t *len, u8 *mac,
+			       unsigned int mdlen)
 {
 	HMAC_CTX ctx;
 	size_t i;
-	unsigned int mdlen;
 	int res;
 
 	HMAC_CTX_init(&ctx);
 #if OPENSSL_VERSION_NUMBER < 0x00909000
-	HMAC_Init_ex(&ctx, key, key_len, EVP_sha1(), NULL);
+	HMAC_Init_ex(&ctx, key, key_len, type, NULL);
 #else /* openssl < 0.9.9 */
-	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha1(), NULL) != 1)
+	if (HMAC_Init_ex(&ctx, key, key_len, type, NULL) != 1)
 		return -1;
 #endif /* openssl < 0.9.9 */
 
 	for (i = 0; i < num_elem; i++)
 		HMAC_Update(&ctx, addr[i], len[i]);
 
-	mdlen = 20;
 #if OPENSSL_VERSION_NUMBER < 0x00909000
 	HMAC_Final(&ctx, mac, &mdlen);
 	res = 1;
@@ -734,6 +727,43 @@ int hmac_sha1_vector(const u8 *key, size_t key_len, size_t num_elem,
 	HMAC_CTX_cleanup(&ctx);
 
 	return res == 1 ? 0 : -1;
+}
+
+
+#ifndef CONFIG_FIPS
+
+int hmac_md5_vector(const u8 *key, size_t key_len, size_t num_elem,
+		    const u8 *addr[], const size_t *len, u8 *mac)
+{
+	return openssl_hmac_vector(EVP_md5(), key ,key_len, num_elem, addr, len,
+				   mac, 16);
+}
+
+
+int hmac_md5(const u8 *key, size_t key_len, const u8 *data, size_t data_len,
+	     u8 *mac)
+{
+	return hmac_md5_vector(key, key_len, 1, &data, &data_len, mac);
+}
+
+#endif /* CONFIG_FIPS */
+
+
+int pbkdf2_sha1(const char *passphrase, const u8 *ssid, size_t ssid_len,
+		int iterations, u8 *buf, size_t buflen)
+{
+	if (PKCS5_PBKDF2_HMAC_SHA1(passphrase, os_strlen(passphrase), ssid,
+				   ssid_len, iterations, buflen, buf) != 1)
+		return -1;
+	return 0;
+}
+
+
+int hmac_sha1_vector(const u8 *key, size_t key_len, size_t num_elem,
+		     const u8 *addr[], const size_t *len, u8 *mac)
+{
+	return openssl_hmac_vector(EVP_sha1(), key, key_len, num_elem, addr,
+				   len, mac, 20);
 }
 
 
@@ -749,32 +779,8 @@ int hmac_sha1(const u8 *key, size_t key_len, const u8 *data, size_t data_len,
 int hmac_sha256_vector(const u8 *key, size_t key_len, size_t num_elem,
 		       const u8 *addr[], const size_t *len, u8 *mac)
 {
-	HMAC_CTX ctx;
-	size_t i;
-	unsigned int mdlen;
-	int res;
-
-	HMAC_CTX_init(&ctx);
-#if OPENSSL_VERSION_NUMBER < 0x00909000
-	HMAC_Init_ex(&ctx, key, key_len, EVP_sha256(), NULL);
-#else /* openssl < 0.9.9 */
-	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha256(), NULL) != 1)
-		return -1;
-#endif /* openssl < 0.9.9 */
-
-	for (i = 0; i < num_elem; i++)
-		HMAC_Update(&ctx, addr[i], len[i]);
-
-	mdlen = 32;
-#if OPENSSL_VERSION_NUMBER < 0x00909000
-	HMAC_Final(&ctx, mac, &mdlen);
-	res = 1;
-#else /* openssl < 0.9.9 */
-	res = HMAC_Final(&ctx, mac, &mdlen);
-#endif /* openssl < 0.9.9 */
-	HMAC_CTX_cleanup(&ctx);
-
-	return res == 1 ? 0 : -1;
+	return openssl_hmac_vector(EVP_sha256(), key, key_len, num_elem, addr,
+				   len, mac, 32);
 }
 
 
@@ -792,23 +798,8 @@ int hmac_sha256(const u8 *key, size_t key_len, const u8 *data,
 int hmac_sha384_vector(const u8 *key, size_t key_len, size_t num_elem,
 		       const u8 *addr[], const size_t *len, u8 *mac)
 {
-	HMAC_CTX ctx;
-	size_t i;
-	unsigned int mdlen;
-	int res;
-
-	HMAC_CTX_init(&ctx);
-	if (HMAC_Init_ex(&ctx, key, key_len, EVP_sha384(), NULL) != 1)
-		return -1;
-
-	for (i = 0; i < num_elem; i++)
-		HMAC_Update(&ctx, addr[i], len[i]);
-
-	mdlen = 32;
-	res = HMAC_Final(&ctx, mac, &mdlen);
-	HMAC_CTX_cleanup(&ctx);
-
-	return res == 1 ? 0 : -1;
+	return openssl_hmac_vector(EVP_sha384(), key, key_len, num_elem, addr,
+				   len, mac, 32);
 }
 
 
