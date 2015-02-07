@@ -162,6 +162,9 @@ static Boolean wpa_qmi_read_card_status(int sim_num);
 #define EAP_SUB_TYPE_AKA_IDENTITY  0x05
 #define EAP_RESP_TYPE_NAK             3
 
+#define EAP_PROXY_APP_TYPE_SIM BIT(0)
+#define EAP_PROXY_APP_TYPE_AKA BIT(1)
+
 /* Call-back function to process QMI system events */
 void handle_qmi_sys_events(qmi_sys_event_type  eventId,
 const qmi_sys_event_info_type *eventInfo, void *userData)
@@ -2053,6 +2056,61 @@ int eap_proxy_allowed_method (struct eap_peer_config *config, int vendor,
 			return 1;
 	}
 	return 0;
+}
+
+size_t eap_proxy_get_sim_info (char *reply_buf, int buf_len)
+{
+	char *pos, *end;
+	int i, ret;
+	int sim_app_type;
+
+	if (buf_len == 0)
+		return 0;
+
+	pos = reply_buf;
+	end = pos + buf_len;
+
+	ret = os_snprintf(pos, end - pos, "no_of_sims=%d", MAX_NO_OF_SIM_SUPPORTED);
+	if (ret < 0 || ret >= end - pos)
+		return ret;
+	pos += ret;
+
+	for (i = 0; i < MAX_NO_OF_SIM_SUPPORTED; i++)
+	{
+		if (wpa_qmi_read_card_status(i)) {
+			sim_app_type = 0;
+			if (wpa_uim[i].card_info[i].app_type == UIM_APP_TYPE_SIM_V01) {
+				wpa_printf(MSG_ERROR, "eap_proxy: sim%d type is 2G", i+1);
+				sim_app_type |= EAP_PROXY_APP_TYPE_SIM;
+			} else if (wpa_uim[i].card_info[i].app_type == UIM_APP_TYPE_USIM_V01) {
+				wpa_printf(MSG_ERROR, "eap_proxy: sim%d type is 3G", i+1);
+				sim_app_type |= EAP_PROXY_APP_TYPE_SIM;
+				sim_app_type |= EAP_PROXY_APP_TYPE_AKA;
+			} else {
+				wpa_printf(MSG_ERROR, "eap_proxy: Unknown SIM type!!!");
+				continue;
+			}
+
+			wpa_printf(MSG_ERROR, "eap_proxy: SIM %d is of type %d", i+1, sim_app_type);
+			ret = os_snprintf(pos, end - pos, " sim%d=%d", i+1, sim_app_type);
+			if (ret < 0 || ret >= end - pos)
+				break;
+
+			pos += ret;
+		} else {
+			sim_app_type = 0;
+			ret = os_snprintf(pos, end - pos, " sim%d=%d", i+1, sim_app_type);
+			if (ret < 0 || ret >= end - pos)
+				break;
+			pos += ret;
+		}
+	}
+
+	reply_buf[buf_len - 1] = '\0';
+	ret = pos - reply_buf;
+	wpa_printf(MSG_ERROR, "eap_proxy: reply_buf_len = %d", ret);
+	wpa_printf(MSG_ERROR, "eap_proxy: reply_buf = %s\n", reply_buf);
+	return ret;
 }
 
 #endif  /* CONFIG_EAP_PROXY */
