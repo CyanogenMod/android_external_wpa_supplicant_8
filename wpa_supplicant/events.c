@@ -175,6 +175,15 @@ void wpa_supplicant_stop_countermeasures(void *eloop_ctx, void *sock_ctx)
 		wpa_s->countermeasures = 0;
 		wpa_drv_set_countermeasures(wpa_s, 0);
 		wpa_msg(wpa_s, MSG_INFO, "WPA: TKIP countermeasures stopped");
+
+		/*
+		 * It is possible that the device is sched scanning, which means
+		 * that a connection attempt will be done only when we receive
+		 * scan results. However, in this case, it would be preferable
+		 * to scan and connect immediately, so cancel the sched_scan and
+		 * issue a regular scan flow.
+		 */
+		wpa_supplicant_cancel_sched_scan(wpa_s);
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
 	}
 }
@@ -1214,16 +1223,26 @@ static int wpa_supplicant_need_to_roam(struct wpa_supplicant *wpa_s,
 
 #ifndef CONFIG_NO_ROAMING
 	wpa_dbg(wpa_s, MSG_DEBUG, "Considering within-ESS reassociation");
-	wpa_dbg(wpa_s, MSG_DEBUG, "Current BSS: " MACSTR " level=%d",
-		MAC2STR(current_bss->bssid), current_bss->level);
-	wpa_dbg(wpa_s, MSG_DEBUG, "Selected BSS: " MACSTR " level=%d",
-		MAC2STR(selected->bssid), selected->level);
+	wpa_dbg(wpa_s, MSG_DEBUG, "Current BSS: " MACSTR
+		" level=%d snr=%d est_throughput=%u",
+		MAC2STR(current_bss->bssid), current_bss->level,
+		current_bss->snr, current_bss->est_throughput);
+	wpa_dbg(wpa_s, MSG_DEBUG, "Selected BSS: " MACSTR
+		" level=%d snr=%d est_throughput=%u",
+		MAC2STR(selected->bssid), selected->level,
+		selected->snr, selected->est_throughput);
 
 	if (wpa_s->current_ssid->bssid_set &&
 	    os_memcmp(selected->bssid, wpa_s->current_ssid->bssid, ETH_ALEN) ==
 	    0) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Allow reassociation - selected BSS "
 			"has preferred BSSID");
+		return 1;
+	}
+
+	if (selected->est_throughput > current_bss->est_throughput + 5000) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Allow reassociation - selected BSS has better estimated throughput");
 		return 1;
 	}
 
@@ -1448,7 +1467,12 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 			int timeout_sec = wpa_s->scan_interval;
 			int timeout_usec = 0;
 #ifdef CONFIG_P2P
-			if (wpas_p2p_scan_no_go_seen(wpa_s) == 1)
+			int res;
+
+			res = wpas_p2p_scan_no_go_seen(wpa_s);
+			if (res == 2)
+				return 2;
+			if (res == 1)
 				return 0;
 
 			if (wpa_s->p2p_in_provisioning ||
@@ -1498,12 +1522,21 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 }
 
 
-static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
-					      union wpa_event_data *data)
+static int wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
+					     union wpa_event_data *data)
 {
 	struct wpa_supplicant *ifs;
+	int res;
 
-	if (_wpa_supplicant_event_scan_results(wpa_s, data, 1) != 0) {
+	res = _wpa_supplicant_event_scan_results(wpa_s, data, 1);
+	if (res == 2) {
+		/*
+		 * Interface may have been removed, so must not dereference
+		 * wpa_s after this.
+		 */
+		return 1;
+	}
+	if (res != 0) {
 		/*
 		 * If no scan results could be fetched, then no need to
 		 * notify those interfaces that did not actually request
@@ -1511,7 +1544,7 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 		 * interface, do not notify other interfaces to avoid concurrent
 		 * operations during a connection attempt.
 		 */
-		return;
+		return 0;
 	}
 
 	/*
@@ -1526,6 +1559,8 @@ static void wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 			_wpa_supplicant_event_scan_results(ifs, data, 0);
 		}
 	}
+
+	return 0;
 }
 
 #endif /* CONFIG_NO_SCAN_PROCESSING */
@@ -3092,7 +3127,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			wpa_dbg(wpa_s, MSG_DEBUG, "Scan completed in %ld.%06ld seconds",
 				diff.sec, diff.usec);
 		}
-		wpa_supplicant_event_scan_results(wpa_s, data);
+		if (wpa_supplicant_event_scan_results(wpa_s, data))
+			break; /* interface may have been removed */
 		wpa_s->own_scan_running = 0;
 		wpa_s->radio->external_scan_running = 0;
 		radio_work_check_next(wpa_s);
@@ -3409,6 +3445,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			data->signal_change.current_signal,
 			data->signal_change.current_noise,
 			data->signal_change.current_txrate);
+		wpa_bss_update_level(wpa_s->current_bss,
+				     data->signal_change.current_signal);
 		bgscan_notify_signal_change(
 			wpa_s, data->signal_change.above_threshold,
 			data->signal_change.current_signal,

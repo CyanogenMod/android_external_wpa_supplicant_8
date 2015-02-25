@@ -117,8 +117,8 @@ static void wpas_p2p_set_group_idle_timeout(struct wpa_supplicant *wpa_s);
 static void wpas_p2p_group_formation_timeout(void *eloop_ctx,
 					     void *timeout_ctx);
 static void wpas_p2p_group_freq_conflict(void *eloop_ctx, void *timeout_ctx);
-static void wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
-					int group_added);
+static int wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
+				       int group_added);
 static void wpas_p2p_stop_find_oper(struct wpa_supplicant *wpa_s);
 static void wpas_stop_listen(void *ctx);
 static void wpas_p2p_psk_failure_removal(void *eloop_ctx, void *timeout_ctx);
@@ -1401,6 +1401,9 @@ static void wpas_p2p_send_action_tx_status(struct wpa_supplicant *wpa_s,
 		wpa_s->pending_pd_before_join = 0;
 		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: No ACK for PD Req "
 			"during p2p_connect-auto");
+		wpa_msg_global(wpa_s->parent, MSG_INFO,
+			       P2P_EVENT_FALLBACK_TO_GO_NEG
+			       "reason=no-ACK-to-PD-Req");
 		wpas_p2p_fallback_to_go_neg(wpa_s, 0);
 		return;
 	}
@@ -1849,6 +1852,7 @@ static void wpas_p2p_clone_config(struct wpa_supplicant *dst,
 	d->ignore_old_scan_res = s->ignore_old_scan_res;
 	d->beacon_int = s->beacon_int;
 	d->dtim_period = s->dtim_period;
+	d->p2p_go_ctwindow = s->p2p_go_ctwindow;
 	d->disassoc_low_ack = s->disassoc_low_ack;
 	d->disable_scan_offload = s->disable_scan_offload;
 	d->passive_scan = s->passive_scan;
@@ -3728,6 +3732,9 @@ static void wpas_prov_disc_fail(void *ctx, const u8 *peer,
 	if (wpa_s->p2p_fallback_to_go_neg) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: PD for p2p_connect-auto "
 			"failed - fall back to GO Negotiation");
+		wpa_msg_global(wpa_s->parent, MSG_INFO,
+			       P2P_EVENT_FALLBACK_TO_GO_NEG
+			       "reason=PD-failed");
 		wpas_p2p_fallback_to_go_neg(wpa_s, 0);
 		return;
 	}
@@ -5545,6 +5552,9 @@ static void wpas_p2p_scan_res_join(struct wpa_supplicant *wpa_s,
 		if (join < 0) {
 			wpa_printf(MSG_DEBUG, "P2P: Peer was not found to be "
 				   "running a GO -> use GO Negotiation");
+			wpa_msg_global(wpa_s->parent, MSG_INFO,
+				       P2P_EVENT_FALLBACK_TO_GO_NEG
+				       "reason=peer-not-running-GO");
 			wpas_p2p_connect(wpa_s, wpa_s->pending_join_dev_addr,
 					 wpa_s->p2p_pin, wpa_s->p2p_wps_method,
 					 wpa_s->p2p_persistent_group, 0, 0, 0,
@@ -5560,8 +5570,11 @@ static void wpas_p2p_scan_res_join(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "P2P: Peer was found running GO%s -> "
 			   "try to join the group", join ? "" :
 			   " in older scan");
-		if (!join)
+		if (!join) {
+			wpa_msg_global(wpa_s->parent, MSG_INFO,
+				       P2P_EVENT_FALLBACK_TO_GO_NEG_ENABLED);
 			wpa_s->p2p_fallback_to_go_neg = 1;
+		}
 	}
 
 	freq = p2p_get_oper_freq(wpa_s->global->p2p,
@@ -8184,16 +8197,18 @@ void wpas_p2p_notify_ap_sta_authorized(struct wpa_supplicant *wpa_s,
 }
 
 
-static void wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
-					int group_added)
+static int wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
+				       int group_added)
 {
 	struct wpa_supplicant *group = wpa_s;
+	int ret = 0;
+
 	if (wpa_s->global->p2p_group_formation)
 		group = wpa_s->global->p2p_group_formation;
 	wpa_s = wpa_s->parent;
 	offchannel_send_action_done(wpa_s);
 	if (group_added)
-		wpas_p2p_group_delete(group, P2P_GROUP_REMOVAL_SILENT);
+		ret = wpas_p2p_group_delete(group, P2P_GROUP_REMOVAL_SILENT);
 	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Fall back to GO Negotiation");
 	wpas_p2p_connect(wpa_s, wpa_s->pending_join_dev_addr, wpa_s->p2p_pin,
 			 wpa_s->p2p_wps_method, wpa_s->p2p_persistent_group, 0,
@@ -8202,11 +8217,14 @@ static void wpas_p2p_fallback_to_go_neg(struct wpa_supplicant *wpa_s,
 			 wpa_s->p2p_pd_before_go_neg,
 			 wpa_s->p2p_go_ht40,
 			 wpa_s->p2p_go_vht);
+	return ret;
 }
 
 
 int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s)
 {
+	int res;
+
 	if (!wpa_s->p2p_fallback_to_go_neg ||
 	    wpa_s->p2p_in_provisioning <= 5)
 		return 0;
@@ -8216,9 +8234,11 @@ int wpas_p2p_scan_no_go_seen(struct wpa_supplicant *wpa_s)
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: GO not found for p2p_connect-auto - "
 		"fallback to GO Negotiation");
-	wpas_p2p_fallback_to_go_neg(wpa_s, 1);
+	wpa_msg_global(wpa_s->parent, MSG_INFO, P2P_EVENT_FALLBACK_TO_GO_NEG
+		       "reason=GO-not-found");
+	res = wpas_p2p_fallback_to_go_neg(wpa_s, 1);
 
-	return 1;
+	return res == 1 ? 2 : 1;
 }
 
 

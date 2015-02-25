@@ -82,8 +82,7 @@ static void hostapd_reload_bss(struct hostapd_data *hapd)
 		 * Force PSK to be derived again since SSID or passphrase may
 		 * have changed.
 		 */
-		os_free(ssid->wpa_psk);
-		ssid->wpa_psk = NULL;
+		hostapd_config_clear_wpa_psk(&hapd->conf->ssid.wpa_psk);
 	}
 	if (hostapd_setup_wpa_psk(hapd->conf)) {
 		wpa_printf(MSG_ERROR, "Failed to re-configure WPA PSK "
@@ -357,6 +356,11 @@ static void hostapd_cleanup(struct hostapd_data *hapd)
 static void hostapd_cleanup_iface_partial(struct hostapd_iface *iface)
 {
 	wpa_printf(MSG_DEBUG, "%s(%p)", __func__, iface);
+#ifdef CONFIG_IEEE80211N
+#ifdef NEED_AP_MLME
+	hostapd_stop_setup_timers(iface);
+#endif /* NEED_AP_MLME */
+#endif /* CONFIG_IEEE80211N */
 	hostapd_free_hw_features(iface->hw_features, iface->num_hw_features);
 	iface->hw_features = NULL;
 	os_free(iface->current_rates);

@@ -265,6 +265,17 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	else if (wpa_s->conf->beacon_int)
 		conf->beacon_int = wpa_s->conf->beacon_int;
 
+#ifdef CONFIG_P2P
+	if (wpa_s->conf->p2p_go_ctwindow > conf->beacon_int) {
+		wpa_printf(MSG_INFO,
+			   "CTWindow (%d) is bigger than beacon interval (%d) - avoid configuring it",
+			   wpa_s->conf->p2p_go_ctwindow, conf->beacon_int);
+		conf->p2p_go_ctwindow = 0;
+	} else {
+		conf->p2p_go_ctwindow = wpa_s->conf->p2p_go_ctwindow;
+	}
+#endif /* CONFIG_P2P */
+
 	if ((bss->wpa & 2) && bss->rsn_pairwise == 0)
 		bss->rsn_pairwise = bss->wpa_pairwise;
 	bss->wpa_group = wpa_select_ap_group_cipher(bss->wpa, bss->wpa_pairwise,
@@ -1238,3 +1249,14 @@ int wpas_ap_wps_add_nfc_pw(struct wpa_supplicant *wpa_s, u16 pw_id,
 					      pw ? wpabuf_len(pw) : 0, 1);
 }
 #endif /* CONFIG_WPS_NFC */
+
+
+int wpas_ap_stop_ap(struct wpa_supplicant *wpa_s)
+{
+	struct hostapd_data *hapd;
+
+	if (!wpa_s->ap_iface)
+		return -1;
+	hapd = wpa_s->ap_iface->bss[0];
+	return hostapd_ctrl_iface_stop_ap(hapd);
+}

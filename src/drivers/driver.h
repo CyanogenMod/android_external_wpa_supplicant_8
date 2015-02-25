@@ -213,6 +213,9 @@ struct hostapd_hw_modes {
  * @tsf: Timestamp
  * @age: Age of the information in milliseconds (i.e., how many milliseconds
  * ago the last Beacon or Probe Response frame was received)
+ * @est_throughput: Estimated throughput in kbps (this is calculated during
+ * scan result processing if left zero by the driver wrapper)
+ * @snr: Signal-to-noise ratio in dB (calculated during scan result processing)
  * @ie_len: length of the following IE field in octets
  * @beacon_ie_len: length of the following Beacon IE field in octets
  *
@@ -241,6 +244,8 @@ struct wpa_scan_res {
 	int level;
 	u64 tsf;
 	unsigned int age;
+	unsigned int est_throughput;
+	int snr;
 	size_t ie_len;
 	size_t beacon_ie_len;
 	/* Followed by ie_len + beacon_ie_len octets of IE data */
@@ -767,6 +772,14 @@ struct wpa_driver_associate_params {
 	int fixed_bssid;
 
 	/**
+	 * fixed_freq - Fix control channel in IBSS mode
+	 * 0 = don't fix control channel (default)
+	 * 1 = fix control channel; this prevents IBSS merging with another
+	 *	channel
+	 */
+	int fixed_freq;
+
+	/**
 	 * disable_ht - Disable HT (IEEE 802.11n) for this connection
 	 */
 	int disable_ht;
@@ -1010,6 +1023,11 @@ struct wpa_driver_ap_params {
 	int ap_max_inactivity;
 
 	/**
+	 * ctwindow - Client Traffic Window (in TUs)
+	 */
+	u8 p2p_go_ctwindow;
+
+	/**
 	 * smps_mode - SMPS mode
 	 *
 	 * SMPS mode to be used by the AP, specified as the relevant bits of
@@ -1031,6 +1049,11 @@ struct wpa_driver_ap_params {
 	 * freq - Channel parameters for dynamic bandwidth changes
 	 */
 	struct hostapd_freq_params *freq;
+
+	/**
+	 * reenable - Whether this is to re-enable beaconing
+	 */
+	int reenable;
 };
 
 struct wpa_driver_mesh_bss_params {
@@ -1186,6 +1209,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_TDLS_CHANNEL_SWITCH	0x0000000800000000ULL
 /** Driver supports IBSS with HT datarates */
 #define WPA_DRIVER_FLAGS_HT_IBSS		0x0000001000000000ULL
+/** Driver supports IBSS with VHT datarates */
+#define WPA_DRIVER_FLAGS_VHT_IBSS		0x0000002000000000ULL
 	u64 flags;
 
 #define WPA_DRIVER_SMPS_MODE_STATIC			0x00000001
@@ -3758,7 +3783,7 @@ enum wpa_event_type {
 	EVENT_CONNECT_FAILED_REASON,
 
 	/**
-	 * EVENT_RADAR_DETECTED - Notify of radar detection
+	 * EVENT_DFS_RADAR_DETECTED - Notify of radar detection
 	 *
 	 * A radar has been detected on the supplied frequency, hostapd should
 	 * react accordingly (e.g., change channel).
@@ -3766,14 +3791,14 @@ enum wpa_event_type {
 	EVENT_DFS_RADAR_DETECTED,
 
 	/**
-	 * EVENT_CAC_FINISHED - Notify that channel availability check has been completed
+	 * EVENT_DFS_CAC_FINISHED - Notify that channel availability check has been completed
 	 *
 	 * After a successful CAC, the channel can be marked clear and used.
 	 */
 	EVENT_DFS_CAC_FINISHED,
 
 	/**
-	 * EVENT_CAC_ABORTED - Notify that channel availability check has been aborted
+	 * EVENT_DFS_CAC_ABORTED - Notify that channel availability check has been aborted
 	 *
 	 * The CAC was not successful, and the channel remains in the previous
 	 * state. This may happen due to a radar beeing detected or other
@@ -3782,7 +3807,7 @@ enum wpa_event_type {
 	EVENT_DFS_CAC_ABORTED,
 
 	/**
-	 * EVENT_DFS_CAC_NOP_FINISHED - Notify that non-occupancy period is over
+	 * EVENT_DFS_NOP_FINISHED - Notify that non-occupancy period is over
 	 *
 	 * The channel which was previously unavailable is now available again.
 	 */
@@ -3831,6 +3856,15 @@ enum wpa_event_type {
 	 * in device.
 	 */
 	EVENT_ACS_CHANNEL_SELECTED,
+
+	/**
+	 * EVENT_DFS_CAC_STARTED - Notify that channel availability check has
+	 * been started.
+	 *
+	 * This event indicates that channel availability check has been started
+	 * on a DFS frequency by a driver that supports DFS Offload.
+	 */
+	EVENT_DFS_CAC_STARTED,
 };
 
 

@@ -9,6 +9,9 @@
 #include "includes.h"
 #include <time.h>
 #include <sys/stat.h>
+#ifdef ANDROID
+#include "private/android_filesystem_config.h"
+#endif /* ANDROID */
 
 #include "common.h"
 #include "utils/browser.h"
@@ -571,6 +574,21 @@ int hs20_add_pps_mo(struct hs20_osu_client *ctx, const char *uri,
 		}
 	}
 
+#ifdef ANDROID
+	/* Allow processes running with Group ID as AID_WIFI,
+	 * to read files from SP/<fqdn> directory */
+	if (chown(fname, -1, AID_WIFI)) {
+		wpa_printf(MSG_INFO, "CTRL: Could not chown directory: %s",
+			   strerror(errno));
+		/* Try to continue anyway */
+	}
+	if (chmod(fname, S_IRWXU | S_IRGRP | S_IXGRP) < 0) {
+		wpa_printf(MSG_INFO, "CTRL: Could not chmod directory: %s",
+			   strerror(errno));
+		/* Try to continue anyway */
+	}
+#endif /* ANDROID */
+
 	snprintf(fname, fname_len, "SP/%s/pps.xml", fqdn);
 
 	if (os_file_exists(fname)) {
@@ -669,6 +687,10 @@ int update_pps_file(struct hs20_osu_client *ctx, const char *pps_fname,
 	wpa_printf(MSG_INFO, "Updating PPS MO %s", pps_fname);
 
 	str = xml_node_to_str(ctx->xml, pps);
+	if (str == NULL) {
+		wpa_printf(MSG_ERROR, "No node found");
+		return -1;
+	}
 	wpa_printf(MSG_MSGDUMP, "[hs20] Updated PPS: '%s'", str);
 
 	snprintf(backup, sizeof(backup), "%s.bak", pps_fname);

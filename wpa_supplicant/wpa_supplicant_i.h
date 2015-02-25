@@ -712,6 +712,7 @@ struct wpa_supplicant {
 	int mesh_if_idx;
 	unsigned int mesh_if_created:1;
 	unsigned int mesh_ht_enabled:1;
+	int mesh_auth_block_duration; /* sec */
 #endif /* CONFIG_MESH */
 
 	unsigned int off_channel_freq;
@@ -887,6 +888,12 @@ struct wpa_supplicant {
 		u16 num_modes;
 		u16 flags;
 	} hw;
+	enum local_hw_capab {
+		CAPAB_NO_HT_VHT,
+		CAPAB_HT,
+		CAPAB_HT40,
+		CAPAB_VHT,
+	} hw_capab;
 #ifdef CONFIG_MACSEC
 	struct ieee802_1x_kay *kay;
 #endif /* CONFIG_MACSEC */
