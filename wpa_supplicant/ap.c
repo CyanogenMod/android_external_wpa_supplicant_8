@@ -26,6 +26,7 @@
 #include "ap/ieee802_1x.h"
 #include "ap/wps_hostapd.h"
 #include "ap/ctrl_iface_ap.h"
+#include "ap/dfs.h"
 #include "wps/wps.h"
 #include "common/ieee802_11_defs.h"
 #include "config_ssid.h"
@@ -164,6 +165,13 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 	}
 
 	wpa_supplicant_conf_ap_ht(wpa_s, ssid, conf);
+
+	if (ieee80211_is_dfs(ssid->frequency) && wpa_s->conf->country[0]) {
+		conf->ieee80211h = 1;
+		conf->ieee80211d = 1;
+		conf->country[0] = wpa_s->conf->country[0];
+		conf->country[1] = wpa_s->conf->country[1];
+	}
 
 #ifdef CONFIG_P2P
 	if (conf->hw_mode == HOSTAPD_MODE_IEEE80211G &&
@@ -565,6 +573,9 @@ int wpa_supplicant_create_ap(struct wpa_supplicant *wpa_s,
 		params.uapsd = 1; /* mandatory for P2P GO */
 	else
 		params.uapsd = -1;
+
+	if (ieee80211_is_dfs(params.freq.freq))
+		params.freq.freq = 0; /* set channel after CAC */
 
 	if (wpa_drv_associate(wpa_s, &params) < 0) {
 		wpa_msg(wpa_s, MSG_INFO, "Failed to start AP functionality");
@@ -1260,3 +1271,66 @@ int wpas_ap_stop_ap(struct wpa_supplicant *wpa_s)
 	hapd = wpa_s->ap_iface->bss[0];
 	return hostapd_ctrl_iface_stop_ap(hapd);
 }
+
+
+#ifdef NEED_AP_MLME
+void wpas_event_dfs_radar_detected(struct wpa_supplicant *wpa_s,
+				   struct dfs_event *radar)
+{
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return;
+	wpa_printf(MSG_DEBUG, "DFS radar detected on %d MHz", radar->freq);
+	hostapd_dfs_radar_detected(wpa_s->ap_iface, radar->freq,
+				   radar->ht_enabled, radar->chan_offset,
+				   radar->chan_width,
+				   radar->cf1, radar->cf2);
+}
+
+
+void wpas_event_dfs_cac_started(struct wpa_supplicant *wpa_s,
+				struct dfs_event *radar)
+{
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return;
+	wpa_printf(MSG_DEBUG, "DFS CAC started on %d MHz", radar->freq);
+	hostapd_dfs_start_cac(wpa_s->ap_iface, radar->freq,
+			      radar->ht_enabled, radar->chan_offset,
+			      radar->chan_width, radar->cf1, radar->cf2);
+}
+
+
+void wpas_event_dfs_cac_finished(struct wpa_supplicant *wpa_s,
+				 struct dfs_event *radar)
+{
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return;
+	wpa_printf(MSG_DEBUG, "DFS CAC finished on %d MHz", radar->freq);
+	hostapd_dfs_complete_cac(wpa_s->ap_iface, 1, radar->freq,
+				 radar->ht_enabled, radar->chan_offset,
+				 radar->chan_width, radar->cf1, radar->cf2);
+}
+
+
+void wpas_event_dfs_cac_aborted(struct wpa_supplicant *wpa_s,
+				struct dfs_event *radar)
+{
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return;
+	wpa_printf(MSG_DEBUG, "DFS CAC aborted on %d MHz", radar->freq);
+	hostapd_dfs_complete_cac(wpa_s->ap_iface, 0, radar->freq,
+				 radar->ht_enabled, radar->chan_offset,
+				 radar->chan_width, radar->cf1, radar->cf2);
+}
+
+
+void wpas_event_dfs_cac_nop_finished(struct wpa_supplicant *wpa_s,
+				     struct dfs_event *radar)
+{
+	if (!wpa_s->ap_iface || !wpa_s->ap_iface->bss[0])
+		return;
+	wpa_printf(MSG_DEBUG, "DFS NOP finished on %d MHz", radar->freq);
+	hostapd_dfs_nop_finished(wpa_s->ap_iface, radar->freq,
+				 radar->ht_enabled, radar->chan_offset,
+				 radar->chan_width, radar->cf1, radar->cf2);
+}
+#endif /* NEED_AP_MLME */

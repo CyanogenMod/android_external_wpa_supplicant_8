@@ -209,6 +209,7 @@ static int set_disallow_aps(struct wpa_supplicant *wpa_s, char *val)
 	wpa_s->sme.prev_bssid_set = 0;
 #endif /* CONFIG_SME */
 	wpa_s->reassociate = 1;
+	wpa_s->own_disconnect_req = 1;
 	wpa_supplicant_deauthenticate(wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
 
@@ -2835,6 +2836,7 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 #endif /* CONFIG_SME */
 			wpa_sm_set_config(wpa_s->wpa, NULL);
 			eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+			wpa_s->own_disconnect_req = 1;
 			wpa_supplicant_deauthenticate(
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		}
@@ -2881,6 +2883,7 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 		wpa_sm_set_config(wpa_s->wpa, NULL);
 		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 
+		wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
 	}
@@ -4508,8 +4511,9 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 	u8 dev_type[WPS_DEV_TYPE_LEN], *_dev_type = NULL;
 	char *pos;
 	unsigned int search_delay;
-	const char *seek[P2P_MAX_QUERY_HASH + 1];
+	const char *_seek[P2P_MAX_QUERY_HASH + 1], **seek = NULL;
 	u8 seek_count = 0;
+	int freq = 0;
 
 	if (wpa_s->wpa_state == WPA_INTERFACE_DISABLED) {
 		wpa_dbg(wpa_s, MSG_INFO,
@@ -4550,27 +4554,28 @@ static int p2p_ctrl_find(struct wpa_supplicant *wpa_s, char *cmd)
 		char *term;
 
 		term = os_strchr(pos + 1, ' ');
-		seek[seek_count++] = pos + 6;
+		_seek[seek_count++] = pos + 6;
+		seek = _seek;
 		pos = os_strstr(pos + 6, " seek=");
 
 		if (term)
 			*term = '\0';
 	}
-
-	if (!seek_count)
-		return wpas_p2p_find(wpa_s, timeout, type, _dev_type != NULL,
-				     _dev_type, _dev_id,
-				     search_delay, 0, NULL);
-
 	if (seek_count > P2P_MAX_QUERY_HASH) {
 		seek[0] = NULL;
-		return wpas_p2p_find(wpa_s, timeout, type, _dev_type != NULL,
-				     _dev_type, _dev_id,
-				     search_delay, 1, seek);
+		seek_count = 1;
+	}
+
+	pos = os_strstr(cmd, "freq=");
+	if (pos) {
+		pos += 5;
+		freq = atoi(pos);
+		if (freq <= 0)
+			return -1;
 	}
 
 	return wpas_p2p_find(wpa_s, timeout, type, _dev_type != NULL, _dev_type,
-			     _dev_id, search_delay, seek_count, seek);
+			     _dev_id, search_delay, seek_count, seek, freq);
 }
 
 
@@ -4738,6 +4743,14 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	int freq = 0;
 	int pd;
 	int ht40, vht;
+
+	if (!wpa_s->global->p2p_init_wpa_s)
+		return -1;
+	if (wpa_s->global->p2p_init_wpa_s != wpa_s) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Direct P2P_CONNECT command to %s",
+			wpa_s->global->p2p_init_wpa_s->ifname);
+		wpa_s = wpa_s->global->p2p_init_wpa_s;
+	}
 
 	/* <addr> <"pbc" | "pin" | PIN> [label|display|keypad|p2ps]
 	 * [persistent|persistent=<network id>]
@@ -6618,6 +6631,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_supplicant_stop_countermeasures(wpa_s, NULL);
 
 	wpa_s->no_keep_alive = 0;
+	wpa_s->own_disconnect_req = 0;
 
 	os_free(wpa_s->disallow_aps_bssid);
 	wpa_s->disallow_aps_bssid = NULL;
@@ -8534,7 +8548,7 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 	if (wpa_supplicant_get_iface(global, iface.ifname))
 		return -1;
 
-	return wpa_supplicant_add_iface(global, &iface) ? 0 : -1;
+	return wpa_supplicant_add_iface(global, &iface, NULL) ? 0 : -1;
 }
 
 

@@ -245,6 +245,7 @@ struct p2p_data;
 enum p2p_scan_type {
 	P2P_SCAN_SOCIAL,
 	P2P_SCAN_FULL,
+	P2P_SCAN_SPECIFIC,
 	P2P_SCAN_SOCIAL_PLUS_ONE
 };
 
@@ -545,7 +546,8 @@ struct p2p_config {
 	 * operation to be completed. Type type argument specifies which type
 	 * of scan is to be done. @P2P_SCAN_SOCIAL indicates that only the
 	 * social channels (1, 6, 11) should be scanned. @P2P_SCAN_FULL
-	 * indicates that all channels are to be scanned.
+	 * indicates that all channels are to be scanned. @P2P_SCAN_SPECIFIC
+	 * request a scan of a single channel specified by freq.
 	 * @P2P_SCAN_SOCIAL_PLUS_ONE request scan of all the social channels
 	 * plus one extra channel specified by freq.
 	 *
@@ -1129,13 +1131,17 @@ enum p2p_discovery_type {
  * @search_delay: Extra delay in milliseconds between search iterations
  * @seek_count: Number of ASP Service Strings in the seek_string array
  * @seek_string: ASP Service Strings to query for in Probe Requests
+ * @freq: Requested first scan frequency (in MHz) to modify type ==
+ *	P2P_FIND_START_WITH_FULL behavior. 0 = Use normal full scan.
+ *	If p2p_find is already in progress, this parameter is ignored and full
+ *	scan will be executed.
  * Returns: 0 on success, -1 on failure
  */
 int p2p_find(struct p2p_data *p2p, unsigned int timeout,
 	     enum p2p_discovery_type type,
 	     unsigned int num_req_dev_types, const u8 *req_dev_types,
 	     const u8 *dev_id, unsigned int search_delay,
-	     u8 seek_count, const char **seek_string);
+	     u8 seek_count, const char **seek_string, int freq);
 
 /**
  * p2p_notify_scan_trigger_status - Indicate scan trigger status

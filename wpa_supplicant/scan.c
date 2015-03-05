@@ -96,6 +96,10 @@ int wpa_supplicant_enabled_networks(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid = wpa_s->conf->ssid;
 	int count = 0, disabled = 0;
+
+	if (wpa_s->p2p_mgmt)
+		return 0; /* no normal network profiles on p2p_mgmt interface */
+
 	while (ssid) {
 		if (!wpas_network_disabled(wpa_s, ssid))
 			count++;
@@ -627,6 +631,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	struct wpa_driver_scan_params params;
 	struct wpa_driver_scan_params *scan_params;
 	size_t max_ssids;
+	int connect_without_scan = 0;
 
 	if (wpa_s->pno || wpa_s->pno_sched_pending) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Skip scan - PNO is in progress");
@@ -674,8 +679,20 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		return;
 	}
 
+	ssid = NULL;
+	if (wpa_s->scan_req != MANUAL_SCAN_REQ &&
+	    wpa_s->connect_without_scan) {
+		connect_without_scan = 1;
+		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+			if (ssid == wpa_s->connect_without_scan)
+				break;
+		}
+	}
+
 	p2p_in_prog = wpas_p2p_in_progress(wpa_s);
-	if (p2p_in_prog && p2p_in_prog != 2) {
+	if (p2p_in_prog && p2p_in_prog != 2 &&
+	    (!ssid ||
+	     (ssid->mode != WPAS_MODE_AP && ssid->mode != WPAS_MODE_P2P_GO))) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Delay station mode scan while P2P operation is in progress");
 		wpa_supplicant_req_scan(wpa_s, 5, 0);
 		return;
@@ -692,6 +709,16 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	wpa_s->last_scan_req = wpa_s->scan_req;
 	wpa_s->scan_req = NORMAL_SCAN_REQ;
 
+	if (connect_without_scan) {
+		wpa_s->connect_without_scan = NULL;
+		if (ssid) {
+			wpa_printf(MSG_DEBUG, "Start a pre-selected network "
+				   "without scan step");
+			wpa_supplicant_associate(wpa_s, NULL, ssid);
+			return;
+		}
+	}
+
 	os_memset(&params, 0, sizeof(params));
 
 	wpa_s->scan_prev_wpa_state = wpa_s->wpa_state;
@@ -705,21 +732,6 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	if (wpa_s->autoscan_params != NULL) {
 		scan_params = wpa_s->autoscan_params;
 		goto scan;
-	}
-
-	if (wpa_s->last_scan_req != MANUAL_SCAN_REQ &&
-	    wpa_s->connect_without_scan) {
-		for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
-			if (ssid == wpa_s->connect_without_scan)
-				break;
-		}
-		wpa_s->connect_without_scan = NULL;
-		if (ssid) {
-			wpa_printf(MSG_DEBUG, "Start a pre-selected network "
-				   "without scan step");
-			wpa_supplicant_associate(wpa_s, NULL, ssid);
-			return;
-		}
 	}
 
 #ifdef CONFIG_P2P
@@ -1066,8 +1078,17 @@ void wpa_supplicant_update_scan_int(struct wpa_supplicant *wpa_s, int sec)
  */
 void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 {
-	int res = eloop_deplete_timeout(sec, usec, wpa_supplicant_scan, wpa_s,
-					NULL);
+	int res;
+
+	if (wpa_s->p2p_mgmt) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Ignore scan request (%d.%06d sec) on p2p_mgmt interface",
+			sec, usec);
+		return;
+	}
+
+	res = eloop_deplete_timeout(sec, usec, wpa_supplicant_scan, wpa_s,
+				    NULL);
 	if (res == 1) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Rescheduling scan request: %d.%06d sec",
 			sec, usec);
@@ -1861,7 +1882,7 @@ static unsigned int max_ht40_rate(int snr)
 		return 81000; /* HT40 MCS4 */
 	if (snr < 22)
 		return 108000; /* HT40 MCS5 */
-	if (snr < 22)
+	if (snr < 24)
 		return 121500; /* HT40 MCS6 */
 	return 135000; /* HT40 MCS7 */
 }
