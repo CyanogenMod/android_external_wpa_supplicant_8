@@ -28,12 +28,6 @@
 #include "crypto.h"
 #include "tls.h"
 
-#if OPENSSL_VERSION_NUMBER >= 0x0090800fL
-#define OPENSSL_d2i_TYPE const unsigned char **
-#else
-#define OPENSSL_d2i_TYPE unsigned char **
-#endif
-
 #if defined(SSL_CTX_get_app_data) && defined(SSL_CTX_set_app_data)
 #define OPENSSL_SUPPORTS_CTX_APP_DATA
 #endif
@@ -90,6 +84,7 @@ static struct tls_context *tls_global = NULL;
 
 struct tls_connection {
 	struct tls_context *context;
+	SSL_CTX *ssl_ctx;
 	SSL *ssl;
 	BIO *ssl_in, *ssl_out;
 #ifndef OPENSSL_NO_ENGINE
@@ -400,7 +395,8 @@ static int tls_cryptoapi_cert(SSL *ssl, const char *name)
 		goto err;
 	}
 
-	cert = d2i_X509(NULL, (OPENSSL_d2i_TYPE) &priv->cert->pbCertEncoded,
+	cert = d2i_X509(NULL,
+			(const unsigned char **) &priv->cert->pbCertEncoded,
 			priv->cert->cbCertEncoded);
 	if (cert == NULL) {
 		wpa_printf(MSG_INFO, "CryptoAPI: Could not process X509 DER "
@@ -500,7 +496,8 @@ static int tls_cryptoapi_ca_cert(SSL_CTX *ssl_ctx, SSL *ssl, const char *name)
 	}
 
 	while ((ctx = CertEnumCertificatesInStore(cs, ctx))) {
-		cert = d2i_X509(NULL, (OPENSSL_d2i_TYPE) &ctx->pbCertEncoded,
+		cert = d2i_X509(NULL,
+				(const unsigned char **) &ctx->pbCertEncoded,
 				ctx->cbCertEncoded);
 		if (cert == NULL) {
 			wpa_printf(MSG_INFO, "CryptoAPI: Could not process "
@@ -774,7 +771,7 @@ void * tls_init(const struct tls_config *conf)
 #endif /* CONFIG_FIPS */
 		SSL_load_error_strings();
 		SSL_library_init();
-#if (OPENSSL_VERSION_NUMBER >= 0x0090800fL) && !defined(OPENSSL_NO_SHA256)
+#ifndef OPENSSL_NO_SHA256
 		EVP_add_digest(EVP_sha256());
 #endif /* OPENSSL_NO_SHA256 */
 		/* TODO: if /dev/urandom is available, PRNG is seeded
@@ -1045,6 +1042,7 @@ struct tls_connection * tls_connection_init(void *ssl_ctx)
 	conn = os_zalloc(sizeof(*conn));
 	if (conn == NULL)
 		return NULL;
+	conn->ssl_ctx = ssl_ctx;
 	conn->ssl = SSL_new(ssl);
 	if (conn->ssl == NULL) {
 		tls_show_errors(MSG_INFO, __func__,
@@ -1613,7 +1611,7 @@ static int tls_load_ca_der(void *_ssl_ctx, const char *ca_cert)
 	X509_LOOKUP *lookup;
 	int ret = 0;
 
-	lookup = X509_STORE_add_lookup(ssl_ctx->cert_store,
+	lookup = X509_STORE_add_lookup(SSL_CTX_get_cert_store(ssl_ctx),
 				       X509_LOOKUP_file());
 	if (lookup == NULL) {
 		tls_show_errors(MSG_WARNING, __func__,
@@ -1644,18 +1642,19 @@ static int tls_connection_ca_cert(void *_ssl_ctx, struct tls_connection *conn,
 				  size_t ca_cert_blob_len, const char *ca_path)
 {
 	SSL_CTX *ssl_ctx = _ssl_ctx;
+	X509_STORE *store;
 
 	/*
 	 * Remove previously configured trusted CA certificates before adding
 	 * new ones.
 	 */
-	X509_STORE_free(ssl_ctx->cert_store);
-	ssl_ctx->cert_store = X509_STORE_new();
-	if (ssl_ctx->cert_store == NULL) {
+	store = X509_STORE_new();
+	if (store == NULL) {
 		wpa_printf(MSG_DEBUG, "OpenSSL: %s - failed to allocate new "
 			   "certificate store", __func__);
 		return -1;
 	}
+	SSL_CTX_set_cert_store(ssl_ctx, store);
 
 	SSL_set_verify(conn->ssl, SSL_VERIFY_PEER, tls_verify_cb);
 	conn->ca_cert_verify = 1;
@@ -1699,7 +1698,8 @@ static int tls_connection_ca_cert(void *_ssl_ctx, struct tls_connection *conn,
 	}
 
 	if (ca_cert_blob) {
-		X509 *cert = d2i_X509(NULL, (OPENSSL_d2i_TYPE) &ca_cert_blob,
+		X509 *cert = d2i_X509(NULL,
+				      (const unsigned char **) &ca_cert_blob,
 				      ca_cert_blob_len);
 		if (cert == NULL) {
 			tls_show_errors(MSG_WARNING, __func__,
@@ -1707,7 +1707,8 @@ static int tls_connection_ca_cert(void *_ssl_ctx, struct tls_connection *conn,
 			return -1;
 		}
 
-		if (!X509_STORE_add_cert(ssl_ctx->cert_store, cert)) {
+		if (!X509_STORE_add_cert(SSL_CTX_get_cert_store(ssl_ctx),
+					 cert)) {
 			unsigned long err = ERR_peek_error();
 			tls_show_errors(MSG_WARNING, __func__,
 					"Failed to add ca_cert_blob to "
@@ -2138,7 +2139,7 @@ static int tls_read_pkcs12_blob(SSL_CTX *ssl_ctx, SSL *ssl,
 #ifdef PKCS12_FUNCS
 	PKCS12 *p12;
 
-	p12 = d2i_PKCS12(NULL, (OPENSSL_d2i_TYPE) &blob, len);
+	p12 = d2i_PKCS12(NULL, (const unsigned char **) &blob, len);
 	if (p12 == NULL) {
 		tls_show_errors(MSG_INFO, __func__,
 				"Failed to use PKCS#12 blob");
@@ -2219,20 +2220,21 @@ static int tls_connection_engine_ca_cert(void *_ssl_ctx,
 #ifndef OPENSSL_NO_ENGINE
 	X509 *cert;
 	SSL_CTX *ssl_ctx = _ssl_ctx;
+	X509_STORE *store;
 
 	if (tls_engine_get_cert(conn, ca_cert_id, &cert))
 		return -1;
 
 	/* start off the same as tls_connection_ca_cert */
-	X509_STORE_free(ssl_ctx->cert_store);
-	ssl_ctx->cert_store = X509_STORE_new();
-	if (ssl_ctx->cert_store == NULL) {
+	store = X509_STORE_new();
+	if (store == NULL) {
 		wpa_printf(MSG_DEBUG, "OpenSSL: %s - failed to allocate new "
 			   "certificate store", __func__);
 		X509_free(cert);
 		return -1;
 	}
-	if (!X509_STORE_add_cert(ssl_ctx->cert_store, cert)) {
+	SSL_CTX_set_cert_store(ssl_ctx, store);
+	if (!X509_STORE_add_cert(store, cert)) {
 		unsigned long err = ERR_peek_error();
 		tls_show_errors(MSG_WARNING, __func__,
 				"Failed to add CA certificate from engine "
@@ -2900,7 +2902,11 @@ struct wpabuf * tls_connection_decrypt(void *tls_ctx,
 
 int tls_connection_resumed(void *ssl_ctx, struct tls_connection *conn)
 {
+#if OPENSSL_VERSION_NUMBER >= 0x10001000L
+	return conn ? SSL_cache_hit(conn->ssl) : 0;
+#else
 	return conn ? conn->ssl->hit : 0;
+#endif
 }
 
 
@@ -3141,7 +3147,7 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 		return 0;
 	}
 
-	store = SSL_CTX_get_cert_store(s->ctx);
+	store = SSL_CTX_get_cert_store(conn->ssl_ctx);
 	if (conn->peer_issuer) {
 		debug_print_cert(conn->peer_issuer, "Add OCSP issuer");
 

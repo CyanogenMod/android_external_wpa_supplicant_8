@@ -1906,7 +1906,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			(ssid->proto & WPA_PROTO_RSN);
 		if (pmksa_cache_set_current(wpa_s->wpa, NULL, bss->bssid,
 					    ssid, try_opportunistic) == 0)
-			eapol_sm_notify_pmkid_attempt(wpa_s->eapol, 1);
+			eapol_sm_notify_pmkid_attempt(wpa_s->eapol);
 		wpa_ie_len = sizeof(wpa_ie);
 		if (wpa_supplicant_set_suites(wpa_s, bss, ssid,
 					      wpa_ie, &wpa_ie_len)) {
@@ -3086,11 +3086,9 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 	if (wpa_s->bridge_ifname[0]) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Receiving packets from bridge "
 			"interface '%s'", wpa_s->bridge_ifname);
-		wpa_s->l2_br = l2_packet_init(wpa_s->bridge_ifname,
-					      wpa_s->own_addr,
-					      ETH_P_EAPOL,
-					      wpa_supplicant_rx_eapol_bridge,
-					      wpa_s, 1);
+		wpa_s->l2_br = l2_packet_init_bridge(
+			wpa_s->bridge_ifname, wpa_s->ifname, wpa_s->own_addr,
+			ETH_P_EAPOL, wpa_supplicant_rx_eapol_bridge, wpa_s, 1);
 		if (wpa_s->l2_br == NULL) {
 			wpa_msg(wpa_s, MSG_ERROR, "Failed to open l2_packet "
 				"connection for the bridge interface '%s'",

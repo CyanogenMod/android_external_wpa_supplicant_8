@@ -1825,6 +1825,20 @@ static int wpa_cli_cmd_p2p_stop_find(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_p2p_asp_provision(struct wpa_ctrl *ctrl, int argc,
+					 char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "P2P_ASP_PROVISION", 3, argc, argv);
+}
+
+
+static int wpa_cli_cmd_p2p_asp_provision_resp(struct wpa_ctrl *ctrl, int argc,
+					      char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "P2P_ASP_PROVISION_RESP", 2, argc, argv);
+}
+
+
 static int wpa_cli_cmd_p2p_connect(struct wpa_ctrl *ctrl, int argc,
 				   char *argv[])
 {
@@ -1909,11 +1923,9 @@ static int wpa_cli_cmd_p2p_serv_disc_req(struct wpa_ctrl *ctrl, int argc,
 {
 	char cmd[4096];
 
-	if (argc != 2 && argc != 4) {
+	if (argc < 2) {
 		printf("Invalid P2P_SERV_DISC_REQ command: needs two "
-		       "arguments (address and TLVs) or four arguments "
-		       "(address, \"upnp\", version, search target "
-		       "(SSDP ST:)\n");
+		       "or more arguments (address and TLVs)\n");
 		return -1;
 	}
 
@@ -1975,27 +1987,25 @@ static int wpa_cli_cmd_p2p_service_flush(struct wpa_ctrl *ctrl, int argc,
 static int wpa_cli_cmd_p2p_service_add(struct wpa_ctrl *ctrl, int argc,
 				       char *argv[])
 {
-	char cmd[4096];
-	int res;
+	if (argc < 3) {
+		printf("Invalid P2P_SERVICE_ADD command: needs 3-6 arguments\n");
+		return -1;
+	}
 
-	if (argc != 3 && argc != 4) {
-		printf("Invalid P2P_SERVICE_ADD command: needs three or four "
+	return wpa_cli_cmd(ctrl, "P2P_SERVICE_ADD", 3, argc, argv);
+}
+
+
+static int wpa_cli_cmd_p2p_service_rep(struct wpa_ctrl *ctrl, int argc,
+				       char *argv[])
+{
+	if (argc < 5 || argc > 6) {
+		printf("Invalid P2P_SERVICE_REP command: needs 5-6 "
 		       "arguments\n");
 		return -1;
 	}
 
-	if (argc == 4)
-		res = os_snprintf(cmd, sizeof(cmd),
-				  "P2P_SERVICE_ADD %s %s %s %s",
-				  argv[0], argv[1], argv[2], argv[3]);
-	else
-		res = os_snprintf(cmd, sizeof(cmd),
-				  "P2P_SERVICE_ADD %s %s %s",
-				  argv[0], argv[1], argv[2]);
-	if (os_snprintf_error(sizeof(cmd), res))
-		return -1;
-	cmd[sizeof(cmd) - 1] = '\0';
-	return wpa_ctrl_command(ctrl, cmd);
+	return wpa_cli_cmd(ctrl, "P2P_SERVICE_REP", 5, argc, argv);
 }
 
 
@@ -2882,6 +2892,12 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "[timeout] [type=*] = find P2P Devices for up-to timeout seconds" },
 	{ "p2p_stop_find", wpa_cli_cmd_p2p_stop_find, NULL, cli_cmd_flag_none,
 	  "= stop P2P Devices search" },
+	{ "p2p_asp_provision", wpa_cli_cmd_p2p_asp_provision, NULL,
+	  cli_cmd_flag_none,
+	  "<addr> adv_id=<adv_id> conncap=<conncap> [info=<infodata>] = provision with a P2P ASP Device" },
+	{ "p2p_asp_provision_resp", wpa_cli_cmd_p2p_asp_provision_resp, NULL,
+	  cli_cmd_flag_none,
+	  "<addr> adv_id=<adv_id> [role<conncap>] [info=<infodata>] = provision with a P2P ASP Device" },
 	{ "p2p_connect", wpa_cli_cmd_p2p_connect, wpa_cli_complete_p2p_connect,
 	  cli_cmd_flag_none,
 	  "<addr> <\"pbc\"|PIN> [ht40] = connect to a P2P Device" },
@@ -2918,8 +2934,12 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "= remove all stored service entries" },
 	{ "p2p_service_add", wpa_cli_cmd_p2p_service_add, NULL,
 	  cli_cmd_flag_none,
-	  "<bonjour|upnp> <query|version> <response|service> = add a local "
+	  "<bonjour|upnp|asp> <query|version> <response|service> = add a local "
 	  "service" },
+	{ "p2p_service_rep", wpa_cli_cmd_p2p_service_rep, NULL,
+	  cli_cmd_flag_none,
+	  "asp <auto> <adv_id> <svc_state> <svc_string> [<svc_info>] = replace "
+	  "local ASP service" },
 	{ "p2p_service_del", wpa_cli_cmd_p2p_service_del, NULL,
 	  cli_cmd_flag_none,
 	  "<bonjour|upnp> <query|version> [|service] = remove a local "

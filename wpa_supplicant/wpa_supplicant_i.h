@@ -275,6 +275,8 @@ struct wpa_global {
 	unsigned int p2p_per_sta_psk:1;
 	unsigned int p2p_fail_on_wps_complete:1;
 	unsigned int p2p_24ghz_social_channels:1;
+	unsigned int pending_p2ps_group:1;
+	unsigned int pending_group_iface_for_p2ps:1;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	int wifi_display;
@@ -771,7 +773,7 @@ struct wpa_supplicant {
 	int force_long_sd;
 	u16 pending_pd_config_methods;
 	enum {
-		NORMAL_PD, AUTO_PD_GO_NEG, AUTO_PD_JOIN
+		NORMAL_PD, AUTO_PD_GO_NEG, AUTO_PD_JOIN, AUTO_PD_ASP
 	} pending_pd_use;
 
 	/*
@@ -810,6 +812,7 @@ struct wpa_supplicant {
 	unsigned int p2p_nfc_tag_enabled:1;
 	unsigned int p2p_peer_oob_pk_hash_known:1;
 	unsigned int p2p_disable_ip_addr_req:1;
+	unsigned int p2ps_join_addr_valid:1;
 	int p2p_persistent_go_freq;
 	int p2p_persistent_id;
 	int p2p_go_intent;
@@ -829,6 +832,7 @@ struct wpa_supplicant {
 	/* group common frequencies */
 	int *p2p_group_common_freqs;
 	unsigned int p2p_group_common_freqs_num;
+	u8 p2ps_join_addr[ETH_ALEN];
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;
