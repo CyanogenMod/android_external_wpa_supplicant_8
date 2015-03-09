@@ -94,6 +94,7 @@ static void rsn_preauth_eapol_cb(struct eapol_sm *eapol,
 					pmk, pmk_len);
 			sm->pmk_len = pmk_len;
 			pmksa_cache_add(sm->pmksa, pmk, pmk_len,
+					NULL, 0,
 					sm->preauth_bssid, sm->own_addr,
 					sm->network_ctx,
 					WPA_KEY_MGMT_IEEE8021X);
@@ -298,7 +299,8 @@ void rsn_preauth_candidate_process(struct wpa_sm *sm)
 	    sm->proto != WPA_PROTO_RSN ||
 	    wpa_sm_get_state(sm) != WPA_COMPLETED ||
 	    (sm->key_mgmt != WPA_KEY_MGMT_IEEE8021X &&
-	     sm->key_mgmt != WPA_KEY_MGMT_IEEE8021X_SHA256)) {
+	     sm->key_mgmt != WPA_KEY_MGMT_IEEE8021X_SHA256 &&
+	     sm->key_mgmt != WPA_KEY_MGMT_IEEE8021X_SUITE_B)) {
 		wpa_msg(sm->ctx->msg_ctx, MSG_DEBUG, "RSN: not in suitable "
 			"state for new pre-authentication");
 		return; /* invalid state for new pre-auth */
@@ -391,6 +393,18 @@ void pmksa_candidate_add(struct wpa_sm *sm, const u8 *bssid,
 	dl_list_for_each(pos, &sm->pmksa_candidates,
 			 struct rsn_pmksa_candidate, list) {
 		if (cand->priority <= pos->priority) {
+			if (!pos->list.prev) {
+				/*
+				 * This cannot really happen in pracrice since
+				 * pos was fetched from the list and the prev
+				 * pointer must be set. It looks like clang
+				 * static analyzer gets confused with the
+				 * dl_list_del(&cand->list) call above and ends
+				 * up assuming pos->list.prev could be NULL.
+				 */
+				os_free(cand);
+				return;
+			}
 			dl_list_add(pos->list.prev, &cand->list);
 			cand = NULL;
 			break;
@@ -487,7 +501,7 @@ int rsn_preauth_get_status(struct wpa_sm *sm, char *buf, size_t buflen,
 	if (sm->preauth_eapol) {
 		ret = os_snprintf(pos, end - pos, "Pre-authentication "
 				  "EAPOL state machines:\n");
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 		res = eapol_sm_get_status(sm->preauth_eapol,

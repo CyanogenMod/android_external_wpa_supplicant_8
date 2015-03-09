@@ -9,6 +9,8 @@ endif
 CFLAGS += -I$(abspath ../src)
 CFLAGS += -I$(abspath ../src/utils)
 
+export BINDIR ?= /usr/local/bin/
+
 # Uncomment following line and set the path to your kernel tree include
 # directory if your C library does not include all header files.
 # CFLAGS += -DUSE_KERNEL_HEADERS -I/usr/src/linux/include
@@ -59,6 +61,7 @@ OBJS += ../src/ap/preauth_auth.o
 OBJS += ../src/ap/pmksa_cache_auth.o
 OBJS += ../src/ap/ieee802_11_shared.o
 OBJS += ../src/ap/beacon.o
+OBJS += ../src/ap/bss_load.o
 
 OBJS_c = hostapd_cli.o ../src/common/wpa_ctrl.o ../src/utils/os_$(CONFIG_OS).o
 
@@ -187,6 +190,17 @@ endif
 
 ifdef CONFIG_HS20
 NEED_AES_OMAC1=y
+CONFIG_PROXYARP=y
+endif
+
+ifdef CONFIG_PROXYARP
+CONFIG_L2_PACKET=y
+endif
+
+ifdef CONFIG_SUITEB
+CFLAGS += -DCONFIG_SUITEB
+NEED_SHA256=y
+NEED_AES_OMAC1=y
 endif
 
 ifdef CONFIG_IEEE80211W
@@ -245,6 +259,12 @@ else
 OBJS += ../src/l2_packet/l2_packet_none.o
 endif
 
+
+ifdef CONFIG_ERP
+CFLAGS += -DCONFIG_ERP
+NEED_SHA256=y
+NEED_HMAC_SHA256_KDF=y
+endif
 
 ifdef CONFIG_EAP_MD5
 CFLAGS += -DEAP_SERVER_MD5
@@ -755,6 +775,9 @@ endif
 ifdef NEED_TLS_PRF_SHA256
 OBJS += ../src/crypto/sha256-tlsprf.o
 endif
+ifdef NEED_HMAC_SHA256_KDF
+OBJS += ../src/crypto/sha256-kdf.o
+endif
 endif
 
 ifdef NEED_DH_GROUPS
@@ -839,6 +862,15 @@ OBJS += ../src/common/gas.o
 OBJS += ../src/ap/gas_serv.o
 endif
 
+ifdef CONFIG_PROXYARP
+CFLAGS += -DCONFIG_PROXYARP
+OBJS += ../src/ap/x_snoop.o
+OBJS += ../src/ap/dhcp_snoop.o
+ifdef CONFIG_IPV6
+OBJS += ../src/ap/ndisc_snoop.o
+endif
+endif
+
 OBJS += ../src/drivers/driver_common.o
 
 ifdef CONFIG_WPA_CLI_EDIT
@@ -881,6 +913,10 @@ ifeq ($(V), 1)
 Q=
 E=true
 endif
+ifeq ($(QUIET), 1)
+Q=@
+E=true
+endif
 
 ifdef CONFIG_CODE_COVERAGE
 %.o: %.c
@@ -901,9 +937,10 @@ verify_config:
 		exit 1; \
 	fi
 
-install: all
-	mkdir -p $(DESTDIR)/usr/local/bin
-	for i in $(ALL); do cp -f $$i $(DESTDIR)/usr/local/bin/$$i; done
+$(DESTDIR)$(BINDIR)/%: %
+	install -D $(<) $(@)
+
+install: $(addprefix $(DESTDIR)$(BINDIR)/,$(ALL))
 
 ../src/drivers/build.hostapd:
 	@if [ -f ../src/drivers/build.wpa_supplicant ]; then \

@@ -80,6 +80,7 @@ OBJS_p += ../src/utils/wpabuf.o
 OBJS_c = wpa_cli.o ../src/common/wpa_ctrl.o
 OBJS_c += ../src/utils/wpa_debug.o
 OBJS_c += ../src/utils/common.o
+OBJS += wmm_ac.o
 
 ifndef CONFIG_OS
 ifdef CONFIG_NATIVE_WINDOWS
@@ -185,6 +186,12 @@ ifdef CONFIG_NO_SCAN_PROCESSING
 CFLAGS += -DCONFIG_NO_SCAN_PROCESSING
 endif
 
+ifdef CONFIG_SUITEB
+CFLAGS += -DCONFIG_SUITEB
+NEED_SHA256=y
+NEED_AES_OMAC1=y
+endif
+
 ifdef CONFIG_IEEE80211W
 CFLAGS += -DCONFIG_IEEE80211W
 NEED_SHA256=y
@@ -194,9 +201,22 @@ endif
 ifdef CONFIG_IEEE80211R
 CFLAGS += -DCONFIG_IEEE80211R
 OBJS += ../src/rsn_supp/wpa_ft.o
-NEED_80211_COMMON=y
 NEED_SHA256=y
 NEED_AES_OMAC1=y
+endif
+
+ifdef CONFIG_MESH
+NEED_80211_COMMON=y
+NEED_SHA256=y
+NEED_AES_SIV=y
+NEED_AES_OMAC1=y
+NEED_AES_CTR=y
+CONFIG_SAE=y
+CONFIG_AP=y
+CFLAGS += -DCONFIG_MESH
+OBJS += mesh.o
+OBJS += mesh_mpm.o
+OBJS += mesh_rsn.o
 endif
 
 ifdef CONFIG_SAE
@@ -264,7 +284,6 @@ OBJS += ../src/utils/bitfield.o
 CFLAGS += -DCONFIG_P2P
 NEED_GAS=y
 NEED_OFFCHANNEL=y
-NEED_80211_COMMON=y
 CONFIG_WPS=y
 CONFIG_AP=y
 ifdef CONFIG_P2P_STRICT
@@ -327,6 +346,12 @@ endif
 
 ifeq ($(CONFIG_L2_PACKET), freebsd)
 LIBS += -lpcap
+endif
+
+ifdef CONFIG_ERP
+CFLAGS += -DCONFIG_ERP
+NEED_SHA256=y
+NEED_HMAC_SHA256_KDF=y
 endif
 
 ifdef CONFIG_EAP_TLS
@@ -635,7 +660,6 @@ CONFIG_IEEE8021X_EAPOL=y
 NEED_DH_GROUPS=y
 NEED_SHA256=y
 NEED_BASE64=y
-NEED_80211_COMMON=y
 NEED_AES_CBC=y
 NEED_MODEXP=y
 
@@ -757,7 +781,6 @@ OBJS += ../src/pae/ieee802_1x_secy_ops.o
 endif
 
 ifdef CONFIG_AP
-NEED_80211_COMMON=y
 NEED_EAP_COMMON=y
 NEED_RSN_AUTHENTICATOR=y
 CFLAGS += -DCONFIG_AP
@@ -781,6 +804,7 @@ OBJS += ../src/ap/ieee802_11_shared.o
 OBJS += ../src/ap/drv_callbacks.o
 OBJS += ../src/ap/ap_drv_ops.o
 OBJS += ../src/ap/beacon.o
+OBJS += ../src/ap/bss_load.o
 OBJS += ../src/ap/eap_user_db.o
 ifdef CONFIG_IEEE80211N
 OBJS += ../src/ap/ieee802_11_ht.o
@@ -1149,6 +1173,9 @@ else
 AESOBJS += ../src/crypto/aes-omac1.o
 endif
 endif
+ifdef NEED_AES_SIV
+AESOBJS += ../src/crypto/aes-siv.o
+endif
 ifdef NEED_AES_WRAP
 NEED_AES_ENC=y
 AESOBJS += ../src/crypto/aes-wrap.o
@@ -1234,6 +1261,9 @@ SHA256OBJS += ../src/crypto/sha256-internal.o
 endif
 ifdef NEED_TLS_PRF_SHA256
 SHA256OBJS += ../src/crypto/sha256-tlsprf.o
+endif
+ifdef NEED_HMAC_SHA256_KDF
+OBJS += ../src/crypto/sha256-kdf.o
 endif
 OBJS += $(SHA256OBJS)
 endif
@@ -1386,14 +1416,11 @@ OBJS += ../src/utils/base64.o
 endif
 
 ifdef NEED_SME
-NEED_80211_COMMON=y
 OBJS += sme.o
 CFLAGS += -DCONFIG_SME
 endif
 
-ifdef NEED_80211_COMMON
 OBJS += ../src/common/ieee802_11_common.o
-endif
 
 ifdef NEED_EAP_COMMON
 OBJS += ../src/eap_common/eap_common.o
@@ -1539,26 +1566,6 @@ OBJS_priv += wpa_priv.o
 ifdef CONFIG_DRIVER_NL80211
 OBJS_priv += ../src/common/ieee802_11_common.o
 endif
-ifdef CONFIG_DRIVER_TEST
-OBJS_priv += $(SHA1OBJS)
-OBJS_priv += $(MD5OBJS)
-ifeq ($(CONFIG_TLS), openssl)
-OBJS_priv += ../src/crypto/crypto_openssl.o
-endif
-ifeq ($(CONFIG_TLS), gnutls)
-OBJS_priv += ../src/crypto/crypto_gnutls.o
-endif
-ifeq ($(CONFIG_TLS), nss)
-OBJS_priv += ../src/crypto/crypto_nss.o
-endif
-ifeq ($(CONFIG_TLS), internal)
-ifeq ($(CONFIG_CRYPTO), libtomcrypt)
-OBJS_priv += ../src/crypto/crypto_libtomcrypt.o
-else
-OBJS_priv += ../src/crypto/crypto_internal.o
-endif
-endif
-endif # CONFIG_DRIVER_TEST
 OBJS += ../src/l2_packet/l2_packet_privsep.o
 OBJS += ../src/drivers/driver_privsep.o
 EXTRA_progs += wpa_priv
@@ -1586,6 +1593,10 @@ Q=@
 E=echo
 ifeq ($(V), 1)
 Q=
+E=true
+endif
+ifeq ($(QUIET), 1)
+Q=@
 E=true
 endif
 
@@ -1680,10 +1691,12 @@ else
 endif
 
 %.service: %.service.in
-	sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
+	$(Q)sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
+	@$(E) "  sed" $<
 
 %@.service: %.service.arg.in
-	sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
+	$(Q)sed -e 's|\@BINDIR\@|$(BINDIR)|g' $< >$@
+	@$(E) "  sed" $<
 
 wpa_supplicant.exe: wpa_supplicant
 	mv -f $< $@

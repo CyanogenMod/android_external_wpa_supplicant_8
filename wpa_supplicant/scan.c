@@ -22,6 +22,7 @@
 #include "notify.h"
 #include "bss.h"
 #include "scan.h"
+#include "mesh.h"
 
 
 static void wpa_supplicant_gen_assoc_event(struct wpa_supplicant *wpa_s)
@@ -175,6 +176,8 @@ static void wpas_trigger_scan_cb(struct wpa_radio_work *work, int deinit)
 	if (ret) {
 		wpa_supplicant_notify_scanning(wpa_s, 0);
 		wpas_notify_scan_done(wpa_s, 0);
+		wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_FAILED "ret=%d",
+			     ret);
 		radio_work_done(work);
 		return;
 	}
@@ -291,7 +294,7 @@ wpa_supplicant_build_filter_ssids(struct wpa_config *conf, size_t *num_ssids)
 	}
 	if (count == 0)
 		return NULL;
-	ssids = os_zalloc(count * sizeof(struct wpa_driver_scan_filter));
+	ssids = os_calloc(count, sizeof(struct wpa_driver_scan_filter));
 	if (ssids == NULL)
 		return NULL;
 
@@ -319,7 +322,7 @@ static void wpa_supplicant_optimize_freqs(
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO "
 				"preferred frequency %d MHz",
 				wpa_s->go_params->freq);
-			params->freqs = os_zalloc(2 * sizeof(int));
+			params->freqs = os_calloc(2, sizeof(int));
 			if (params->freqs)
 				params->freqs[0] = wpa_s->go_params->freq;
 		} else if (wpa_s->p2p_in_provisioning < 8 &&
@@ -343,7 +346,7 @@ static void wpa_supplicant_optimize_freqs(
 		    wpa_s->p2p_invite_go_freq > 0) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Scan only GO preferred frequency %d MHz during invitation",
 				wpa_s->p2p_invite_go_freq);
-			params->freqs = os_zalloc(2 * sizeof(int));
+			params->freqs = os_calloc(2, sizeof(int));
 			if (params->freqs)
 				params->freqs[0] = wpa_s->p2p_invite_go_freq;
 		}
@@ -369,7 +372,7 @@ static void wpa_supplicant_optimize_freqs(
 		 */
 		wpa_dbg(wpa_s, MSG_DEBUG, "WPS: Scan only frequency %u MHz "
 			"that was used during provisioning", wpa_s->wps_freq);
-		params->freqs = os_zalloc(2 * sizeof(int));
+		params->freqs = os_calloc(2, sizeof(int));
 		if (params->freqs)
 			params->freqs[0] = wpa_s->wps_freq;
 		wpa_s->after_wps--;
@@ -381,7 +384,7 @@ static void wpa_supplicant_optimize_freqs(
 		/* Optimize provisioning scan based on already known channel */
 		wpa_dbg(wpa_s, MSG_DEBUG, "WPS: Scan only frequency %u MHz",
 			wpa_s->wps_freq);
-		params->freqs = os_zalloc(2 * sizeof(int));
+		params->freqs = os_calloc(2, sizeof(int));
 		if (params->freqs)
 			params->freqs[0] = wpa_s->wps_freq;
 		wpa_s->known_wps_freq = 0; /* only do this once */
@@ -460,6 +463,8 @@ static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s)
 	}
 #endif /* CONFIG_P2P */
 
+	wpa_supplicant_mesh_add_scan_ie(wpa_s, &extra_ie);
+
 #endif /* CONFIG_WPS */
 
 #ifdef CONFIG_HS20
@@ -528,7 +533,7 @@ static void wpa_setband_scan_freqs_list(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
-	params->freqs = os_zalloc((mode->num_channels + 1) * sizeof(int));
+	params->freqs = os_calloc(mode->num_channels + 1, sizeof(int));
 	if (params->freqs == NULL)
 		return;
 	for (count = 0, i = 0; i < mode->num_channels; i++) {
@@ -600,7 +605,7 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 	struct wpa_ssid *ssid;
-	int ret;
+	int ret, p2p_in_prog;
 	struct wpabuf *extra_ie = NULL;
 	struct wpa_driver_scan_params params;
 	struct wpa_driver_scan_params *scan_params;
@@ -653,7 +658,8 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		return;
 	}
 
-	if (wpas_p2p_in_progress(wpa_s)) {
+	p2p_in_prog = wpas_p2p_in_progress(wpa_s);
+	if (p2p_in_prog && p2p_in_prog != 2) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Delay station mode scan while P2P operation is in progress");
 		wpa_supplicant_req_scan(wpa_s, 5, 0);
 		return;
@@ -810,7 +816,9 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 		    wpa_s->last_scan_req == MANUAL_SCAN_REQ)
 			wpa_set_scan_ssids(wpa_s, &params, max_ssids);
 
-		for (tssid = wpa_s->conf->ssid; tssid; tssid = tssid->next) {
+		for (tssid = wpa_s->conf->ssid;
+		     wpa_s->last_scan_req != MANUAL_SCAN_REQ && tssid;
+		     tssid = tssid->next) {
 			if (wpas_network_disabled(wpa_s, tssid))
 				continue;
 			if ((params.freqs || !freqs_set) && tssid->scan_freq) {
@@ -929,6 +937,14 @@ ssid_list_set:
 		params.p2p_probe = 1;
 	}
 #endif /* CONFIG_P2P */
+
+	if (wpa_s->mac_addr_rand_enable & MAC_ADDR_RAND_SCAN) {
+		params.mac_addr_rand = 1;
+		if (wpa_s->mac_addr_scan) {
+			params.mac_addr = wpa_s->mac_addr_scan;
+			params.mac_addr_mask = wpa_s->mac_addr_scan + ETH_ALEN;
+		}
+	}
 
 	scan_params = &params;
 
@@ -1145,7 +1161,7 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 	os_memset(&params, 0, sizeof(params));
 
 	/* If we can't allocate space for the filters, we just don't filter */
-	params.filter_ssids = os_zalloc(wpa_s->max_match_sets *
+	params.filter_ssids = os_calloc(wpa_s->max_match_sets,
 					sizeof(struct wpa_driver_scan_filter));
 
 	prev_state = wpa_s->wpa_state;
@@ -1272,6 +1288,15 @@ scan:
 	}
 
 	wpa_setband_scan_freqs(wpa_s, scan_params);
+
+	if (wpa_s->mac_addr_rand_enable & MAC_ADDR_RAND_SCHED_SCAN) {
+		params.mac_addr_rand = 1;
+		if (wpa_s->mac_addr_sched_scan) {
+			params.mac_addr = wpa_s->mac_addr_sched_scan;
+			params.mac_addr_mask = wpa_s->mac_addr_sched_scan +
+				ETH_ALEN;
+		}
+	}
 
 	ret = wpa_supplicant_start_sched_scan(wpa_s, scan_params,
 					      wpa_s->sched_scan_interval);
@@ -1918,6 +1943,23 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->only_new_results = src->only_new_results;
 	params->low_priority = src->low_priority;
 
+	if (src->mac_addr_rand) {
+		params->mac_addr_rand = src->mac_addr_rand;
+
+		if (src->mac_addr && src->mac_addr_mask) {
+			u8 *mac_addr;
+
+			mac_addr = os_malloc(2 * ETH_ALEN);
+			if (!mac_addr)
+				goto failed;
+
+			os_memcpy(mac_addr, src->mac_addr, ETH_ALEN);
+			os_memcpy(mac_addr + ETH_ALEN, src->mac_addr_mask,
+				  ETH_ALEN);
+			params->mac_addr = mac_addr;
+			params->mac_addr_mask = mac_addr + ETH_ALEN;
+		}
+	}
 	return params;
 
 failed:
@@ -1938,6 +1980,13 @@ void wpa_scan_free_params(struct wpa_driver_scan_params *params)
 	os_free((u8 *) params->extra_ies);
 	os_free(params->freqs);
 	os_free(params->filter_ssids);
+
+	/*
+	 * Note: params->mac_addr_mask points to same memory allocation and
+	 * must not be freed separately.
+	 */
+	os_free((u8 *) params->mac_addr);
+
 	os_free(params);
 }
 
@@ -2042,6 +2091,14 @@ int wpas_start_pno(struct wpa_supplicant *wpa_s)
 		params.freqs = wpa_s->manual_sched_scan_freqs;
 	}
 
+	if (wpa_s->mac_addr_rand_enable & MAC_ADDR_RAND_PNO) {
+		params.mac_addr_rand = 1;
+		if (wpa_s->mac_addr_pno) {
+			params.mac_addr = wpa_s->mac_addr_pno;
+			params.mac_addr_mask = wpa_s->mac_addr_pno + ETH_ALEN;
+		}
+	}
+
 	ret = wpa_supplicant_start_sched_scan(wpa_s, &params, interval);
 	os_free(params.filter_ssids);
 	if (ret == 0)
@@ -2068,4 +2125,62 @@ int wpas_stop_pno(struct wpa_supplicant *wpa_s)
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
 
 	return ret;
+}
+
+
+void wpas_mac_addr_rand_scan_clear(struct wpa_supplicant *wpa_s,
+				    unsigned int type)
+{
+	type &= MAC_ADDR_RAND_ALL;
+	wpa_s->mac_addr_rand_enable &= ~type;
+
+	if (type & MAC_ADDR_RAND_SCAN) {
+		os_free(wpa_s->mac_addr_scan);
+		wpa_s->mac_addr_scan = NULL;
+	}
+
+	if (type & MAC_ADDR_RAND_SCHED_SCAN) {
+		os_free(wpa_s->mac_addr_sched_scan);
+		wpa_s->mac_addr_sched_scan = NULL;
+	}
+
+	if (type & MAC_ADDR_RAND_PNO) {
+		os_free(wpa_s->mac_addr_pno);
+		wpa_s->mac_addr_pno = NULL;
+	}
+}
+
+
+int wpas_mac_addr_rand_scan_set(struct wpa_supplicant *wpa_s,
+				unsigned int type, const u8 *addr,
+				const u8 *mask)
+{
+	u8 *tmp = NULL;
+
+	wpas_mac_addr_rand_scan_clear(wpa_s, type);
+
+	if (addr) {
+		tmp = os_malloc(2 * ETH_ALEN);
+		if (!tmp)
+			return -1;
+		os_memcpy(tmp, addr, ETH_ALEN);
+		os_memcpy(tmp + ETH_ALEN, mask, ETH_ALEN);
+	}
+
+	if (type == MAC_ADDR_RAND_SCAN) {
+		wpa_s->mac_addr_scan = tmp;
+	} else if (type == MAC_ADDR_RAND_SCHED_SCAN) {
+		wpa_s->mac_addr_sched_scan = tmp;
+	} else if (type == MAC_ADDR_RAND_PNO) {
+		wpa_s->mac_addr_pno = tmp;
+	} else {
+		wpa_printf(MSG_INFO,
+			   "scan: Invalid MAC randomization type=0x%x",
+			   type);
+		os_free(tmp);
+		return -1;
+	}
+
+	wpa_s->mac_addr_rand_enable |= type;
+	return 0;
 }

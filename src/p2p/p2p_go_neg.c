@@ -9,6 +9,7 @@
 #include "includes.h"
 
 #include "common.h"
+#include "utils/eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "common/wpa_ctrl.h"
 #include "wps/wps_defs.h"
@@ -240,6 +241,7 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev)
 	p2p_set_state(p2p, P2P_CONNECT);
 	p2p->pending_action_state = P2P_PENDING_GO_NEG_REQUEST;
 	p2p->go_neg_peer = dev;
+	eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p, NULL);
 	dev->flags |= P2P_DEV_WAIT_GO_NEG_RESPONSE;
 	dev->connect_reqs++;
 	if (p2p_send_action(p2p, freq, dev->info.p2p_device_addr,
@@ -621,7 +623,7 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 			 * Request frame.
 			 */
 			p2p->cfg->send_action_done(p2p->cfg->cb_ctx);
-			p2p_go_neg_failed(p2p, dev, *msg.status);
+			p2p_go_neg_failed(p2p, *msg.status);
 			p2p_parse_free(&msg);
 			return;
 		}
@@ -644,6 +646,9 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 			MAC2STR(dev->info.p2p_device_addr));
 		p2p_add_dev_info(p2p, sa, dev, &msg);
 	}
+
+	if (p2p->go_neg_peer && p2p->go_neg_peer == dev)
+		eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p, NULL);
 
 	if (dev && dev->flags & P2P_DEV_USER_REJECTED) {
 		p2p_dbg(p2p, "User has rejected this peer");
@@ -789,6 +794,7 @@ void p2p_process_go_neg_req(struct p2p_data *p2p, const u8 *sa,
 		dev->dialog_token = msg.dialog_token;
 		os_memcpy(dev->intended_addr, msg.intended_addr, ETH_ALEN);
 		p2p->go_neg_peer = dev;
+		eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p, NULL);
 		status = P2P_SC_SUCCESS;
 	}
 
@@ -957,7 +963,10 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 		if (*msg.status == P2P_SC_FAIL_INFO_CURRENTLY_UNAVAILABLE) {
 			p2p_dbg(p2p, "Wait for the peer to become ready for GO Negotiation");
 			dev->flags |= P2P_DEV_NOT_YET_READY;
-			os_get_reltime(&dev->go_neg_wait_started);
+			eloop_cancel_timeout(p2p_go_neg_wait_timeout, p2p,
+					     NULL);
+			eloop_register_timeout(120, 0, p2p_go_neg_wait_timeout,
+					       p2p, NULL);
 			if (p2p->state == P2P_CONNECT_LISTEN)
 				p2p_set_state(p2p, P2P_WAIT_PEER_CONNECT);
 			else
@@ -965,7 +974,7 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 			p2p_set_timeout(p2p, 0, 0);
 		} else {
 			p2p_dbg(p2p, "Stop GO Negotiation attempt");
-			p2p_go_neg_failed(p2p, dev, *msg.status);
+			p2p_go_neg_failed(p2p, *msg.status);
 		}
 		p2p->cfg->send_action_done(p2p->cfg->cb_ctx);
 		p2p_parse_free(&msg);
@@ -1147,13 +1156,13 @@ fail:
 			    wpabuf_head(dev->go_neg_conf),
 			    wpabuf_len(dev->go_neg_conf), 200) < 0) {
 		p2p_dbg(p2p, "Failed to send Action frame");
-		p2p_go_neg_failed(p2p, dev, -1);
+		p2p_go_neg_failed(p2p, -1);
 		p2p->cfg->send_action_done(p2p->cfg->cb_ctx);
 	} else
 		dev->go_neg_conf_sent++;
 	if (status != P2P_SC_SUCCESS) {
 		p2p_dbg(p2p, "GO Negotiation failed");
-		p2p_go_neg_failed(p2p, dev, status);
+		p2p_go_neg_failed(p2p, status);
 	}
 }
 
@@ -1204,7 +1213,7 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 	}
 	if (*msg.status) {
 		p2p_dbg(p2p, "GO Negotiation rejected: status %d", *msg.status);
-		p2p_go_neg_failed(p2p, dev, *msg.status);
+		p2p_go_neg_failed(p2p, *msg.status);
 		p2p_parse_free(&msg);
 		return;
 	}
@@ -1216,7 +1225,7 @@ void p2p_process_go_neg_conf(struct p2p_data *p2p, const u8 *sa,
 	} else if (dev->go_state == REMOTE_GO) {
 		p2p_dbg(p2p, "Mandatory P2P Group ID attribute missing from GO Negotiation Confirmation");
 		p2p->ssid_len = 0;
-		p2p_go_neg_failed(p2p, dev, P2P_SC_FAIL_INVALID_PARAMS);
+		p2p_go_neg_failed(p2p, P2P_SC_FAIL_INVALID_PARAMS);
 		p2p_parse_free(&msg);
 		return;
 	}

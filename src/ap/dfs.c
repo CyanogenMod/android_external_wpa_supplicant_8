@@ -440,7 +440,8 @@ dfs_get_valid_channel(struct hostapd_iface *iface,
 	if (num_available_chandefs == 0)
 		return NULL;
 
-	os_get_random((u8 *) &_rand, sizeof(_rand));
+	if (os_get_random((u8 *) &_rand, sizeof(_rand)) < 0)
+		_rand = os_random();
 	chan_idx = _rand % num_available_chandefs;
 	dfs_find_channel(iface, &chan, chan_idx, skip_radar);
 
@@ -638,6 +639,16 @@ int hostapd_handle_dfs(struct hostapd_iface *iface)
 	struct hostapd_channel_data *channel;
 	int res, n_chans, n_chans1, start_chan_idx, start_chan_idx1;
 	int skip_radar = 0;
+
+	if (!iface->current_mode) {
+		/*
+		 * This can happen with drivers that do not provide mode
+		 * information and as such, cannot really use hostapd for DFS.
+		 */
+		wpa_printf(MSG_DEBUG,
+			   "DFS: No current_mode information - assume no need to perform DFS operations by hostapd");
+		return 1;
+	}
 
 	iface->cac_started = 0;
 

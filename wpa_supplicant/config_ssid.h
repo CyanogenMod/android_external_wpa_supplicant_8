@@ -27,6 +27,11 @@
 #define DEFAULT_FRAGMENT_SIZE 1398
 
 #define DEFAULT_BG_SCAN_PERIOD -1
+#define DEFAULT_MESH_HT_MODE CHAN_UNDEFINED /* undefined */
+#define DEFAULT_MESH_MAX_RETRIES 2
+#define DEFAULT_MESH_RETRY_TIMEOUT 40
+#define DEFAULT_MESH_CONFIRM_TIMEOUT 40
+#define DEFAULT_MESH_HOLDING_TIMEOUT 40
 #define DEFAULT_DISABLE_HT 0
 #define DEFAULT_DISABLE_HT40 0
 #define DEFAULT_DISABLE_SGI 0
@@ -317,6 +322,8 @@ struct wpa_ssid {
 	 * 4 = P2P Group Formation (used internally; not in configuration
 	 * files)
 	 *
+	 * 5 = Mesh
+	 *
 	 * Note: IBSS can only be used with key_mgmt NONE (plaintext and static
 	 * WEP) and WPA-PSK (with proto=RSN). In addition, key_mgmt=WPA-NONE
 	 * (fixed group key TKIP/CCMP) is available for backwards compatibility,
@@ -331,6 +338,7 @@ struct wpa_ssid {
 		WPAS_MODE_AP = 2,
 		WPAS_MODE_P2P_GO = 3,
 		WPAS_MODE_P2P_GROUP_FORMATION = 4,
+		WPAS_MODE_MESH = 5,
 	} mode;
 
 	/**
@@ -399,6 +407,29 @@ struct wpa_ssid {
 	 * will be used instead of this configured value.
 	 */
 	int frequency;
+
+	/**
+	 * mesh_ht_mode - definition of HT mode in mesh mode
+	 *
+	 * Use the given HT mode for mesh networks. The driver will
+	 * adapt to other stations if neccesary, but advertise the
+	 * configured HT mode (HT20/HT40-/HT40+/NOHT).
+	 */
+	int mesh_ht_mode;
+
+	/**
+	 * mesh_basic_rates - BSS Basic rate set for mesh network
+	 *
+	 */
+	int *mesh_basic_rates;
+
+	/**
+	 * Mesh network plink parameters
+	 */
+	int dot11MeshMaxRetries;
+	int dot11MeshRetryTimeout; /* msec */
+	int dot11MeshConfirmTimeout; /* msec */
+	int dot11MeshHoldingTimeout; /* msec */
 
 	int ht40;
 
@@ -666,6 +697,14 @@ struct wpa_ssid {
 	 * followed).
 	 */
 	int mac_addr;
+
+	/**
+	 * no_auto_peer - Do not automatically peer with compatible mesh peers
+	 *
+	 * When unset, the reception of a beacon from a another mesh peer in
+	 * this MBSS will trigger a peering attempt.
+	 */
+	int no_auto_peer;
 };
 
 #endif /* CONFIG_SSID_H */

@@ -309,23 +309,27 @@ int p2p_parse_p2p_ie(const struct wpabuf *buf, struct p2p_message *msg)
 
 	while (pos < end) {
 		u16 attr_len;
-		if (pos + 2 >= end) {
+		u8 id;
+
+		if (end - pos < 3) {
 			wpa_printf(MSG_DEBUG, "P2P: Invalid P2P attribute");
 			return -1;
 		}
-		attr_len = WPA_GET_LE16(pos + 1);
+		id = *pos++;
+		attr_len = WPA_GET_LE16(pos);
+		pos += 2;
 		wpa_printf(MSG_DEBUG, "P2P: Attribute %d length %u",
-			   pos[0], attr_len);
-		if (pos + 3 + attr_len > end) {
+			   id, attr_len);
+		if (attr_len > end - pos) {
 			wpa_printf(MSG_DEBUG, "P2P: Attribute underflow "
 				   "(len=%u left=%d)",
-				   attr_len, (int) (end - pos - 3));
+				   attr_len, (int) (end - pos));
 			wpa_hexdump(MSG_MSGDUMP, "P2P: Data", pos, end - pos);
 			return -1;
 		}
-		if (p2p_parse_attribute(pos[0], pos + 3, attr_len, msg))
+		if (p2p_parse_attribute(id, pos, attr_len, msg))
 			return -1;
-		pos += 3 + attr_len;
+		pos += attr_len;
 	}
 
 	return 0;
@@ -603,7 +607,7 @@ static int p2p_group_info_text(const u8 *gi, size_t gi_len, char *buf,
 				  "dev=" MACSTR " iface=" MACSTR,
 				  MAC2STR(cli->p2p_device_addr),
 				  MAC2STR(cli->p2p_interface_addr));
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 
@@ -614,7 +618,7 @@ static int p2p_group_info_text(const u8 *gi, size_t gi_len, char *buf,
 				  wps_dev_type_bin2str(cli->pri_dev_type,
 						       devtype,
 						       sizeof(devtype)));
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 
@@ -623,7 +627,7 @@ static int p2p_group_info_text(const u8 *gi, size_t gi_len, char *buf,
 					  wps_dev_type_bin2str(
 						  &cli->sec_dev_types[s * 8],
 						  devtype, sizeof(devtype)));
-			if (ret < 0 || ret >= end - pos)
+			if (os_snprintf_error(end - pos, ret))
 				return pos - buf;
 			pos += ret;
 		}
@@ -638,7 +642,7 @@ static int p2p_group_info_text(const u8 *gi, size_t gi_len, char *buf,
 		}
 
 		ret = os_snprintf(pos, end - pos, " dev_name='%s'\n", name);
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 	}
@@ -672,7 +676,7 @@ int p2p_attr_text(struct wpabuf *data, char *buf, char *end)
 				  "p2p_dev_capab=0x%x\n"
 				  "p2p_group_capab=0x%x\n",
 				  msg.capability[0], msg.capability[1]);
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 	}
@@ -684,14 +688,14 @@ int p2p_attr_text(struct wpabuf *data, char *buf, char *end)
 				  wps_dev_type_bin2str(msg.pri_dev_type,
 						       devtype,
 						       sizeof(devtype)));
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 	}
 
 	ret = os_snprintf(pos, end - pos, "p2p_device_name=%s\n",
 			  msg.device_name);
-	if (ret < 0 || ret >= end - pos)
+	if (os_snprintf_error(end - pos, ret))
 		return pos - buf;
 	pos += ret;
 
@@ -699,14 +703,14 @@ int p2p_attr_text(struct wpabuf *data, char *buf, char *end)
 		ret = os_snprintf(pos, end - pos, "p2p_device_addr=" MACSTR
 				  "\n",
 				  MAC2STR(msg.p2p_device_addr));
-		if (ret < 0 || ret >= end - pos)
+		if (os_snprintf_error(end - pos, ret))
 			return pos - buf;
 		pos += ret;
 	}
 
 	ret = os_snprintf(pos, end - pos, "p2p_config_methods=0x%x\n",
 			  msg.config_methods);
-	if (ret < 0 || ret >= end - pos)
+	if (os_snprintf_error(end - pos, ret))
 		return pos - buf;
 	pos += ret;
 

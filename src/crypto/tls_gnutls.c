@@ -81,7 +81,7 @@ struct tls_global {
 };
 
 struct tls_connection {
-	gnutls_session session;
+	gnutls_session_t session;
 	char *subject_match, *altsubject_match;
 	int read_alerts, write_alerts, failed;
 
@@ -199,7 +199,7 @@ int tls_get_errors(void *ssl_ctx)
 }
 
 
-static ssize_t tls_pull_func(gnutls_transport_ptr ptr, void *buf,
+static ssize_t tls_pull_func(gnutls_transport_ptr_t ptr, void *buf,
 			     size_t len)
 {
 	struct tls_connection *conn = (struct tls_connection *) ptr;
@@ -228,7 +228,7 @@ static ssize_t tls_pull_func(gnutls_transport_ptr ptr, void *buf,
 }
 
 
-static ssize_t tls_push_func(gnutls_transport_ptr ptr, const void *buf,
+static ssize_t tls_push_func(gnutls_transport_ptr_t ptr, const void *buf,
 			     size_t len)
 {
 	struct tls_connection *conn = (struct tls_connection *) ptr;
@@ -286,7 +286,7 @@ static int tls_gnutls_init_session(struct tls_global *global,
 
 	gnutls_transport_set_pull_function(conn->session, tls_pull_func);
 	gnutls_transport_set_push_function(conn->session, tls_push_func);
-	gnutls_transport_set_ptr(conn->session, (gnutls_transport_ptr) conn);
+	gnutls_transport_set_ptr(conn->session, (gnutls_transport_ptr_t) conn);
 
 	return 0;
 
@@ -563,16 +563,29 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 	}
 
 	if (params->client_cert && params->private_key) {
-		/* TODO: private_key_passwd? */
+#if GNUTLS_VERSION_NUMBER >= 0x03010b
+		ret = gnutls_certificate_set_x509_key_file2(
+			conn->xcred, params->client_cert, params->private_key,
+			GNUTLS_X509_FMT_PEM, params->private_key_passwd, 0);
+#else
+		/* private_key_passwd not (easily) supported here */
 		ret = gnutls_certificate_set_x509_key_file(
 			conn->xcred, params->client_cert, params->private_key,
 			GNUTLS_X509_FMT_PEM);
+#endif
 		if (ret < 0) {
 			wpa_printf(MSG_DEBUG, "Failed to read client cert/key "
 				   "in PEM format: %s", gnutls_strerror(ret));
+#if GNUTLS_VERSION_NUMBER >= 0x03010b
+			ret = gnutls_certificate_set_x509_key_file2(
+				conn->xcred, params->client_cert,
+				params->private_key, GNUTLS_X509_FMT_DER,
+				params->private_key_passwd, 0);
+#else
 			ret = gnutls_certificate_set_x509_key_file(
 				conn->xcred, params->client_cert,
 				params->private_key, GNUTLS_X509_FMT_DER);
+#endif
 			if (ret < 0) {
 				wpa_printf(MSG_DEBUG, "Failed to read client "
 					   "cert/key in DER format: %s",

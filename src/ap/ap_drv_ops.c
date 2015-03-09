@@ -477,7 +477,8 @@ int hostapd_flush(struct hostapd_data *hapd)
 }
 
 
-int hostapd_set_freq_params(struct hostapd_freq_params *data, int mode,
+int hostapd_set_freq_params(struct hostapd_freq_params *data,
+			    enum hostapd_hw_mode mode,
 			    int freq, int channel, int ht_enabled,
 			    int vht_enabled, int sec_channel_offset,
 			    int vht_oper_chwidth, int center_segment0,
@@ -562,8 +563,8 @@ int hostapd_set_freq_params(struct hostapd_freq_params *data, int mode,
 }
 
 
-int hostapd_set_freq(struct hostapd_data *hapd, int mode, int freq,
-		     int channel, int ht_enabled, int vht_enabled,
+int hostapd_set_freq(struct hostapd_data *hapd, enum hostapd_hw_mode mode,
+		     int freq, int channel, int ht_enabled, int vht_enabled,
 		     int sec_channel_offset, int vht_oper_chwidth,
 		     int center_segment0, int center_segment1)
 {
@@ -573,7 +574,8 @@ int hostapd_set_freq(struct hostapd_data *hapd, int mode, int freq,
 				    vht_enabled, sec_channel_offset,
 				    vht_oper_chwidth,
 				    center_segment0, center_segment1,
-				    hapd->iface->current_mode->vht_capab))
+				    hapd->iface->current_mode ?
+				    hapd->iface->current_mode->vht_capab : 0))
 		return -1;
 
 	if (hapd->driver == NULL)
@@ -747,7 +749,8 @@ int hostapd_drv_send_action(struct hostapd_data *hapd, unsigned int freq,
 }
 
 
-int hostapd_start_dfs_cac(struct hostapd_iface *iface, int mode, int freq,
+int hostapd_start_dfs_cac(struct hostapd_iface *iface,
+			  enum hostapd_hw_mode mode, int freq,
 			  int channel, int ht_enabled, int vht_enabled,
 			  int sec_channel_offset, int vht_oper_chwidth,
 			  int center_segment0, int center_segment1)
@@ -791,4 +794,19 @@ int hostapd_drv_set_qos_map(struct hostapd_data *hapd,
 		return 0;
 	return hapd->driver->set_qos_map(hapd->drv_priv, qos_map_set,
 					 qos_map_set_len);
+}
+
+
+int hostapd_drv_do_acs(struct hostapd_data *hapd)
+{
+	struct drv_acs_params params;
+
+	if (hapd->driver == NULL || hapd->driver->do_acs == NULL)
+		return 0;
+	os_memset(&params, 0, sizeof(params));
+	params.hw_mode = hapd->iface->conf->hw_mode;
+	params.ht_enabled = !!(hapd->iface->conf->ieee80211n);
+	params.ht40_enabled = !!(hapd->iface->conf->ht_capab &
+				 HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET);
+	return hapd->driver->do_acs(hapd->drv_priv, &params);
 }

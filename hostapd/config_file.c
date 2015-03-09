@@ -680,6 +680,8 @@ static int hostapd_config_parse_key_mgmt(int line, const char *value)
 		else if (os_strcmp(start, "FT-SAE") == 0)
 			val |= WPA_KEY_MGMT_FT_SAE;
 #endif /* CONFIG_SAE */
+		else if (os_strcmp(start, "WPA-EAP-SUITE-B") == 0)
+			val |= WPA_KEY_MGMT_IEEE8021X_SUITE_B;
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -1865,6 +1867,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				   line, pos);
 			return 1;
 		}
+	} else if (os_strcmp(buf, "driver_params") == 0) {
+		os_free(conf->driver_params);
+		conf->driver_params = os_strdup(pos);
 	} else if (os_strcmp(buf, "debug") == 0) {
 		wpa_printf(MSG_DEBUG, "Line %d: DEPRECATED: 'debug' configuration variable is not used anymore",
 			   line);
@@ -1984,6 +1989,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 	} else if (os_strcmp(buf, "dh_file") == 0) {
 		os_free(bss->dh_file);
 		bss->dh_file = os_strdup(pos);
+	} else if (os_strcmp(buf, "openssl_ciphers") == 0) {
+		os_free(bss->openssl_ciphers);
+		bss->openssl_ciphers = os_strdup(pos);
 	} else if (os_strcmp(buf, "fragment_size") == 0) {
 		bss->fragment_size = atoi(pos);
 #ifdef EAP_SERVER_FAST
@@ -2044,6 +2052,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 	} else if (os_strcmp(buf, "pwd_group") == 0) {
 		bss->pwd_group = atoi(pos);
 #endif /* EAP_SERVER_PWD */
+	} else if (os_strcmp(buf, "eap_server_erp") == 0) {
+		bss->eap_server_erp = atoi(pos);
 #endif /* EAP_SERVER */
 	} else if (os_strcmp(buf, "eap_message") == 0) {
 		char *term;
@@ -2063,6 +2073,11 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 				   (term - bss->eap_req_id_text) - 1);
 			bss->eap_req_id_text_len--;
 		}
+	} else if (os_strcmp(buf, "erp_send_reauth_start") == 0) {
+		bss->erp_send_reauth_start = atoi(pos);
+	} else if (os_strcmp(buf, "erp_domain") == 0) {
+		os_free(bss->erp_domain);
+		bss->erp_domain = os_strdup(pos);
 	} else if (os_strcmp(buf, "wep_key_len_broadcast") == 0) {
 		bss->default_wep_key_len = atoi(pos);
 		if (bss->default_wep_key_len > 13) {
@@ -2405,9 +2420,6 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 	} else if (os_strcmp(buf, "radius_server_ipv6") == 0) {
 		bss->radius_server_ipv6 = atoi(pos);
 #endif /* RADIUS_SERVER */
-	} else if (os_strcmp(buf, "test_socket") == 0) {
-		os_free(bss->test_socket);
-		bss->test_socket = os_strdup(pos);
 	} else if (os_strcmp(buf, "use_pae_group_addr") == 0) {
 		bss->use_pae_group_addr = atoi(pos);
 	} else if (os_strcmp(buf, "hw_mode") == 0) {
@@ -2484,6 +2496,15 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		if (bss->dtim_period < 1 || bss->dtim_period > 255) {
 			wpa_printf(MSG_ERROR, "Line %d: invalid dtim_period %d",
 				   line, bss->dtim_period);
+			return 1;
+		}
+	} else if (os_strcmp(buf, "bss_load_update_period") == 0) {
+		bss->bss_load_update_period = atoi(pos);
+		if (bss->bss_load_update_period < 0 ||
+		    bss->bss_load_update_period > 100) {
+			wpa_printf(MSG_ERROR,
+				   "Line %d: invalid bss_load_update_period %d",
+				   line, bss->bss_load_update_period);
 			return 1;
 		}
 	} else if (os_strcmp(buf, "rts_threshold") == 0) {
@@ -2996,6 +3017,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		bss->hs20 = atoi(pos);
 	} else if (os_strcmp(buf, "disable_dgaf") == 0) {
 		bss->disable_dgaf = atoi(pos);
+	} else if (os_strcmp(buf, "proxy_arp") == 0) {
+		bss->proxy_arp = atoi(pos);
 	} else if (os_strcmp(buf, "osen") == 0) {
 		bss->osen = atoi(pos);
 	} else if (os_strcmp(buf, "anqp_domain_id") == 0) {
@@ -3106,6 +3129,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		pos++;
 		WPA_PUT_LE16(&bss->bss_load_test[3], atoi(pos));
 		bss->bss_load_test_set = 1;
+	} else if (os_strcmp(buf, "radio_measurements") == 0) {
+		bss->radio_measurements = atoi(pos);
 #endif /* CONFIG_TESTING_OPTIONS */
 	} else if (os_strcmp(buf, "vendor_elements") == 0) {
 		struct wpabuf *elems;
