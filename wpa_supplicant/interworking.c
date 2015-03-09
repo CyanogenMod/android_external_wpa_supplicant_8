@@ -587,56 +587,69 @@ static int nai_realm_match(struct nai_realm *realm, const char *home_realm)
 }
 
 
-static int nai_realm_cred_username(struct nai_realm_eap *eap)
+static int nai_realm_cred_username(struct wpa_supplicant *wpa_s,
+				   struct nai_realm_eap *eap)
 {
-	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL)
+	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-cred-username: EAP method not supported: %d",
+			eap->method);
 		return 0; /* method not supported */
+	}
 
 	if (eap->method != EAP_TYPE_TTLS && eap->method != EAP_TYPE_PEAP &&
 	    eap->method != EAP_TYPE_FAST) {
 		/* Only tunneled methods with username/password supported */
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-cred-username: Method: %d is not TTLS, PEAP, or FAST",
+			eap->method);
 		return 0;
 	}
 
 	if (eap->method == EAP_TYPE_PEAP || eap->method == EAP_TYPE_FAST) {
 		if (eap->inner_method &&
-		    eap_get_name(EAP_VENDOR_IETF, eap->inner_method) == NULL)
+		    eap_get_name(EAP_VENDOR_IETF, eap->inner_method) == NULL) {
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"nai-realm-cred-username: PEAP/FAST: Inner method not supported: %d",
+				eap->inner_method);
 			return 0;
+		}
 		if (!eap->inner_method &&
-		    eap_get_name(EAP_VENDOR_IETF, EAP_TYPE_MSCHAPV2) == NULL)
+		    eap_get_name(EAP_VENDOR_IETF, EAP_TYPE_MSCHAPV2) == NULL) {
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"nai-realm-cred-username: MSCHAPv2 not supported");
 			return 0;
+		}
 	}
 
 	if (eap->method == EAP_TYPE_TTLS) {
 		if (eap->inner_method == 0 && eap->inner_non_eap == 0)
 			return 1; /* Assume TTLS/MSCHAPv2 is used */
 		if (eap->inner_method &&
-		    eap_get_name(EAP_VENDOR_IETF, eap->inner_method) == NULL)
+		    eap_get_name(EAP_VENDOR_IETF, eap->inner_method) == NULL) {
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"nai-realm-cred-username: TTLS, but inner not supported: %d",
+				eap->inner_method);
 			return 0;
+		}
 		if (eap->inner_non_eap &&
 		    eap->inner_non_eap != NAI_REALM_INNER_NON_EAP_PAP &&
 		    eap->inner_non_eap != NAI_REALM_INNER_NON_EAP_CHAP &&
 		    eap->inner_non_eap != NAI_REALM_INNER_NON_EAP_MSCHAP &&
-		    eap->inner_non_eap != NAI_REALM_INNER_NON_EAP_MSCHAPV2)
+		    eap->inner_non_eap != NAI_REALM_INNER_NON_EAP_MSCHAPV2) {
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"nai-realm-cred-username: TTLS, inner-non-eap not supported: %d",
+				eap->inner_non_eap);
 			return 0;
+		}
 	}
 
 	if (eap->inner_method &&
 	    eap->inner_method != EAP_TYPE_GTC &&
-	    eap->inner_method != EAP_TYPE_MSCHAPV2)
-		return 0;
-
-	return 1;
-}
-
-
-static int nai_realm_cred_cert(struct nai_realm_eap *eap)
-{
-	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL)
-		return 0; /* method not supported */
-
-	if (eap->method != EAP_TYPE_TLS) {
-		/* Only EAP-TLS supported for credential authentication */
+	    eap->inner_method != EAP_TYPE_MSCHAPV2) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-cred-username: inner-method not GTC or MSCHAPv2: %d",
+			eap->inner_method);
 		return 0;
 	}
 
@@ -644,27 +657,55 @@ static int nai_realm_cred_cert(struct nai_realm_eap *eap)
 }
 
 
-static struct nai_realm_eap * nai_realm_find_eap(struct wpa_cred *cred,
+static int nai_realm_cred_cert(struct wpa_supplicant *wpa_s,
+			       struct nai_realm_eap *eap)
+{
+	if (eap_get_name(EAP_VENDOR_IETF, eap->method) == NULL) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-cred-cert: Method not supported: %d",
+			eap->method);
+		return 0; /* method not supported */
+	}
+
+	if (eap->method != EAP_TYPE_TLS) {
+		/* Only EAP-TLS supported for credential authentication */
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-cred-cert: Method not TLS: %d",
+			eap->method);
+		return 0;
+	}
+
+	return 1;
+}
+
+
+static struct nai_realm_eap * nai_realm_find_eap(struct wpa_supplicant *wpa_s,
+						 struct wpa_cred *cred,
 						 struct nai_realm *realm)
 {
 	u8 e;
 
-	if (cred == NULL ||
-	    cred->username == NULL ||
+	if (cred->username == NULL ||
 	    cred->username[0] == '\0' ||
 	    ((cred->password == NULL ||
 	      cred->password[0] == '\0') &&
 	     (cred->private_key == NULL ||
-	      cred->private_key[0] == '\0')))
+	      cred->private_key[0] == '\0'))) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"nai-realm-find-eap: incomplete cred info: username: %s  password: %s private_key: %s",
+			cred->username ? cred->username : "NULL",
+			cred->password ? cred->password : "NULL",
+			cred->private_key ? cred->private_key : "NULL");
 		return NULL;
+	}
 
 	for (e = 0; e < realm->eap_count; e++) {
 		struct nai_realm_eap *eap = &realm->eap[e];
 		if (cred->password && cred->password[0] &&
-		    nai_realm_cred_username(eap))
+		    nai_realm_cred_username(wpa_s, eap))
 			return eap;
 		if (cred->private_key && cred->private_key[0] &&
-		    nai_realm_cred_cert(eap))
+		    nai_realm_cred_cert(wpa_s, eap))
 			return eap;
 	}
 
@@ -1644,7 +1685,7 @@ static int interworking_connect_helper(struct wpa_supplicant *wpa_s,
 	for (i = 0; i < count; i++) {
 		if (!nai_realm_match(&realm[i], cred->realm))
 			continue;
-		eap = nai_realm_find_eap(cred, &realm[i]);
+		eap = nai_realm_find_eap(wpa_s, cred, &realm[i]);
 		if (eap)
 			break;
 	}
@@ -1813,22 +1854,29 @@ static struct wpa_cred * interworking_credentials_available_3gpp(
 	int ret;
 	int is_excluded = 0;
 
-	if (bss->anqp == NULL || bss->anqp->anqp_3gpp == NULL)
+	if (bss->anqp == NULL || bss->anqp->anqp_3gpp == NULL) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"interworking-avail-3gpp: not avail, anqp: %p  anqp_3gpp: %p",
+			bss->anqp, bss->anqp ? bss->anqp->anqp_3gpp : NULL);
 		return NULL;
+	}
 
 #ifdef CONFIG_EAP_PROXY
 	if (!wpa_s->imsi[0]) {
 		size_t len;
-		wpa_printf(MSG_DEBUG, "Interworking: IMSI not available - try to read again through eap_proxy");
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"Interworking: IMSI not available - try to read again through eap_proxy");
 		wpa_s->mnc_len = eapol_sm_get_eap_proxy_imsi(wpa_s->eapol,
 							     wpa_s->imsi,
 							     &len);
 		if (wpa_s->mnc_len > 0) {
 			wpa_s->imsi[len] = '\0';
-			wpa_printf(MSG_DEBUG, "eap_proxy: IMSI %s (MNC length %d)",
-				   wpa_s->imsi, wpa_s->mnc_len);
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"eap_proxy: IMSI %s (MNC length %d)",
+				wpa_s->imsi, wpa_s->mnc_len);
 		} else {
-			wpa_printf(MSG_DEBUG, "eap_proxy: IMSI not available");
+			wpa_msg(wpa_s, MSG_DEBUG,
+				"eap_proxy: IMSI not available");
 		}
 	}
 #endif /* CONFIG_EAP_PROXY */
@@ -1950,7 +1998,7 @@ static struct wpa_cred * interworking_credentials_available_realm(
 		for (i = 0; i < count; i++) {
 			if (!nai_realm_match(&realm[i], cred->realm))
 				continue;
-			if (nai_realm_find_eap(cred, &realm[i])) {
+			if (nai_realm_find_eap(wpa_s, cred, &realm[i])) {
 				if (cred_no_required_oi_match(cred, bss))
 					continue;
 				if (!ignore_bw &&
