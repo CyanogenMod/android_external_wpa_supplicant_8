@@ -1020,23 +1020,6 @@ CONFIG_INTERNAL_RC4=y
 CONFIG_INTERNAL_DH_GROUP5=y
 endif
 
-ifeq ($(CONFIG_TLS), nss)
-ifdef TLS_FUNCS
-OBJS += ../src/crypto/tls_nss.o
-LIBS += -lssl3
-endif
-OBJS += ../src/crypto/crypto_nss.o
-OBJS_p += ../src/crypto/crypto_nss.o
-ifdef NEED_FIPS186_2_PRF
-OBJS += ../src/crypto/fips_prf_internal.o
-SHA1OBJS += ../src/crypto/sha1-internal.o
-endif
-LIBS += -lnss3
-LIBS_p += -lnss3
-CONFIG_INTERNAL_MD4=y
-CONFIG_INTERNAL_DH_GROUP5=y
-endif
-
 ifeq ($(CONFIG_TLS), internal)
 ifndef CONFIG_CRYPTO
 CONFIG_CRYPTO=internal
@@ -1421,6 +1404,7 @@ CFLAGS += -DCONFIG_SME
 endif
 
 OBJS += ../src/common/ieee802_11_common.o
+OBJS += ../src/common/hw_features_common.o
 
 ifdef NEED_EAP_COMMON
 OBJS += ../src/eap_common/eap_common.o
@@ -1523,6 +1507,7 @@ CFLAGS += -DCONFIG_MODULE_TESTS
 OBJS += wpas_module_tests.o
 OBJS += ../src/utils/utils_module_tests.o
 OBJS += ../src/common/common_module_tests.o
+OBJS += ../src/crypto/crypto_module_tests.o
 ifdef CONFIG_WPS
 OBJS += ../src/wps/wps_module_tests.o
 endif

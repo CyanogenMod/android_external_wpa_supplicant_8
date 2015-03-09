@@ -235,6 +235,99 @@ static char * wpa_config_write_int(const struct parse_data *data,
 #endif /* NO_CONFIG_WRITE */
 
 
+static int wpa_config_parse_addr_list(const struct parse_data *data,
+				      int line, const char *value,
+				      u8 **list, size_t *num, char *name,
+				      u8 abort_on_error, u8 masked)
+{
+	const char *pos;
+	u8 *buf, *n, addr[2 * ETH_ALEN];
+	size_t count;
+
+	buf = NULL;
+	count = 0;
+
+	pos = value;
+	while (pos && *pos) {
+		while (*pos == ' ')
+			pos++;
+
+		if (hwaddr_masked_aton(pos, addr, &addr[ETH_ALEN], masked)) {
+			if (abort_on_error || count == 0) {
+				wpa_printf(MSG_ERROR,
+					   "Line %d: Invalid %s address '%s'",
+					   line, name, value);
+				os_free(buf);
+				return -1;
+			}
+			/* continue anyway since this could have been from a
+			 * truncated configuration file line */
+			wpa_printf(MSG_INFO,
+				   "Line %d: Ignore likely truncated %s address '%s'",
+				   line, name, pos);
+		} else {
+			n = os_realloc_array(buf, count + 1, 2 * ETH_ALEN);
+			if (n == NULL) {
+				os_free(buf);
+				return -1;
+			}
+			buf = n;
+			os_memmove(buf + 2 * ETH_ALEN, buf,
+				   count * 2 * ETH_ALEN);
+			os_memcpy(buf, addr, 2 * ETH_ALEN);
+			count++;
+			wpa_printf(MSG_MSGDUMP,
+				   "%s: addr=" MACSTR " mask=" MACSTR,
+				   name, MAC2STR(addr),
+				   MAC2STR(&addr[ETH_ALEN]));
+		}
+
+		pos = os_strchr(pos, ' ');
+	}
+
+	os_free(*list);
+	*list = buf;
+	*num = count;
+
+	return 0;
+}
+
+
+#ifndef NO_CONFIG_WRITE
+static char * wpa_config_write_addr_list(const struct parse_data *data,
+					 const u8 *list, size_t num, char *name)
+{
+	char *value, *end, *pos;
+	int res;
+	size_t i;
+
+	if (list == NULL || num == 0)
+		return NULL;
+
+	value = os_malloc(2 * 20 * num);
+	if (value == NULL)
+		return NULL;
+	pos = value;
+	end = value + 2 * 20 * num;
+
+	for (i = num; i > 0; i--) {
+		const u8 *a = list + (i - 1) * 2 * ETH_ALEN;
+		const u8 *m = a + ETH_ALEN;
+
+		if (i < num)
+			*pos++ = ' ';
+		res = hwaddr_mask_txt(pos, end - pos, a, m);
+		if (res < 0) {
+			os_free(value);
+			return NULL;
+		}
+		pos += res;
+	}
+
+	return value;
+}
+#endif /* NO_CONFIG_WRITE */
+
 static int wpa_config_parse_bssid(const struct parse_data *data,
 				  struct wpa_ssid *ssid, int line,
 				  const char *value)
@@ -276,6 +369,50 @@ static char * wpa_config_write_bssid(const struct parse_data *data,
 	}
 	value[20 - 1] = '\0';
 	return value;
+}
+#endif /* NO_CONFIG_WRITE */
+
+
+static int wpa_config_parse_bssid_blacklist(const struct parse_data *data,
+					    struct wpa_ssid *ssid, int line,
+					    const char *value)
+{
+	return wpa_config_parse_addr_list(data, line, value,
+					  &ssid->bssid_blacklist,
+					  &ssid->num_bssid_blacklist,
+					  "bssid_blacklist", 1, 1);
+}
+
+
+#ifndef NO_CONFIG_WRITE
+static char * wpa_config_write_bssid_blacklist(const struct parse_data *data,
+					       struct wpa_ssid *ssid)
+{
+	return wpa_config_write_addr_list(data, ssid->bssid_blacklist,
+					  ssid->num_bssid_blacklist,
+					  "bssid_blacklist");
+}
+#endif /* NO_CONFIG_WRITE */
+
+
+static int wpa_config_parse_bssid_whitelist(const struct parse_data *data,
+					    struct wpa_ssid *ssid, int line,
+					    const char *value)
+{
+	return wpa_config_parse_addr_list(data, line, value,
+					  &ssid->bssid_whitelist,
+					  &ssid->num_bssid_whitelist,
+					  "bssid_whitelist", 1, 1);
+}
+
+
+#ifndef NO_CONFIG_WRITE
+static char * wpa_config_write_bssid_whitelist(const struct parse_data *data,
+					       struct wpa_ssid *ssid)
+{
+	return wpa_config_write_addr_list(data, ssid->bssid_whitelist,
+					  ssid->num_bssid_whitelist,
+					  "bssid_whitelist");
 }
 #endif /* NO_CONFIG_WRITE */
 
@@ -1453,53 +1590,10 @@ static int wpa_config_parse_p2p_client_list(const struct parse_data *data,
 					    struct wpa_ssid *ssid, int line,
 					    const char *value)
 {
-	const char *pos;
-	u8 *buf, *n, addr[ETH_ALEN];
-	size_t count;
-
-	buf = NULL;
-	count = 0;
-
-	pos = value;
-	while (pos && *pos) {
-		while (*pos == ' ')
-			pos++;
-
-		if (hwaddr_aton(pos, addr)) {
-			if (count == 0) {
-				wpa_printf(MSG_ERROR, "Line %d: Invalid "
-					   "p2p_client_list address '%s'.",
-					   line, value);
-				os_free(buf);
-				return -1;
-			}
-			/* continue anyway since this could have been from a
-			 * truncated configuration file line */
-			wpa_printf(MSG_INFO, "Line %d: Ignore likely "
-				   "truncated p2p_client_list address '%s'",
-				   line, pos);
-		} else {
-			n = os_realloc_array(buf, count + 1, ETH_ALEN);
-			if (n == NULL) {
-				os_free(buf);
-				return -1;
-			}
-			buf = n;
-			os_memmove(buf + ETH_ALEN, buf, count * ETH_ALEN);
-			os_memcpy(buf, addr, ETH_ALEN);
-			count++;
-			wpa_hexdump(MSG_MSGDUMP, "p2p_client_list",
-				    addr, ETH_ALEN);
-		}
-
-		pos = os_strchr(pos, ' ');
-	}
-
-	os_free(ssid->p2p_client_list);
-	ssid->p2p_client_list = buf;
-	ssid->num_p2p_clients = count;
-
-	return 0;
+	return wpa_config_parse_addr_list(data, line, value,
+					  &ssid->p2p_client_list,
+					  &ssid->num_p2p_clients,
+					  "p2p_client_list", 0, 0);
 }
 
 
@@ -1507,34 +1601,9 @@ static int wpa_config_parse_p2p_client_list(const struct parse_data *data,
 static char * wpa_config_write_p2p_client_list(const struct parse_data *data,
 					       struct wpa_ssid *ssid)
 {
-	char *value, *end, *pos;
-	int res;
-	size_t i;
-
-	if (ssid->p2p_client_list == NULL || ssid->num_p2p_clients == 0)
-		return NULL;
-
-	value = os_malloc(20 * ssid->num_p2p_clients);
-	if (value == NULL)
-		return NULL;
-	pos = value;
-	end = value + 20 * ssid->num_p2p_clients;
-
-	for (i = ssid->num_p2p_clients; i > 0; i--) {
-		res = os_snprintf(pos, end - pos, MACSTR " ",
-				  MAC2STR(ssid->p2p_client_list +
-					  (i - 1) * ETH_ALEN));
-		if (os_snprintf_error(end - pos, res)) {
-			os_free(value);
-			return NULL;
-		}
-		pos += res;
-	}
-
-	if (pos > value)
-		pos[-1] = '\0';
-
-	return value;
+	return wpa_config_write_addr_list(data, ssid->p2p_client_list,
+					  ssid->num_p2p_clients,
+					  "p2p_client_list");
 }
 #endif /* NO_CONFIG_WRITE */
 
@@ -1597,32 +1666,6 @@ static char * wpa_config_write_psk_list(const struct parse_data *data,
 
 #ifdef CONFIG_MESH
 
-static int wpa_config_parse_mesh_ht_mode(const struct parse_data *data,
-					 struct wpa_ssid *ssid, int line,
-					 const char *value)
-{
-	int htval = 0;
-
-	if (os_strcmp(value, "NOHT") == 0)
-		htval = CHAN_NO_HT;
-	else if (os_strcmp(value, "HT20") == 0)
-		htval = CHAN_HT20;
-	else if (os_strcmp(value, "HT40-") == 0)
-		htval = CHAN_HT40MINUS;
-	else if (os_strcmp(value, "HT40+") == 0)
-		htval = CHAN_HT40PLUS;
-	else {
-		wpa_printf(MSG_ERROR,
-			   "Line %d: no ht_mode configured.", line);
-		return -1;
-	}
-
-	wpa_printf(MSG_MSGDUMP, "mesh_ht_mode: 0x%x", htval);
-	ssid->mesh_ht_mode = htval;
-	return 0;
-}
-
-
 static int wpa_config_parse_mesh_basic_rates(const struct parse_data *data,
 					     struct wpa_ssid *ssid, int line,
 					     const char *value)
@@ -1647,32 +1690,6 @@ static int wpa_config_parse_mesh_basic_rates(const struct parse_data *data,
 
 
 #ifndef NO_CONFIG_WRITE
-
-static char * wpa_config_write_mesh_ht_mode(const struct parse_data *data,
-					    struct wpa_ssid *ssid)
-{
-	char *val;
-
-	switch (ssid->mesh_ht_mode) {
-	default:
-		val = NULL;
-		break;
-	case CHAN_NO_HT:
-		val = "NOHT";
-		break;
-	case CHAN_HT20:
-		val = "HT20";
-		break;
-	case CHAN_HT40MINUS:
-		val = "HT40-";
-		break;
-	case CHAN_HT40PLUS:
-		val = "HT40+";
-		break;
-	}
-	return val ? os_strdup(val) : NULL;
-}
-
 
 static char * wpa_config_write_mesh_basic_rates(const struct parse_data *data,
 						struct wpa_ssid *ssid)
@@ -1776,6 +1793,8 @@ static const struct parse_data ssid_fields[] = {
 	{ STR_RANGE(ssid, 0, MAX_SSID_LEN) },
 	{ INT_RANGE(scan_ssid, 0, 1) },
 	{ FUNC(bssid) },
+	{ FUNC(bssid_blacklist) },
+	{ FUNC(bssid_whitelist) },
 	{ FUNC_KEY(psk) },
 	{ FUNC(proto) },
 	{ FUNC(key_mgmt) },
@@ -1856,7 +1875,6 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(mixed_cell, 0, 1) },
 	{ INT_RANGE(frequency, 0, 65000) },
 #ifdef CONFIG_MESH
-	{ FUNC(mesh_ht_mode) },
 	{ FUNC(mesh_basic_rates) },
 	{ INT(dot11MeshMaxRetries) },
 	{ INT(dot11MeshRetryTimeout) },
@@ -2088,6 +2106,8 @@ void wpa_config_free_ssid(struct wpa_ssid *ssid)
 	os_free(ssid->freq_list);
 	os_free(ssid->bgscan);
 	os_free(ssid->p2p_client_list);
+	os_free(ssid->bssid_blacklist);
+	os_free(ssid->bssid_whitelist);
 #ifdef CONFIG_HT_OVERRIDES
 	os_free(ssid->ht_mcs);
 #endif /* CONFIG_HT_OVERRIDES */
@@ -2347,7 +2367,6 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->eap.sim_num = DEFAULT_USER_SELECTED_SIM;
 #endif /* IEEE8021X_EAPOL */
 #ifdef CONFIG_MESH
-	ssid->mesh_ht_mode = DEFAULT_MESH_HT_MODE;
 	ssid->dot11MeshMaxRetries = DEFAULT_MESH_MAX_RETRIES;
 	ssid->dot11MeshRetryTimeout = DEFAULT_MESH_RETRY_TIMEOUT;
 	ssid->dot11MeshConfirmTimeout = DEFAULT_MESH_CONFIRM_TIMEOUT;

@@ -33,6 +33,7 @@
 #include "rsn_supp/pmksa_cache.h"
 #include "common/wpa_ctrl.h"
 #include "common/ieee802_11_defs.h"
+#include "common/hw_features_common.h"
 #include "p2p/p2p.h"
 #include "blacklist.h"
 #include "wpas_glue.h"
@@ -1649,6 +1650,137 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 }
 
 
+void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
+			  const struct wpa_ssid *ssid,
+			  struct hostapd_freq_params *freq)
+{
+	enum hostapd_hw_mode hw_mode;
+	struct hostapd_hw_modes *mode = NULL;
+	int ht40plus[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 149, 157,
+			   184, 192 };
+	struct hostapd_channel_data *pri_chan = NULL, *sec_chan = NULL;
+	u8 channel;
+	int i, chan_idx, ht40 = -1, res;
+	unsigned int j;
+
+	freq->freq = ssid->frequency;
+
+	/* For IBSS check HT_IBSS flag */
+	if (ssid->mode == WPAS_MODE_IBSS &&
+	    !(wpa_s->drv_flags & WPA_DRIVER_FLAGS_HT_IBSS))
+		return;
+
+	hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
+	for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
+		if (wpa_s->hw.modes[i].mode == hw_mode) {
+			mode = &wpa_s->hw.modes[i];
+			break;
+		}
+	}
+
+	if (!mode)
+		return;
+
+	freq->ht_enabled = ht_supported(mode);
+	if (!freq->ht_enabled)
+		return;
+
+	/* Setup higher BW only for 5 GHz */
+	if (mode->mode != HOSTAPD_MODE_IEEE80211A)
+		return;
+
+	for (chan_idx = 0; chan_idx < mode->num_channels; chan_idx++) {
+		pri_chan = &mode->channels[chan_idx];
+		if (pri_chan->chan == channel)
+			break;
+		pri_chan = NULL;
+	}
+	if (!pri_chan)
+		return;
+
+	/* Check primary channel flags */
+	if (pri_chan->flag & (HOSTAPD_CHAN_DISABLED | HOSTAPD_CHAN_NO_IR))
+		return;
+
+	/* Check/setup HT40+/HT40- */
+	for (j = 0; j < ARRAY_SIZE(ht40plus); j++) {
+		if (ht40plus[j] == channel) {
+			ht40 = 1;
+			break;
+		}
+	}
+
+	/* Find secondary channel */
+	for (i = 0; i < mode->num_channels; i++) {
+		sec_chan = &mode->channels[i];
+		if (sec_chan->chan == channel + ht40 * 4)
+			break;
+		sec_chan = NULL;
+	}
+	if (!sec_chan)
+		return;
+
+	/* Check secondary channel flags */
+	if (sec_chan->flag & (HOSTAPD_CHAN_DISABLED | HOSTAPD_CHAN_NO_IR))
+		return;
+
+	freq->channel = pri_chan->chan;
+
+	switch (ht40) {
+	case -1:
+		if (!(pri_chan->flag & HOSTAPD_CHAN_HT40MINUS))
+			return;
+		freq->sec_channel_offset = -1;
+		break;
+	case 1:
+		if (!(pri_chan->flag & HOSTAPD_CHAN_HT40PLUS))
+			return;
+		freq->sec_channel_offset = 1;
+		break;
+	default:
+		break;
+	}
+
+	if (freq->sec_channel_offset) {
+		struct wpa_scan_results *scan_res;
+
+		scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0);
+		if (scan_res == NULL) {
+			/* Back to HT20 */
+			freq->sec_channel_offset = 0;
+			return;
+		}
+
+		res = check_40mhz_5g(mode, scan_res, pri_chan->chan,
+				     sec_chan->chan);
+		switch (res) {
+		case 0:
+			/* Back to HT20 */
+			freq->sec_channel_offset = 0;
+			break;
+		case 1:
+			/* Configuration allowed */
+			break;
+		case 2:
+			/* Switch pri/sec channels */
+			freq->freq = hw_get_freq(mode, sec_chan->chan);
+			freq->sec_channel_offset = -freq->sec_channel_offset;
+			freq->channel = sec_chan->chan;
+			break;
+		default:
+			freq->sec_channel_offset = 0;
+			break;
+		}
+
+		wpa_scan_results_free(scan_res);
+	}
+
+	wpa_printf(MSG_DEBUG,
+		   "IBSS/mesh: setup freq channel %d, sec_channel_offset %d",
+		   freq->channel, freq->sec_channel_offset);
+}
+
+
 static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 {
 	struct wpa_connect_work *cwork = work->ctx;
@@ -1962,23 +2094,8 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 
 	/* Initial frequency for IBSS/mesh */
 	if ((ssid->mode == WPAS_MODE_IBSS || ssid->mode == WPAS_MODE_MESH) &&
-	    ssid->frequency > 0 && params.freq.freq == 0) {
-		enum hostapd_hw_mode hw_mode;
-		u8 channel;
-
-		params.freq.freq = ssid->frequency;
-
-		hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
-		for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
-			if (wpa_s->hw.modes[i].mode == hw_mode) {
-				struct hostapd_hw_modes *mode;
-
-				mode = &wpa_s->hw.modes[i];
-				params.freq.ht_enabled = ht_supported(mode);
-				break;
-			}
-		}
-	}
+	    ssid->frequency > 0 && params.freq.freq == 0)
+		ibss_mesh_setup_freq(wpa_s, ssid, &params.freq);
 
 	if (ssid->mode == WPAS_MODE_IBSS) {
 		if (ssid->beacon_int)
@@ -5079,6 +5196,13 @@ void wpas_rrm_process_neighbor_rep(struct wpa_supplicant *wpa_s,
 	wpa_s->rrm.neighbor_rep_cb_ctx = NULL;
 }
 
+
+#if defined(__CYGWIN__) || defined(CONFIG_NATIVE_WINDOWS)
+/* Workaround different, undefined for Windows, error codes used here */
+#define ENOTCONN -1
+#define EOPNOTSUPP -1
+#define ECANCELED -1
+#endif
 
 /**
  * wpas_rrm_send_neighbor_rep_request - Request a neighbor report from our AP

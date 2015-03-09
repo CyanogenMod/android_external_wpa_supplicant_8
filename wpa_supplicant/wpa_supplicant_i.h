@@ -703,6 +703,7 @@ struct wpa_supplicant {
 	struct mesh_rsn *mesh_rsn;
 	int mesh_if_idx;
 	unsigned int mesh_if_created:1;
+	unsigned int mesh_ht_enabled:1;
 #endif /* CONFIG_MESH */
 
 	unsigned int off_channel_freq;
@@ -1073,6 +1074,10 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 					      struct wpa_ssid *ssid,
 					      const char *field,
 					      const char *value);
+
+void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
+			  const struct wpa_ssid *ssid,
+			  struct hostapd_freq_params *freq);
 
 /* events.c */
 void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s);
