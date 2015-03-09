@@ -2029,6 +2029,18 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		}
 	}
 
+	if (wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ]) {
+		struct wpabuf *buf = wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ];
+		size_t len;
+
+		len = sizeof(wpa_ie) - wpa_ie_len;
+		if (wpabuf_len(buf) <= len) {
+			os_memcpy(wpa_ie + wpa_ie_len,
+				  wpabuf_head(buf), wpabuf_len(buf));
+			wpa_ie_len += wpabuf_len(buf);
+		}
+	}
+
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
 	use_crypt = 1;
 	cipher_pairwise = wpa_s->pairwise_cipher;
@@ -2184,7 +2196,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	os_memset(&vhtcaps_mask, 0, sizeof(vhtcaps_mask));
 	params.vhtcaps = &vhtcaps;
 	params.vhtcaps_mask = &vhtcaps_mask;
-	wpa_supplicant_apply_vht_overrides(wpa_s, wpa_s->current_ssid, &params);
+	wpa_supplicant_apply_vht_overrides(wpa_s, ssid, &params);
 #endif /* CONFIG_VHT_OVERRIDES */
 
 #ifdef CONFIG_P2P
@@ -3599,7 +3611,7 @@ static void radio_start_next_work(void *eloop_ctx, void *timeout_ctx)
 
 	wpa_s = dl_list_first(&radio->ifaces, struct wpa_supplicant,
 			      radio_list);
-	if (wpa_s && wpa_s->external_scan_running) {
+	if (wpa_s && wpa_s->radio->external_scan_running) {
 		wpa_printf(MSG_DEBUG, "Delay radio work start until externally triggered scan completes");
 		return;
 	}
@@ -5020,6 +5032,8 @@ void wpas_request_connection(struct wpa_supplicant *wpa_s)
 
 	if (wpa_supplicant_fast_associate(wpa_s) != 1)
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
+	else
+		wpa_s->reattach = 0;
 }
 
 

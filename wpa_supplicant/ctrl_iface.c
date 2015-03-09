@@ -437,6 +437,8 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_AP */
 	} else if (os_strcasecmp(cmd, "extra_roc_dur") == 0) {
 		wpa_s->extra_roc_dur = atoi(value);
+	} else if (os_strcasecmp(cmd, "test_failure") == 0) {
+		wpa_s->test_failure = atoi(value);
 #endif /* CONFIG_TESTING_OPTIONS */
 #ifndef CONFIG_NO_CONFIG_BLOBS
 	} else if (os_strcmp(cmd, "blob") == 0) {
@@ -5526,6 +5528,27 @@ static int ctrl_interworking_connect(struct wpa_supplicant *wpa_s, char *dst)
 		return -1;
 	}
 
+	if (bss->ssid_len == 0) {
+		int found = 0;
+
+		wpa_printf(MSG_DEBUG, "Selected BSS entry for " MACSTR
+			   " does not have SSID information", MAC2STR(bssid));
+
+		dl_list_for_each_reverse(bss, &wpa_s->bss, struct wpa_bss,
+					 list) {
+			if (os_memcmp(bss->bssid, bssid, ETH_ALEN) == 0 &&
+			    bss->ssid_len > 0) {
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+			return -1;
+		wpa_printf(MSG_DEBUG,
+			   "Found another matching BSS entry with SSID");
+	}
+
 	return interworking_connect(wpa_s, bss);
 }
 
@@ -6091,20 +6114,24 @@ static int wpa_supplicant_vendor_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 
 static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 {
+#ifdef CONFIG_P2P
+	struct wpa_supplicant *p2p_wpa_s = wpa_s->global->p2p_init_wpa_s ?
+		wpa_s->global->p2p_init_wpa_s : wpa_s;
+#endif /* CONFIG_P2P */
+
 	wpa_dbg(wpa_s, MSG_DEBUG, "Flush all wpa_supplicant state");
 
 #ifdef CONFIG_P2P
-	wpas_p2p_cancel(wpa_s);
-	wpas_p2p_stop_find(wpa_s);
-	p2p_ctrl_flush(wpa_s);
-	wpas_p2p_group_remove(wpa_s, "*");
-	wpas_p2p_service_flush(wpa_s);
-	wpa_s->global->p2p_disabled = 0;
-	wpa_s->global->p2p_per_sta_psk = 0;
-	wpa_s->conf->num_sec_device_types = 0;
-	wpa_s->p2p_disable_ip_addr_req = 0;
-	os_free(wpa_s->global->p2p_go_avoid_freq.range);
-	wpa_s->global->p2p_go_avoid_freq.range = NULL;
+	wpas_p2p_cancel(p2p_wpa_s);
+	p2p_ctrl_flush(p2p_wpa_s);
+	wpas_p2p_group_remove(p2p_wpa_s, "*");
+	wpas_p2p_service_flush(p2p_wpa_s);
+	p2p_wpa_s->global->p2p_disabled = 0;
+	p2p_wpa_s->global->p2p_per_sta_psk = 0;
+	p2p_wpa_s->conf->num_sec_device_types = 0;
+	p2p_wpa_s->p2p_disable_ip_addr_req = 0;
+	os_free(p2p_wpa_s->global->p2p_go_avoid_freq.range);
+	p2p_wpa_s->global->p2p_go_avoid_freq.range = NULL;
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WPS_TESTING
@@ -6145,8 +6172,6 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_s->sta_uapsd = 0;
 
 	wpa_drv_radio_disable(wpa_s, 0);
-
-	wpa_bss_flush(wpa_s);
 	wpa_blacklist_clear(wpa_s);
 	wpa_s->extra_blacklist_count = 0;
 	wpa_supplicant_ctrl_iface_remove_network(wpa_s, "all");
@@ -6176,11 +6201,22 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wpa_s->ext_eapol_frame_io = 0;
 #ifdef CONFIG_TESTING_OPTIONS
 	wpa_s->extra_roc_dur = 0;
+	wpa_s->test_failure = WPAS_TEST_FAILURE_NONE;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	wpa_s->disconnected = 0;
 	os_free(wpa_s->next_scan_freqs);
 	wpa_s->next_scan_freqs = NULL;
+
+	wpa_bss_flush(wpa_s);
+	if (!dl_list_empty(&wpa_s->bss)) {
+		wpa_printf(MSG_DEBUG,
+			   "BSS table not empty after flush: %u entries, current_bss=%p bssid="
+			   MACSTR " pending_bssid=" MACSTR,
+			   dl_list_len(&wpa_s->bss), wpa_s->current_bss,
+			   MAC2STR(wpa_s->bssid),
+			   MAC2STR(wpa_s->pending_bssid));
+	}
 }
 
 
@@ -7873,8 +7909,8 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "WNM_SLEEP ", 10) == 0) {
 		if (wpas_ctrl_iface_wnm_sleep(wpa_s, buf + 10))
 			reply_len = -1;
-	} else if (os_strncmp(buf, "WNM_BSS_QUERY ", 10) == 0) {
-		if (wpas_ctrl_iface_wnm_bss_query(wpa_s, buf + 10))
+	} else if (os_strncmp(buf, "WNM_BSS_QUERY ", 14) == 0) {
+		if (wpas_ctrl_iface_wnm_bss_query(wpa_s, buf + 14))
 				reply_len = -1;
 #endif /* CONFIG_WNM */
 	} else if (os_strcmp(buf, "FLUSH") == 0) {
@@ -8182,6 +8218,8 @@ static char * wpas_global_ctrl_iface_redir_p2p(struct wpa_global *global,
 		"P2P_PRESENCE_REQ ",
 		"P2P_EXT_LISTEN ",
 		"P2P_REMOVE_CLIENT ",
+		"WPS_NFC_TOKEN ",
+		"WPS_NFC_TAG_READ ",
 		"NFC_GET_HANDOVER_SEL ",
 		"NFC_GET_HANDOVER_REQ ",
 		"NFC_REPORT_HANDOVER ",

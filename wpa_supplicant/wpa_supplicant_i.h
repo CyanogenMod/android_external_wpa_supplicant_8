@@ -296,6 +296,7 @@ struct wpa_global {
 struct wpa_radio {
 	char name[16]; /* from driver_ops get_radio_name() or empty if not
 			* available */
+	unsigned int external_scan_running:1;
 	struct dl_list ifaces; /* struct wpa_supplicant::radio_list entries */
 	struct dl_list work; /* struct wpa_radio_work::list entries */
 };
@@ -401,6 +402,11 @@ struct rrm_data {
 
 	/* next_neighbor_rep_token - Next request's dialog token */
 	u8 next_neighbor_rep_token;
+};
+
+enum wpa_supplicant_test_failure {
+	WPAS_TEST_FAILURE_NONE,
+	WPAS_TEST_FAILURE_SCAN_TRIGGER,
 };
 
 /**
@@ -580,6 +586,7 @@ struct wpa_supplicant {
 		 */
 		MANUAL_SCAN_REQ
 	} scan_req, last_scan_req;
+	enum wpa_states scan_prev_wpa_state;
 	struct os_reltime scan_trigger_time, scan_start_time;
 	int scan_runs; /* number of scan runs since WPS was started */
 	int *next_scan_freqs;
@@ -590,7 +597,6 @@ struct wpa_supplicant {
 	unsigned int manual_scan_only_new:1;
 	unsigned int own_scan_requested:1;
 	unsigned int own_scan_running:1;
-	unsigned int external_scan_running:1;
 	unsigned int clear_driver_scan_cache:1;
 	unsigned int manual_scan_id;
 	int scan_interval; /* time in sec between scans to find suitable AP */
@@ -857,6 +863,7 @@ struct wpa_supplicant {
 	unsigned int network_select:1;
 	unsigned int auto_select:1;
 	unsigned int auto_network_select:1;
+	unsigned int interworking_fast_assoc_tried:1;
 	unsigned int fetch_all_anqp:1;
 	unsigned int fetch_osu_info:1;
 	unsigned int fetch_osu_waiting_scan:1;
@@ -939,6 +946,7 @@ struct wpa_supplicant {
 #ifdef CONFIG_TESTING_OPTIONS
 	struct l2_packet_data *l2_test;
 	unsigned int extra_roc_dur;
+	enum wpa_supplicant_test_failure test_failure;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	struct wmm_ac_assoc_data *wmm_ac_assoc_info;
