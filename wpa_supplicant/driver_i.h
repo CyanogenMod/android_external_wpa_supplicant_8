@@ -532,14 +532,14 @@ static inline int wpa_drv_ampdu(struct wpa_supplicant *wpa_s, int ampdu)
 static inline int wpa_drv_send_tdls_mgmt(struct wpa_supplicant *wpa_s,
 					 const u8 *dst, u8 action_code,
 					 u8 dialog_token, u16 status_code,
-					 u32 peer_capab, const u8 *buf,
-					 size_t len)
+					 u32 peer_capab, int initiator,
+					 const u8 *buf, size_t len)
 {
 	if (wpa_s->driver->send_tdls_mgmt) {
 		return wpa_s->driver->send_tdls_mgmt(wpa_s->drv_priv, dst,
 						     action_code, dialog_token,
 						     status_code, peer_capab,
-						     buf, len);
+						     initiator, buf, len);
 	}
 	return -1;
 }
@@ -630,6 +630,22 @@ static inline int wpa_drv_vendor_cmd(struct wpa_supplicant *wpa_s,
 		return -1;
 	return wpa_s->driver->vendor_cmd(wpa_s->drv_priv, vendor_id, subcmd,
 					 data, data_len, buf);
+}
+
+static inline int wpa_drv_roaming(struct wpa_supplicant *wpa_s, int allowed,
+				  const u8 *bssid)
+{
+	if (!wpa_s->driver->roaming)
+		return -1;
+	return wpa_s->driver->roaming(wpa_s->drv_priv, allowed, bssid);
+}
+
+static inline int wpa_drv_set_mac_addr(struct wpa_supplicant *wpa_s,
+				       const u8 *addr)
+{
+	if (!wpa_s->driver->set_mac_addr)
+		return -1;
+	return wpa_s->driver->set_mac_addr(wpa_s->drv_priv, addr);
 }
 
 

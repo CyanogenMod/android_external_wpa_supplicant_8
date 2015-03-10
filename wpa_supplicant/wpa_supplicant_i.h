@@ -67,7 +67,7 @@ struct wpa_interface {
 
 #ifdef CONFIG_P2P
 	/**
-	 * conf_p2p_dev - Additional configuration file used to hold the
+	 * conf_p2p_dev - Configuration file used to hold the
 	 * P2P Device configuration parameters.
 	 *
 	 * This can also be %NULL. In such a case, if a P2P Device dedicated
@@ -393,6 +393,7 @@ struct wpa_supplicant {
 	struct l2_packet_data *l2;
 	struct l2_packet_data *l2_br;
 	unsigned char own_addr[ETH_ALEN];
+	unsigned char perm_addr[ETH_ALEN];
 	char ifname[100];
 #ifdef CONFIG_CTRL_IFACE_DBUS
 	char *dbus_path;
@@ -409,10 +410,6 @@ struct wpa_supplicant {
 	char *confname;
 	char *confanother;
 
-#ifdef CONFIG_P2P
-	char *conf_p2p_dev;
-#endif /* CONFIG_P2P */
-
 	struct wpa_config *conf;
 	int countermeasures;
 	struct os_reltime last_michael_mic_error;
@@ -423,6 +420,7 @@ struct wpa_supplicant {
 	int disconnected; /* all connections disabled; i.e., do no reassociate
 			   * before this has been cleared */
 	struct wpa_ssid *current_ssid;
+	struct wpa_ssid *last_ssid;
 	struct wpa_bss *current_bss;
 	int ap_ies_from_associnfo;
 	unsigned int assoc_freq;
@@ -611,6 +609,10 @@ struct wpa_supplicant {
 	unsigned int last_eapol_matches_bssid:1;
 	unsigned int eap_expected_failure:1;
 	unsigned int reattach:1; /* reassociation to the same BSS requested */
+	unsigned int mac_addr_changed:1;
+
+	struct os_reltime last_mac_addr_change;
+	int last_mac_addr_style;
 
 	struct ibss_rsn *ibss_rsn;
 
@@ -961,6 +963,8 @@ int disallowed_ssid(struct wpa_supplicant *wpa_s, const u8 *ssid,
 		    size_t ssid_len);
 void wpas_request_connection(struct wpa_supplicant *wpa_s);
 int wpas_build_ext_capab(struct wpa_supplicant *wpa_s, u8 *buf, size_t buflen);
+int wpas_update_random_addr(struct wpa_supplicant *wpa_s, int style);
+int wpas_update_random_addr_disassoc(struct wpa_supplicant *wpa_s);
 
 /**
  * wpa_supplicant_ctrl_iface_ctrl_rsp_handle - Handle a control response
@@ -988,6 +992,8 @@ void wnm_bss_keep_alive_deinit(struct wpa_supplicant *wpa_s);
 int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s);
 struct wpa_bss * wpa_supplicant_pick_network(struct wpa_supplicant *wpa_s,
 					     struct wpa_ssid **selected_ssid);
+int ht_supported(const struct hostapd_hw_modes *mode);
+int vht_supported(const struct hostapd_hw_modes *mode);
 
 /* eap_register.c */
 int eap_register_methods(void);
