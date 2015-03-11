@@ -142,11 +142,29 @@ static int wpa_supplicant_eapol_send(void *ctx, int type, const u8 *buf,
 
 	if (pmksa_cache_get_current(wpa_s->wpa) &&
 	    type == IEEE802_1X_TYPE_EAPOL_START) {
-		/* Trying to use PMKSA caching - do not send EAPOL-Start frames
-		 * since they will trigger full EAPOL authentication. */
-		wpa_printf(MSG_DEBUG, "RSN: PMKSA caching - do not send "
-			   "EAPOL-Start");
-		return -1;
+		/*
+		 * We were trying to use PMKSA caching and sending EAPOL-Start
+		 * would abort that and trigger full EAPOL authentication.
+		 * However, we've already waited for the AP/Authenticator to
+		 * start 4-way handshake or EAP authentication, and apparently
+		 * it has not done so since the startWhen timer has reached zero
+		 * to get the state machine sending EAPOL-Start. This is not
+		 * really supposed to happen, but an interoperability issue with
+		 * a deployed AP has been identified where the connection fails
+		 * due to that AP failing to operate correctly if PMKID is
+		 * included in the Association Request frame. To work around
+		 * this, assume PMKSA caching failed and try to initiate full
+		 * EAP authentication.
+		 */
+		if (!wpa_s->current_ssid ||
+		    wpa_s->current_ssid->eap_workaround) {
+			wpa_printf(MSG_DEBUG,
+				   "RSN: Timeout on waiting for the AP to initiate 4-way handshake for PMKSA caching or EAP authentication - try to force it to start EAP authentication");
+		} else {
+			wpa_printf(MSG_DEBUG,
+				   "RSN: PMKSA caching - do not send EAPOL-Start");
+			return -1;
+		}
 	}
 
 	if (is_zero_ether_addr(wpa_s->bssid)) {
@@ -562,11 +580,13 @@ static int wpa_supplicant_tdls_get_capa(void *ctx, int *tdls_supported,
 static int wpa_supplicant_send_tdls_mgmt(void *ctx, const u8 *dst,
 					 u8 action_code, u8 dialog_token,
 					 u16 status_code, u32 peer_capab,
-					 const u8 *buf, size_t len)
+					 int initiator, const u8 *buf,
+					 size_t len)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	return wpa_drv_send_tdls_mgmt(wpa_s, dst, action_code, dialog_token,
-				      status_code, peer_capab, buf, len);
+				      status_code, peer_capab, initiator, buf,
+				      len);
 }
 
 
@@ -582,7 +602,7 @@ static int wpa_supplicant_tdls_peer_addset(
 	const u8 *supp_rates, size_t supp_rates_len,
 	const struct ieee80211_ht_capabilities *ht_capab,
 	const struct ieee80211_vht_capabilities *vht_capab,
-	u8 qosinfo, const u8 *ext_capab, size_t ext_capab_len,
+	u8 qosinfo, int wmm, const u8 *ext_capab, size_t ext_capab_len,
 	const u8 *supp_channels, size_t supp_channels_len,
 	const u8 *supp_oper_classes, size_t supp_oper_classes_len)
 {
@@ -597,10 +617,10 @@ static int wpa_supplicant_tdls_peer_addset(
 	params.flags = WPA_STA_TDLS_PEER | WPA_STA_AUTHORIZED;
 
 	/*
-	 * TDLS Setup frames do not contain WMM IEs, hence need to depend on
-	 * qosinfo to check if the peer is WMM capable.
+	 * Don't rely only on qosinfo for WMM capability. It may be 0 even when
+	 * present. Allow the WMM IE to also indicate QoS support.
 	 */
-	if (qosinfo)
+	if (wmm || qosinfo)
 		params.flags |= WPA_STA_WMM;
 
 	params.ht_capabilities = ht_capab;

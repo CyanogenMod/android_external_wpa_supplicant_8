@@ -289,7 +289,7 @@ static void wpas_wps_remove_dup_network(struct wpa_supplicant *wpa_s,
 		    (ssid->group_cipher != new_ssid->group_cipher &&
 		     !(ssid->group_cipher & new_ssid->group_cipher &
 		       WPA_CIPHER_CCMP)))
-			continue;
+                continue;
 
 		/*
 		 * Some existing WPS APs will send two creds in case they are

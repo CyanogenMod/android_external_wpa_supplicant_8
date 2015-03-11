@@ -300,6 +300,7 @@ void wpa_supplicant_initiate_eapol(struct wpa_supplicant *wpa_s)
 		wpa_s->key_mgmt != WPA_KEY_MGMT_IEEE8021X_NO_WPA &&
 		wpa_s->key_mgmt != WPA_KEY_MGMT_WPS;
 	eapol_conf.external_sim = wpa_s->conf->external_sim;
+	eapol_conf.wps = wpa_s->key_mgmt == WPA_KEY_MGMT_WPS;
 	eapol_sm_notify_config(wpa_s->eapol, &ssid->eap, &eapol_conf);
 #endif /* IEEE8021X_EAPOL */
 
@@ -404,11 +405,6 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 
 	os_free(wpa_s->confanother);
 	wpa_s->confanother = NULL;
-
-#ifdef CONFIG_P2P
-	os_free(wpa_s->conf_p2p_dev);
-	wpa_s->conf_p2p_dev = NULL;
-#endif /* CONFIG_P2P */
 
 	wpa_sm_set_eapol(wpa_s->wpa, NULL);
 	eapol_sm_deinit(wpa_s->eapol);
@@ -1382,6 +1378,68 @@ void wpas_connect_work_done(struct wpa_supplicant *wpa_s)
 }
 
 
+int wpas_update_random_addr(struct wpa_supplicant *wpa_s, int style)
+{
+	struct os_reltime now;
+	u8 addr[ETH_ALEN];
+
+	os_get_reltime(&now);
+	if (wpa_s->last_mac_addr_style == style &&
+	    wpa_s->last_mac_addr_change.sec != 0 &&
+	    !os_reltime_expired(&now, &wpa_s->last_mac_addr_change,
+				wpa_s->conf->rand_addr_lifetime)) {
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"Previously selected random MAC address has not yet expired");
+		return 0;
+	}
+
+	switch (style) {
+	case 1:
+		if (random_mac_addr(addr) < 0)
+			return -1;
+		break;
+	case 2:
+		os_memcpy(addr, wpa_s->perm_addr, ETH_ALEN);
+		if (random_mac_addr_keep_oui(addr) < 0)
+			return -1;
+		break;
+	default:
+		return -1;
+	}
+
+	if (wpa_drv_set_mac_addr(wpa_s, addr) < 0) {
+		wpa_msg(wpa_s, MSG_INFO,
+			"Failed to set random MAC address");
+		return -1;
+	}
+
+	os_get_reltime(&wpa_s->last_mac_addr_change);
+	wpa_s->mac_addr_changed = 1;
+	wpa_s->last_mac_addr_style = style;
+
+	if (wpa_supplicant_update_mac_addr(wpa_s) < 0) {
+		wpa_msg(wpa_s, MSG_INFO,
+			"Could not update MAC address information");
+		return -1;
+	}
+
+	wpa_msg(wpa_s, MSG_DEBUG, "Using random MAC address " MACSTR,
+		MAC2STR(addr));
+
+	return 0;
+}
+
+
+int wpas_update_random_addr_disassoc(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING ||
+	    !wpa_s->conf->preassoc_mac_addr)
+		return 0;
+
+	return wpas_update_random_addr(wpa_s, wpa_s->conf->preassoc_mac_addr);
+}
+
+
 static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit);
 
 /**
@@ -1396,6 +1454,34 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 			      struct wpa_bss *bss, struct wpa_ssid *ssid)
 {
 	struct wpa_connect_work *cwork;
+	int rand_style;
+
+	if (ssid->mac_addr == -1)
+		rand_style = wpa_s->conf->mac_addr;
+	else
+		rand_style = ssid->mac_addr;
+
+	if (wpa_s->last_ssid == ssid) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Re-association to the same ESS");
+	} else if (rand_style > 0) {
+		if (wpas_update_random_addr(wpa_s, rand_style) < 0)
+			return;
+		wpa_sm_pmksa_cache_flush(wpa_s->wpa, ssid);
+	} else if (wpa_s->mac_addr_changed) {
+		if (wpa_drv_set_mac_addr(wpa_s, NULL) < 0) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Could not restore permanent MAC address");
+			return;
+		}
+		wpa_s->mac_addr_changed = 0;
+		if (wpa_supplicant_update_mac_addr(wpa_s) < 0) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Could not update MAC address information");
+			return;
+		}
+		wpa_msg(wpa_s, MSG_DEBUG, "Using permanent MAC address");
+	}
+	wpa_s->last_ssid = ssid;
 
 #ifdef CONFIG_IBSS_RSN
 	ibss_rsn_deinit(wpa_s->ibss_rsn);
@@ -1755,7 +1841,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 				   MAC2STR(bss->bssid), bss->freq,
 				   ssid->bssid_set);
 			params.bssid = bss->bssid;
-			params.freq = bss->freq;
+			params.freq.freq = bss->freq;
 		}
 		params.bssid_hint = bss->bssid;
 		params.freq_hint = bss->freq;
@@ -1771,8 +1857,23 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	}
 
 	if (ssid->mode == WPAS_MODE_IBSS && ssid->frequency > 0 &&
-	    params.freq == 0)
-		params.freq = ssid->frequency; /* Initial channel for IBSS */
+	    params.freq.freq == 0) {
+		enum hostapd_hw_mode hw_mode;
+		u8 channel;
+
+		params.freq.freq = ssid->frequency;
+
+		hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
+		for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
+			if (wpa_s->hw.modes[i].mode == hw_mode) {
+				struct hostapd_hw_modes *mode;
+
+				mode = &wpa_s->hw.modes[i];
+				params.freq.ht_enabled = ht_supported(mode);
+				break;
+			}
+		}
+	}
 
 	if (ssid->mode == WPAS_MODE_IBSS) {
 		if (ssid->beacon_int)
@@ -1873,13 +1974,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	if (wpa_s->num_multichan_concurrent < 2) {
 		int freq, num;
 		num = get_shared_radio_freqs(wpa_s, &freq, 1);
-		if (num > 0 && freq > 0 && freq != params.freq) {
+		if (num > 0 && freq > 0 && freq != params.freq.freq) {
 			wpa_printf(MSG_DEBUG,
 				   "Assoc conflicting freq found (%d != %d)",
-				   freq, params.freq);
-			if (wpas_p2p_handle_frequency_conflicts(wpa_s,
-								params.freq,
-								ssid) < 0) {
+				   freq, params.freq.freq);
+			if (wpas_p2p_handle_frequency_conflicts(
+				    wpa_s, params.freq.freq, ssid) < 0) {
 				wpas_connect_work_done(wpa_s);
 				return;
 			}
@@ -2686,6 +2786,8 @@ int wpa_supplicant_update_mac_addr(struct wpa_supplicant *wpa_s)
 		return -1;
 	}
 
+	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
+
 	return 0;
 }
 
@@ -2733,6 +2835,7 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s)
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Own MAC address: " MACSTR,
 		MAC2STR(wpa_s->own_addr));
+	os_memcpy(wpa_s->perm_addr, wpa_s->own_addr, ETH_ALEN);
 	wpa_sm_set_own_addr(wpa_s->wpa, wpa_s->own_addr);
 
 	if (wpa_s->bridge_ifname[0]) {
@@ -3531,13 +3634,6 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		}
 		wpa_s->confanother = os_rel2abs_path(iface->confanother);
 		wpa_config_read(wpa_s->confanother, wpa_s->conf);
-
-#ifdef CONFIG_P2P
-		wpa_s->conf_p2p_dev = os_rel2abs_path(iface->conf_p2p_dev);
-#ifndef ANDROID_P2P
-		wpa_config_read(wpa_s->conf_p2p_dev, wpa_s->conf);
-#endif
-#endif /* CONFIG_P2P */
 
 		/*
 		 * Override ctrl_interface and driver_param if set on command

@@ -44,6 +44,7 @@
 #include "autoscan.h"
 #include "wnm_sta.h"
 #include "offchannel.h"
+#include "drivers/driver.h"
 
 static int wpa_supplicant_global_iface_list(struct wpa_global *global,
 					    char *buf, int len);
@@ -1542,6 +1543,11 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		if (ret < 0 || ret >= end - pos)
 			return pos - buf;
 		pos += ret;
+		ret = os_snprintf(pos, end - pos, "freq=%u\n",
+				  wpa_s->assoc_freq);
+		if (ret < 0 || ret >= end - pos)
+			return pos - buf;
+		pos += ret;
 		if (ssid) {
 			u8 *_ssid = ssid->ssid;
 			size_t ssid_len = ssid->ssid_len;
@@ -1979,9 +1985,9 @@ static int wpa_supplicant_ctrl_iface_log_level(struct wpa_supplicant *wpa_s,
 
 
 static int wpa_supplicant_ctrl_iface_list_networks(
-	struct wpa_supplicant *wpa_s, char *buf, size_t buflen)
+	struct wpa_supplicant *wpa_s, char *cmd, char *buf, size_t buflen)
 {
-	char *pos, *end;
+	char *pos, *end, *prev;
 	struct wpa_ssid *ssid;
 	int ret;
 
@@ -1994,12 +2000,24 @@ static int wpa_supplicant_ctrl_iface_list_networks(
 	pos += ret;
 
 	ssid = wpa_s->conf->ssid;
+
+	/* skip over ssids until we find next one */
+	if (cmd != NULL && os_strncmp(cmd, "LAST_ID=", 8) == 0) {
+		int last_id = atoi(cmd + 8);
+		if (last_id != -1) {
+			while (ssid != NULL && ssid->id <= last_id) {
+				ssid = ssid->next;
+			}
+		}
+	}
+
 	while (ssid) {
+		prev = pos;
 		ret = os_snprintf(pos, end - pos, "%d\t%s",
 				  ssid->id,
 				  wpa_ssid_txt(ssid->ssid, ssid->ssid_len));
 		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
+			return prev - buf;
 		pos += ret;
 		if (ssid->bssid_set) {
 			ret = os_snprintf(pos, end - pos, "\t" MACSTR,
@@ -2008,7 +2026,7 @@ static int wpa_supplicant_ctrl_iface_list_networks(
 			ret = os_snprintf(pos, end - pos, "\tany");
 		}
 		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
+			return prev - buf;
 		pos += ret;
 		ret = os_snprintf(pos, end - pos, "\t%s%s%s%s",
 				  ssid == wpa_s->current_ssid ?
@@ -2019,11 +2037,11 @@ static int wpa_supplicant_ctrl_iface_list_networks(
 				  ssid->disabled == 2 ? "[P2P-PERSISTENT]" :
 				  "");
 		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
+			return prev - buf;
 		pos += ret;
 		ret = os_snprintf(pos, end - pos, "\n");
 		if (ret < 0 || ret >= end - pos)
-			return pos - buf;
+			return prev - buf;
 		pos += ret;
 
 		ssid = ssid->next;
@@ -2482,6 +2500,8 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 			struct wpa_ssid *remove_ssid = ssid;
 			id = ssid->id;
 			ssid = ssid->next;
+			if (wpa_s->last_ssid == remove_ssid)
+				wpa_s->last_ssid = NULL;
 			wpas_notify_network_removed(wpa_s, remove_ssid);
 			wpa_config_remove_network(wpa_s->conf, id);
 		}
@@ -2499,6 +2519,9 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 			   "id=%d", id);
 		return -1;
 	}
+
+	if (wpa_s->last_ssid == ssid)
+		wpa_s->last_ssid = NULL;
 
 	if (ssid == wpa_s->current_ssid || wpa_s->current_ssid == NULL) {
 #ifdef CONFIG_SME
@@ -2574,9 +2597,10 @@ static int wpa_supplicant_ctrl_iface_update_network(
 static int wpa_supplicant_ctrl_iface_set_network(
 	struct wpa_supplicant *wpa_s, char *cmd)
 {
-	int id;
+	int id, ret, prev_bssid_set;
 	struct wpa_ssid *ssid;
 	char *name, *value;
+	u8 prev_bssid[ETH_ALEN];
 
 	/* cmd: "<network id> <variable name> <value>" */
 	name = os_strchr(cmd, ' ');
@@ -2602,8 +2626,15 @@ static int wpa_supplicant_ctrl_iface_set_network(
 		return -1;
 	}
 
-	return wpa_supplicant_ctrl_iface_update_network(wpa_s, ssid, name,
-							value);
+	prev_bssid_set = ssid->bssid_set;
+	os_memcpy(prev_bssid, ssid->bssid, ETH_ALEN);
+	ret = wpa_supplicant_ctrl_iface_update_network(wpa_s, ssid, name,
+						       value);
+	if (ret == 0 &&
+	    (ssid->bssid_set != prev_bssid_set ||
+	     os_memcmp(ssid->bssid, prev_bssid, ETH_ALEN) != 0))
+		wpas_notify_network_bssid_set_changed(wpa_s, ssid);
+	return ret;
 }
 
 
@@ -5557,28 +5588,6 @@ static int wpas_ctrl_iface_wnm_bss_query(struct wpa_supplicant *wpa_s, char *cmd
 #endif /* CONFIG_WNM */
 
 
-/* Get string representation of channel width */
-static const char * channel_width_name(enum chan_width width)
-{
-	switch (width) {
-	case CHAN_WIDTH_20_NOHT:
-		return "20 MHz (no HT)";
-	case CHAN_WIDTH_20:
-		return "20 MHz";
-	case CHAN_WIDTH_40:
-		return "40 MHz";
-	case CHAN_WIDTH_80:
-		return "80 MHz";
-	case CHAN_WIDTH_80P80:
-		return "80+80 MHz";
-	case CHAN_WIDTH_160:
-		return "160 MHz";
-	default:
-		return "unknown";
-	}
-}
-
-
 static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 				      size_t buflen)
 {
@@ -5603,7 +5612,7 @@ static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 
 	if (si.chanwidth != CHAN_WIDTH_UNKNOWN) {
 		ret = os_snprintf(pos, end - pos, "WIDTH=%s\n",
-				  channel_width_name(si.chanwidth));
+				  channel_width_to_string(si.chanwidth));
 		if (ret < 0 || ret > end - pos)
 			return -1;
 		pos += ret;
@@ -6459,7 +6468,7 @@ static int wpas_ctrl_vendor_elem_remove(struct wpa_supplicant *wpa_s, char *cmd)
 			wpa_s->vendor_elem[frame] = NULL;
 		} else {
 			os_memmove(ie, ie + len,
-				   wpabuf_len(wpa_s->vendor_elem[frame]) - len);
+				   end - (ie + len));
 			wpa_s->vendor_elem[frame]->used -= len;
 		}
 		os_free(buf);
@@ -6858,9 +6867,12 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "LOG_LEVEL", 9) == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_log_level(
 			wpa_s, buf + 9, reply, reply_size);
+	} else if (os_strncmp(buf, "LIST_NETWORKS ", 14) == 0) {
+		reply_len = wpa_supplicant_ctrl_iface_list_networks(
+			wpa_s, buf + 14, reply, reply_size);
 	} else if (os_strcmp(buf, "LIST_NETWORKS") == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_list_networks(
-			wpa_s, reply, reply_size);
+			wpa_s, NULL, reply, reply_size);
 	} else if (os_strcmp(buf, "DISCONNECT") == 0) {
 #ifdef CONFIG_SME
 		wpa_s->sme.prev_bssid_set = 0;

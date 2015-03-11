@@ -582,7 +582,7 @@ static int freq_allowed(int *freqs, int freq)
 }
 
 
-static int ht_supported(const struct hostapd_hw_modes *mode)
+int ht_supported(const struct hostapd_hw_modes *mode)
 {
 	if (!(mode->flags & HOSTAPD_MODE_FLAG_HT_INFO_KNOWN)) {
 		/*
@@ -600,7 +600,7 @@ static int ht_supported(const struct hostapd_hw_modes *mode)
 }
 
 
-static int vht_supported(const struct hostapd_hw_modes *mode)
+int vht_supported(const struct hostapd_hw_modes *mode)
 {
 	if (!(mode->flags & HOSTAPD_MODE_FLAG_VHT_INFO_KNOWN)) {
 		/*
@@ -3000,15 +3000,17 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			wpa_s->own_scan_running = 1;
 			if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
 			    wpa_s->manual_scan_use_id) {
-				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED "id=%u",
-					wpa_s->manual_scan_id);
+				wpa_msg_ctrl(wpa_s, MSG_INFO,
+					     WPA_EVENT_SCAN_STARTED "id=%u",
+					     wpa_s->manual_scan_id);
 			} else {
-				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+				wpa_msg_ctrl(wpa_s, MSG_INFO,
+					     WPA_EVENT_SCAN_STARTED);
 			}
 		} else {
 			wpa_dbg(wpa_s, MSG_DEBUG, "External program started a scan");
 			wpa_s->external_scan_running = 1;
-			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
+			wpa_msg_ctrl(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
 		}
 		break;
 	case EVENT_SCAN_RESULTS:

@@ -411,6 +411,25 @@ enum wps_mode {
 			  */
 };
 
+struct hostapd_freq_params {
+	int mode;
+	int freq;
+	int channel;
+	/* for HT */
+	int ht_enabled;
+	int sec_channel_offset; /* 0 = HT40 disabled, -1 = HT40 enabled,
+				 * secondary channel below primary, 1 = HT40
+				 * enabled, secondary channel above primary */
+
+	/* for VHT */
+	int vht_enabled;
+
+	/* valid for both HT and VHT, center_freq2 is non-zero
+	 * only for bandwidth 80 and an 80+80 channel */
+	int center_freq1, center_freq2;
+	int bandwidth;
+};
+
 /**
  * struct wpa_driver_associate_params - Association parameters
  * Data for struct wpa_driver_ops::associate().
@@ -443,11 +462,9 @@ struct wpa_driver_associate_params {
 	size_t ssid_len;
 
 	/**
-	 * freq - Frequency of the channel the selected AP is using
-	 * Frequency that the selected AP is using (in MHz as
-	 * reported in the scan results)
+	 * freq - channel parameters
 	 */
-	int freq;
+	struct hostapd_freq_params freq;
 
 	/**
 	 * freq_hint - Frequency of the channel the proposed AP is using
@@ -1124,25 +1141,6 @@ struct hostapd_sta_add_params {
 	size_t supp_channels_len;
 	const u8 *supp_oper_classes;
 	size_t supp_oper_classes_len;
-};
-
-struct hostapd_freq_params {
-	int mode;
-	int freq;
-	int channel;
-	/* for HT */
-	int ht_enabled;
-	int sec_channel_offset; /* 0 = HT40 disabled, -1 = HT40 enabled,
-				 * secondary channel below primary, 1 = HT40
-				 * enabled, secondary channel above primary */
-
-	/* for VHT */
-	int vht_enabled;
-
-	/* valid for both HT and VHT, center_freq2 is non-zero
-	 * only for bandwidth 80 and an 80+80 channel */
-	int center_freq1, center_freq2;
-	int bandwidth;
 };
 
 struct mac_address {
@@ -2549,6 +2547,7 @@ struct wpa_driver_ops {
 	 * @dialog_token: Dialog Token to use in the message (if needed)
 	 * @status_code: Status Code or Reason Code to use (if needed)
 	 * @peer_capab: TDLS peer capability (TDLS_PEER_* bitfield)
+	 * @initiator: Is the current end the TDLS link initiator
 	 * @buf: TDLS IEs to add to the message
 	 * @len: Length of buf in octets
 	 * Returns: 0 on success, negative (<0) on failure
@@ -2558,7 +2557,7 @@ struct wpa_driver_ops {
 	 */
 	int (*send_tdls_mgmt)(void *priv, const u8 *dst, u8 action_code,
 			      u8 dialog_token, u16 status_code, u32 peer_capab,
-			      const u8 *buf, size_t len);
+			      int initiator, const u8 *buf, size_t len);
 
 	/**
 	 * tdls_oper - Ask the driver to perform high-level TDLS operations
@@ -2849,6 +2848,30 @@ struct wpa_driver_ops {
 	 * Returns: Length of written status information or -1 on failure
 	 */
 	int (*status)(void *priv, char *buf, size_t buflen);
+
+	/**
+	 * roaming - Set roaming policy for driver-based BSS selection
+	 * @priv: Private driver interface data
+	 * @allowed: Whether roaming within ESS is allowed
+	 * @bssid: Forced BSSID if roaming is disabled or %NULL if not set
+	 * Returns: Length of written status information or -1 on failure
+	 *
+	 * This optional callback can be used to update roaming policy from the
+	 * associate() command (bssid being set there indicates that the driver
+	 * should not roam before getting this roaming() call to allow roaming.
+	 * If the driver does not indicate WPA_DRIVER_FLAGS_BSS_SELECTION
+	 * capability, roaming policy is handled within wpa_supplicant and there
+	 * is no need to implement or react to this callback.
+	 */
+	int (*roaming)(void *priv, int allowed, const u8 *bssid);
+
+	/**
+	 * set_mac_addr - Set MAC address
+	 * @priv: Private driver interface data
+	 * @addr: MAC address to use or %NULL for setting back to permanent
+	 * Returns: 0 on success, -1 on failure
+	 */
+	int (*set_mac_addr)(void *priv, const u8 *addr);
 
 #ifdef CONFIG_MACSEC
 	int (*macsec_init)(void *priv, struct macsec_init_params *params);
@@ -4292,6 +4315,9 @@ void wpa_scan_results_free(struct wpa_scan_results *res);
 
 /* Convert wpa_event_type to a string for logging */
 const char * event_to_string(enum wpa_event_type event);
+
+/* Convert chan_width to a string for logging and control interfaces */
+const char * channel_width_to_string(enum chan_width width);
 
 /* NULL terminated array of linked in driver wrappers */
 extern struct wpa_driver_ops *wpa_drivers[];
