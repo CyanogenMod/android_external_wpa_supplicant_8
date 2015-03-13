@@ -27,6 +27,7 @@
 #define DEFAULT_ACCESS_NETWORK_TYPE 15
 #define DEFAULT_SCAN_CUR_FREQ 0
 #define DEFAULT_P2P_SEARCH_DELAY 500
+#define DEFAULT_RAND_ADDR_LIFETIME 60
 #define DEFAULT_KEY_MGMT_OFFLOAD 1
 
 #include "config_ssid.h"
@@ -1063,6 +1064,33 @@ struct wpa_config {
 	 * rekeying operation.
 	 */
 	int key_mgmt_offload;
+
+    /**
+     * mac_addr - MAC address policy default
+	 *
+	 * 0 = use permanent MAC address
+	 * 1 = use random MAC address for each ESS connection
+	 * 2 = like 1, but maintain OUI (with local admin bit set)
+	 *
+	 * By default, permanent MAC address is used unless policy is changed by
+	 * the per-network mac_addr parameter. Global mac_addr=1 can be used to
+	 * change this default behavior.
+	 */
+	int mac_addr;
+
+	/**
+	 * rand_addr_lifetime - Lifetime of random MAC address in seconds
+	 */
+	unsigned int rand_addr_lifetime;
+
+	/**
+	 * preassoc_mac_addr - Pre-association MAC address policy
+	 *
+	 * 0 = use permanent MAC address
+	 * 1 = use random MAC address
+	 * 2 = like 1, but maintain OUI (with local admin bit set)
+	 */
+	int preassoc_mac_addr;
 };
 
 

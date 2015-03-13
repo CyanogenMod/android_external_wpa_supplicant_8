@@ -1960,6 +1960,9 @@ void wpas_dbus_bss_signal_prop_changed(struct wpa_supplicant *wpa_s,
 	case WPAS_DBUS_BSS_PROP_IES:
 		prop = "IEs";
 		break;
+	case WPAS_DBUS_BSS_PROP_AGE:
+		prop = "Age";
+		break;
 	default:
 		wpa_printf(MSG_ERROR, "dbus: %s: Unknown Property value %d",
 			   __func__, property);
@@ -2094,6 +2097,12 @@ static const struct wpa_dbus_property_desc wpas_dbus_global_properties[] = {
 	  wpas_dbus_getter_global_capabilities,
 	  NULL
 	},
+#ifdef CONFIG_WIFI_DISPLAY
+	{ "WFDIEs", WPAS_DBUS_NEW_INTERFACE, "ay",
+	  wpas_dbus_getter_global_wfd_ies,
+	  wpas_dbus_setter_global_wfd_ies
+	},
+#endif /* CONFIG_WIFI_DISPLAY */
 	{ NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -2384,6 +2393,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_bss_properties[] = {
 	  wpas_dbus_getter_bss_ies,
 	  NULL
 	},
+	{ "Age", WPAS_DBUS_NEW_IFACE_BSS, "u",
+	  wpas_dbus_getter_bss_age,
+	  NULL
+	},
 	{ NULL, NULL, NULL, NULL, NULL }
 };
 
@@ -2515,6 +2528,13 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 	  (WPADBusMethodHandler) &wpas_dbus_handler_scan,
 	  {
 		  { "args", "a{sv}", ARG_IN },
+		  END_ARGS
+	  }
+	},
+	{ "SignalPoll", WPAS_DBUS_NEW_IFACE_INTERFACE,
+	  (WPADBusMethodHandler) &wpas_dbus_handler_signal_poll,
+	  {
+		  { "args", "a{sv}", ARG_OUT },
 		  END_ARGS
 	  }
 	},
@@ -2940,6 +2960,10 @@ static const struct wpa_dbus_property_desc wpas_dbus_interface_properties[] = {
 	{ "ProcessCredentials", WPAS_DBUS_NEW_IFACE_WPS, "b",
 	  wpas_dbus_getter_process_credentials,
 	  wpas_dbus_setter_process_credentials
+	},
+	{ "ConfigMethods", WPAS_DBUS_NEW_IFACE_WPS, "s",
+	  wpas_dbus_getter_config_methods,
+	  wpas_dbus_setter_config_methods
 	},
 #endif /* CONFIG_WPS */
 #ifdef CONFIG_P2P
