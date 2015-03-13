@@ -915,6 +915,7 @@ struct wpa_supplicant {
 	unsigned int ext_eapol_frame_io:1;
 	unsigned int wmm_ac_supported:1;
 	unsigned int ext_work_in_progress:1;
+	unsigned int own_disconnect_req:1;
 
 #define MAC_ADDR_RAND_SCAN       BIT(0)
 #define MAC_ADDR_RAND_SCHED_SCAN BIT(1)
@@ -1034,7 +1035,8 @@ void free_hw_features(struct wpa_supplicant *wpa_s);
 void wpa_show_license(void);
 
 struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
-						 struct wpa_interface *iface);
+						 struct wpa_interface *iface,
+						 struct wpa_supplicant *parent);
 int wpa_supplicant_remove_iface(struct wpa_global *global,
 				struct wpa_supplicant *wpa_s,
 				int terminate);

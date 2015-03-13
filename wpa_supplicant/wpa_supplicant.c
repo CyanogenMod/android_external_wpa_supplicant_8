@@ -870,6 +870,7 @@ int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s)
 
 	eapol_sm_invalidate_cached_session(wpa_s->eapol);
 	if (wpa_s->current_ssid) {
+		wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
 	}
@@ -1865,7 +1866,7 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 				    vht_freq.vht_enabled,
 				    freq->sec_channel_offset,
 				    VHT_CHANWIDTH_80MHZ,
-				    vht80[i] + 6, 0, 0) != 0)
+				    vht80[j] + 6, 0, 0) != 0)
 		return;
 
 	*freq = vht_freq;
@@ -2585,6 +2586,7 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 	int disconnected = 0;
 
 	if (ssid && ssid != wpa_s->current_ssid && wpa_s->current_ssid) {
+		wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(
 			wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		disconnected = 1;
@@ -3228,7 +3230,8 @@ static int wpa_supplicant_daemon(const char *pid_file)
 }
 
 
-static struct wpa_supplicant * wpa_supplicant_alloc(void)
+static struct wpa_supplicant *
+wpa_supplicant_alloc(struct wpa_supplicant *parent)
 {
 	struct wpa_supplicant *wpa_s;
 
@@ -3238,7 +3241,7 @@ static struct wpa_supplicant * wpa_supplicant_alloc(void)
 	wpa_s->scan_req = INITIAL_SCAN_REQ;
 	wpa_s->scan_interval = 5;
 	wpa_s->new_connection = 1;
-	wpa_s->parent = wpa_s;
+	wpa_s->parent = parent ? parent : wpa_s;
 	wpa_s->sched_scanning = 0;
 
 	return wpa_s;
@@ -4292,6 +4295,7 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
  * wpa_supplicant_add_iface - Add a new network interface
  * @global: Pointer to global data from wpa_supplicant_init()
  * @iface: Interface configuration options
+ * @parent: Parent interface or %NULL to assign new interface as parent
  * Returns: Pointer to the created interface or %NULL on failure
  *
  * This function is used to add new network interfaces for %wpa_supplicant.
@@ -4301,7 +4305,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
  * e.g., when a hotplug network adapter is inserted.
  */
 struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
-						 struct wpa_interface *iface)
+						 struct wpa_interface *iface,
+						 struct wpa_supplicant *parent)
 {
 	struct wpa_supplicant *wpa_s;
 	struct wpa_interface t_iface;
@@ -4310,7 +4315,7 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 	if (global == NULL || iface == NULL)
 		return NULL;
 
-	wpa_s = wpa_supplicant_alloc();
+	wpa_s = wpa_supplicant_alloc(parent);
 	if (wpa_s == NULL)
 		return NULL;
 
@@ -4792,11 +4797,17 @@ void wpas_connection_failed(struct wpa_supplicant *wpa_s, const u8 *bssid)
 	 */
 	eloop_cancel_timeout(wpa_supplicant_timeout, wpa_s, NULL);
 
+	/*
+	 * There is no point in blacklisting the AP if this event is
+	 * generated based on local request to disconnect.
+	 */
+	if (wpa_s->own_disconnect_req) {
+		wpa_s->own_disconnect_req = 0;
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Ignore connection failure due to local request to disconnect");
+		return;
+	}
 	if (wpa_s->disconnected) {
-		/*
-		 * There is no point in blacklisting the AP if this event is
-		 * generated based on local request to disconnect.
-		 */
 		wpa_dbg(wpa_s, MSG_DEBUG, "Ignore connection failure "
 			"indication since interface has been put into "
 			"disconnected state");
@@ -4966,13 +4977,16 @@ int wpas_network_disabled(struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid)
 	int i;
 	unsigned int drv_enc;
 
+	if (wpa_s->p2p_mgmt)
+		return 1; /* no normal network profiles on p2p_mgmt interface */
+
 	if (ssid == NULL)
 		return 1;
 
 	if (ssid->disabled)
 		return 1;
 
-	if (wpa_s && wpa_s->drv_capa_known)
+	if (wpa_s->drv_capa_known)
 		drv_enc = wpa_s->drv_enc;
 	else
 		drv_enc = (unsigned int) -1;

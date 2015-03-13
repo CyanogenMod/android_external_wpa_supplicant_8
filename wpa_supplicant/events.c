@@ -1421,6 +1421,9 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
 
+	if (wpa_s->p2p_mgmt)
+		return 0; /* no normal connection on p2p_mgmt interface */
+
 	selected = wpa_supplicant_pick_network(wpa_s, &ssid);
 
 	if (selected) {
@@ -2672,6 +2675,9 @@ static void wpas_event_disconnect(struct wpa_supplicant *wpa_s, const u8 *addr,
 	}
 #endif /* CONFIG_AP */
 
+	if (!locally_generated)
+		wpa_s->own_disconnect_req = 0;
+
 	wpa_supplicant_event_disassoc(wpa_s, reason_code, locally_generated);
 
 	if (((reason_code == WLAN_REASON_IEEE_802_1X_AUTH_FAILED ||
@@ -3301,6 +3307,29 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				  data->ch_switch.cf1,
 				  data->ch_switch.cf2);
 		break;
+#ifdef NEED_AP_MLME
+	case EVENT_DFS_RADAR_DETECTED:
+		if (data)
+			wpas_event_dfs_radar_detected(wpa_s, &data->dfs_event);
+		break;
+	case EVENT_DFS_CAC_STARTED:
+		if (data)
+			wpas_event_dfs_cac_started(wpa_s, &data->dfs_event);
+		break;
+	case EVENT_DFS_CAC_FINISHED:
+		if (data)
+			wpas_event_dfs_cac_finished(wpa_s, &data->dfs_event);
+		break;
+	case EVENT_DFS_CAC_ABORTED:
+		if (data)
+			wpas_event_dfs_cac_aborted(wpa_s, &data->dfs_event);
+		break;
+	case EVENT_DFS_NOP_FINISHED:
+		if (data)
+			wpas_event_dfs_cac_nop_finished(wpa_s,
+							&data->dfs_event);
+		break;
+#endif /* NEED_AP_MLME */
 #endif /* CONFIG_AP */
 	case EVENT_RX_MGMT: {
 		u16 fc, stype;

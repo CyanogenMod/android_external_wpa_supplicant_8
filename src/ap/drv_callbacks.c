@@ -439,7 +439,7 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 			     int offset, int width, int cf1, int cf2)
 {
 #ifdef NEED_AP_MLME
-	int channel, chwidth, seg0_idx = 0, seg1_idx = 0;
+	int channel, chwidth, seg0_idx = 0, seg1_idx = 0, is_dfs;
 
 	hostapd_logger(hapd, NULL, HOSTAPD_MODULE_IEEE80211,
 		       HOSTAPD_LEVEL_INFO,
@@ -497,13 +497,18 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 	hapd->iconf->vht_oper_centr_freq_seg0_idx = seg0_idx;
 	hapd->iconf->vht_oper_centr_freq_seg1_idx = seg1_idx;
 
+	is_dfs = ieee80211_is_dfs(freq);
+
 	if (hapd->csa_in_progress &&
 	    freq == hapd->cs_freq_params.freq) {
 		hostapd_cleanup_cs_params(hapd);
 		ieee802_11_set_beacon(hapd);
 
-		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED "freq=%d",
-			freq);
+		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED
+			"freq=%d dfs=%d", freq, is_dfs);
+	} else if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_DFS_OFFLOAD) {
+		wpa_msg(hapd->msg_ctx, MSG_INFO, AP_CSA_FINISHED
+			"freq=%d dfs=%d", freq, is_dfs);
 	}
 #endif /* NEED_AP_MLME */
 }
@@ -1032,6 +1037,16 @@ static void hostapd_event_dfs_nop_finished(struct hostapd_data *hapd,
 				 radar->cf1, radar->cf2);
 }
 
+
+static void hostapd_event_dfs_cac_started(struct hostapd_data *hapd,
+					  struct dfs_event *radar)
+{
+	wpa_printf(MSG_DEBUG, "DFS offload CAC started on %d MHz", radar->freq);
+	hostapd_dfs_start_cac(hapd->iface, radar->freq, radar->ht_enabled,
+			      radar->chan_offset, radar->chan_width,
+			      radar->cf1, radar->cf2);
+}
+
 #endif /* NEED_AP_MLME */
 
 
@@ -1206,6 +1221,11 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		/* hostapd_get_hw_features(hapd->iface); */
 		hostapd_channel_list_updated(
 			hapd->iface, data->channel_list_changed.initiator);
+		break;
+	case EVENT_DFS_CAC_STARTED:
+		if (!data)
+			break;
+		hostapd_event_dfs_cac_started(hapd, &data->dfs_event);
 		break;
 #endif /* NEED_AP_MLME */
 	case EVENT_INTERFACE_ENABLED:

@@ -77,6 +77,7 @@ static void interworking_reconnect(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->wpa_state >= WPA_AUTHENTICATING) {
 		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
 	}
@@ -915,6 +916,7 @@ static void remove_duplicate_network(struct wpa_supplicant *wpa_s,
 	if (ssid == wpa_s->current_ssid) {
 		wpa_sm_set_config(wpa_s->wpa, NULL);
 		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+		wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
 	}
@@ -2489,6 +2491,8 @@ static void interworking_select_network(struct wpa_supplicant *wpa_s)
 
 		wpa_msg(wpa_s, MSG_INFO, INTERWORKING_NO_MATCH "No network "
 			"with matching credentials found");
+		if (wpa_s->wpa_state == WPA_SCANNING)
+			wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
 	}
 
 	if (selected) {
