@@ -27,6 +27,7 @@
 
 #define MESH_AUTH_TIMEOUT 10
 #define MESH_AUTH_RETRY 3
+#define MESH_AUTH_BLOCK_DURATION 3600
 
 void mesh_auth_timer(void *eloop_ctx, void *user_data)
 {
@@ -37,12 +38,28 @@ void mesh_auth_timer(void *eloop_ctx, void *user_data)
 		wpa_printf(MSG_DEBUG, "AUTH: Re-authenticate with " MACSTR
 			   " (attempt %d) ",
 			   MAC2STR(sta->addr), sta->sae_auth_retry);
+		wpa_msg(wpa_s, MSG_INFO, MESH_SAE_AUTH_FAILURE "addr=" MACSTR,
+			MAC2STR(sta->addr));
 		if (sta->sae_auth_retry < MESH_AUTH_RETRY) {
 			mesh_rsn_auth_sae_sta(wpa_s, sta);
 		} else {
+			if (sta->sae_auth_retry > MESH_AUTH_RETRY) {
+				ap_free_sta(wpa_s->ifmsh->bss[0], sta);
+				return;
+			}
+
 			/* block the STA if exceeded the number of attempts */
 			wpa_mesh_set_plink_state(wpa_s, sta, PLINK_BLOCKED);
 			sta->sae->state = SAE_NOTHING;
+			if (wpa_s->mesh_auth_block_duration <
+			    MESH_AUTH_BLOCK_DURATION)
+				wpa_s->mesh_auth_block_duration += 60;
+			eloop_register_timeout(wpa_s->mesh_auth_block_duration,
+					       0, mesh_auth_timer, wpa_s, sta);
+			wpa_msg(wpa_s, MSG_INFO, MESH_SAE_AUTH_BLOCKED "addr="
+				MACSTR " duration=%d",
+				MAC2STR(sta->addr),
+				wpa_s->mesh_auth_block_duration);
 		}
 		sta->sae_auth_retry++;
 	}
@@ -299,6 +316,7 @@ int mesh_rsn_auth_sae_sta(struct wpa_supplicant *wpa_s,
 	if (ret)
 		return ret;
 
+	eloop_cancel_timeout(mesh_auth_timer, wpa_s, sta);
 	rnd = rand() % MESH_AUTH_TIMEOUT;
 	eloop_register_timeout(MESH_AUTH_TIMEOUT + rnd, 0, mesh_auth_timer,
 			       wpa_s, sta);

@@ -1,6 +1,6 @@
 /*
  * BSS table
- * Copyright (c) 2009-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2009-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -85,6 +85,7 @@ static struct wpa_bss_anqp * wpa_bss_anqp_clone(struct wpa_bss_anqp *anqp)
 
 #define ANQP_DUP(f) if (anqp->f) n->f = wpabuf_dup(anqp->f)
 #ifdef CONFIG_INTERWORKING
+	ANQP_DUP(capability_list);
 	ANQP_DUP(venue_name);
 	ANQP_DUP(network_auth_type);
 	ANQP_DUP(roaming_consortium);
@@ -94,6 +95,7 @@ static struct wpa_bss_anqp * wpa_bss_anqp_clone(struct wpa_bss_anqp *anqp)
 	ANQP_DUP(domain_name);
 #endif /* CONFIG_INTERWORKING */
 #ifdef CONFIG_HS20
+	ANQP_DUP(hs20_capability_list);
 	ANQP_DUP(hs20_operator_friendly_name);
 	ANQP_DUP(hs20_wan_metrics);
 	ANQP_DUP(hs20_connection_capability);
@@ -154,6 +156,7 @@ static void wpa_bss_anqp_free(struct wpa_bss_anqp *anqp)
 	}
 
 #ifdef CONFIG_INTERWORKING
+	wpabuf_free(anqp->capability_list);
 	wpabuf_free(anqp->venue_name);
 	wpabuf_free(anqp->network_auth_type);
 	wpabuf_free(anqp->roaming_consortium);
@@ -163,6 +166,7 @@ static void wpa_bss_anqp_free(struct wpa_bss_anqp *anqp)
 	wpabuf_free(anqp->domain_name);
 #endif /* CONFIG_INTERWORKING */
 #ifdef CONFIG_HS20
+	wpabuf_free(anqp->hs20_capability_list);
 	wpabuf_free(anqp->hs20_operator_friendly_name);
 	wpabuf_free(anqp->hs20_wan_metrics);
 	wpabuf_free(anqp->hs20_connection_capability);
@@ -282,6 +286,8 @@ static void wpa_bss_copy_res(struct wpa_bss *dst, struct wpa_scan_res *src,
 	dst->noise = src->noise;
 	dst->level = src->level;
 	dst->tsf = src->tsf;
+	dst->est_throughput = src->est_throughput;
+	dst->snr = src->snr;
 
 	calculate_update_time(fetch_time, src->age, &dst->last_update);
 }

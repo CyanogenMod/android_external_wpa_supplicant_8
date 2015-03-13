@@ -15,6 +15,7 @@
 #include "utils/common.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
+#include "common/hw_features_common.h"
 #include "wps/wps_defs.h"
 #include "p2p/p2p.h"
 #include "hostapd.h"
@@ -579,6 +580,27 @@ void handle_probe_req(struct hostapd_data *hapd,
 		return;
 	}
 
+	/*
+	 * No need to reply if the Probe Request frame was sent on an adjacent
+	 * channel. IEEE Std 802.11-2012 describes this as a requirement for an
+	 * AP with dot11RadioMeasurementActivated set to true, but strictly
+	 * speaking does not allow such ignoring of Probe Request frames if
+	 * dot11RadioMeasurementActivated is false. Anyway, this can help reduce
+	 * number of unnecessary Probe Response frames for cases where the STA
+	 * is less likely to see them (Probe Request frame sent on a
+	 * neighboring, but partially overlapping, channel).
+	 */
+	if (elems.ds_params && elems.ds_params_len == 1 &&
+	    hapd->iface->current_mode &&
+	    (hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211G ||
+	     hapd->iface->current_mode->mode == HOSTAPD_MODE_IEEE80211B) &&
+	    hapd->iconf->channel != elems.ds_params[0]) {
+		wpa_printf(MSG_DEBUG,
+			   "Ignore Probe Request due to DS Params mismatch: chan=%u != ds.chan=%u",
+			   hapd->iconf->channel, elems.ds_params[0]);
+		return;
+	}
+
 #ifdef CONFIG_P2P
 	if (hapd->p2p && elems.wps_ie) {
 		struct wpabuf *wps;
@@ -986,6 +1008,9 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 		params->hessid = hapd->conf->hessid;
 	params->access_network_type = hapd->conf->access_network_type;
 	params->ap_max_inactivity = hapd->conf->ap_max_inactivity;
+#ifdef CONFIG_P2P
+	params->p2p_go_ctwindow = hapd->iconf->p2p_go_ctwindow;
+#endif /* CONFIG_P2P */
 #ifdef CONFIG_HS20
 	params->disable_dgaf = hapd->conf->disable_dgaf;
 	if (hapd->conf->osen) {
@@ -1034,6 +1059,8 @@ int ieee802_11_set_beacon(struct hostapd_data *hapd)
 	params.beacon_ies = beacon;
 	params.proberesp_ies = proberesp;
 	params.assocresp_ies = assocresp;
+	params.reenable = hapd->reenable_beacon;
+	hapd->reenable_beacon = 0;
 
 	if (iface->current_mode &&
 	    hostapd_set_freq_params(&freq, iconf->hw_mode, iface->freq,

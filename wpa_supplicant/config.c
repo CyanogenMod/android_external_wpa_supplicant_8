@@ -1896,6 +1896,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INT_RANGE(peerkey, 0, 1) },
 	{ INT_RANGE(mixed_cell, 0, 1) },
 	{ INT_RANGE(frequency, 0, 65000) },
+	{ INT_RANGE(fixed_freq, 0, 1) },
 #ifdef CONFIG_MESH
 	{ FUNC(mesh_basic_rates) },
 	{ INT(dot11MeshMaxRetries) },
@@ -3503,6 +3504,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->p2p_intra_bss = DEFAULT_P2P_INTRA_BSS;
 	config->p2p_go_max_inactivity = DEFAULT_P2P_GO_MAX_INACTIVITY;
 	config->p2p_optimize_listen_chan = DEFAULT_P2P_OPTIMIZE_LISTEN_CHAN;
+	config->p2p_go_ctwindow = DEFAULT_P2P_GO_CTWINDOW;
 	config->bss_max_count = DEFAULT_BSS_MAX_COUNT;
 	config->bss_expiration_age = DEFAULT_BSS_EXPIRATION_AGE;
 	config->bss_expiration_scan_count = DEFAULT_BSS_EXPIRATION_SCAN_COUNT;
@@ -3556,6 +3558,8 @@ struct global_parse_data {
 	char *name;
 	int (*parser)(const struct global_parse_data *data,
 		      struct wpa_config *config, int line, const char *value);
+	int (*get)(const char *name, struct wpa_config *config, long offset,
+		   char *buf, size_t buflen, int pretty_print);
 	void *param1, *param2, *param3;
 	unsigned int changed_flag;
 };
@@ -4015,22 +4019,55 @@ static int wpa_config_process_no_ctrl_interface(
 #endif /* CONFIG_CTRL_IFACE */
 
 
+static int wpa_config_get_int(const char *name, struct wpa_config *config,
+			      long offset, char *buf, size_t buflen,
+			      int pretty_print)
+{
+	int *val = (int *) (((u8 *) config) + (long) offset);
+
+	if (pretty_print)
+		return os_snprintf(buf, buflen, "%s=%d\n", name, *val);
+	return os_snprintf(buf, buflen, "%d", *val);
+}
+
+
+static int wpa_config_get_str(const char *name, struct wpa_config *config,
+			      long offset, char *buf, size_t buflen,
+			      int pretty_print)
+{
+	char **val = (char **) (((u8 *) config) + (long) offset);
+	int res;
+
+	if (pretty_print)
+		res = os_snprintf(buf, buflen, "%s=%s\n", name,
+				  *val ? *val : "null");
+	else if (!*val)
+		return -1;
+	else
+		res = os_snprintf(buf, buflen, "%s", *val);
+	if (os_snprintf_error(buflen, res))
+		res = -1;
+
+	return res;
+}
+
+
 #ifdef OFFSET
 #undef OFFSET
 #endif /* OFFSET */
 /* OFFSET: Get offset of a variable within the wpa_config structure */
 #define OFFSET(v) ((void *) &((struct wpa_config *) 0)->v)
 
-#define FUNC(f) #f, wpa_config_process_ ## f, OFFSET(f), NULL, NULL
-#define FUNC_NO_VAR(f) #f, wpa_config_process_ ## f, NULL, NULL, NULL
-#define _INT(f) #f, wpa_global_config_parse_int, OFFSET(f)
+#define FUNC(f) #f, wpa_config_process_ ## f, NULL, OFFSET(f), NULL, NULL
+#define FUNC_NO_VAR(f) #f, wpa_config_process_ ## f, NULL, NULL, NULL, NULL
+#define _INT(f) #f, wpa_global_config_parse_int, wpa_config_get_int, OFFSET(f)
 #define INT(f) _INT(f), NULL, NULL
 #define INT_RANGE(f, min, max) _INT(f), (void *) min, (void *) max
-#define _STR(f) #f, wpa_global_config_parse_str, OFFSET(f)
+#define _STR(f) #f, wpa_global_config_parse_str, wpa_config_get_str, OFFSET(f)
 #define STR(f) _STR(f), NULL, NULL
 #define STR_RANGE(f, min, max) _STR(f), (void *) min, (void *) max
-#define BIN(f) #f, wpa_global_config_parse_bin, OFFSET(f), NULL, NULL
-#define IPV4(f) #f, wpa_global_config_parse_ipv4, OFFSET(f), NULL, NULL
+#define BIN(f) #f, wpa_global_config_parse_bin, NULL, OFFSET(f), NULL, NULL
+#define IPV4(f) #f, wpa_global_config_parse_ipv4, NULL, OFFSET(f), NULL, NULL
 
 static const struct global_parse_data global_fields[] = {
 #ifdef CONFIG_CTRL_IFACE
@@ -4100,6 +4137,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(p2p_go_ht40), 0 },
 	{ INT(p2p_go_vht), 0 },
 	{ INT(p2p_disabled), 0 },
+	{ INT_RANGE(p2p_go_ctwindow, 0, 127), 0 },
 	{ INT(p2p_no_group_iface), 0 },
 	{ INT_RANGE(p2p_ignore_shared_freq, 0, 1), 0 },
 	{ IPV4(ip_addr_go), 0 },
@@ -4150,6 +4188,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(preassoc_mac_addr), 0 },
 	{ INT(key_mgmt_offload), 0},
 	{ INT(passive_scan), 0 },
+	{ INT(reassoc_same_bss_optim), 0 },
 };
 
 #undef FUNC
@@ -4162,6 +4201,50 @@ static const struct global_parse_data global_fields[] = {
 #undef BIN
 #undef IPV4
 #define NUM_GLOBAL_FIELDS ARRAY_SIZE(global_fields)
+
+
+int wpa_config_dump_values(struct wpa_config *config, char *buf, size_t buflen)
+{
+	int result = 0;
+	size_t i;
+
+	for (i = 0; i < NUM_GLOBAL_FIELDS; i++) {
+		const struct global_parse_data *field = &global_fields[i];
+		int tmp;
+
+		if (!field->get)
+			continue;
+
+		tmp = field->get(field->name, config, (long) field->param1,
+				 buf, buflen, 1);
+		if (tmp < 0)
+			return -1;
+		buf += tmp;
+		buflen -= tmp;
+		result += tmp;
+	}
+	return result;
+}
+
+
+int wpa_config_get_value(const char *name, struct wpa_config *config,
+			 char *buf, size_t buflen)
+{
+	size_t i;
+
+	for (i = 0; i < NUM_GLOBAL_FIELDS; i++) {
+		const struct global_parse_data *field = &global_fields[i];
+
+		if (os_strcmp(name, field->name) != 0)
+			continue;
+		if (!field->get)
+			break;
+		return field->get(name, config, (long) field->param1,
+				  buf, buflen, 0);
+	}
+
+	return -1;
+}
 
 
 int wpa_config_process_global(struct wpa_config *config, char *pos, int line)

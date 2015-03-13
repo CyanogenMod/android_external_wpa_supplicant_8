@@ -1856,6 +1856,48 @@ static struct wpabuf * hostapd_parse_bin(const char *buf)
 #endif /* CONFIG_WPS_NFC */
 
 
+#ifdef CONFIG_ACS
+static int hostapd_config_parse_acs_chan_bias(struct hostapd_config *conf,
+					      char *pos)
+{
+	struct acs_bias *bias = NULL, *tmp;
+	unsigned int num = 0;
+	char *end;
+
+	while (*pos) {
+		tmp = os_realloc_array(bias, num + 1, sizeof(*bias));
+		if (!tmp)
+			goto fail;
+		bias = tmp;
+
+		bias[num].channel = atoi(pos);
+		if (bias[num].channel <= 0)
+			goto fail;
+		pos = os_strchr(pos, ':');
+		if (!pos)
+			goto fail;
+		pos++;
+		bias[num].bias = strtod(pos, &end);
+		if (end == pos || bias[num].bias < 0.0)
+			goto fail;
+		pos = end;
+		if (*pos != ' ' && *pos != '\0')
+			goto fail;
+		num++;
+	}
+
+	os_free(conf->acs_chan_bias);
+	conf->acs_chan_bias = bias;
+	conf->num_acs_chan_bias = num;
+
+	return 0;
+fail:
+	os_free(bias);
+	return -1;
+}
+#endif /* CONFIG_ACS */
+
+
 static int hostapd_config_fill(struct hostapd_config *conf,
 			       struct hostapd_bss_config *bss,
 			       char *buf, char *pos, int line)
@@ -2283,12 +2325,11 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		os_free(bss->ssid.wpa_passphrase);
 		bss->ssid.wpa_passphrase = os_strdup(pos);
 		if (bss->ssid.wpa_passphrase) {
-			os_free(bss->ssid.wpa_psk);
-			bss->ssid.wpa_psk = NULL;
+			hostapd_config_clear_wpa_psk(&bss->ssid.wpa_psk);
 			bss->ssid.wpa_passphrase_set = 1;
 		}
 	} else if (os_strcmp(buf, "wpa_psk") == 0) {
-		os_free(bss->ssid.wpa_psk);
+		hostapd_config_clear_wpa_psk(&bss->ssid.wpa_psk);
 		bss->ssid.wpa_psk = os_zalloc(sizeof(struct hostapd_wpa_psk));
 		if (bss->ssid.wpa_psk == NULL)
 			return 1;
@@ -2296,8 +2337,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		    pos[PMK_LEN * 2] != '\0') {
 			wpa_printf(MSG_ERROR, "Line %d: Invalid PSK '%s'.",
 				   line, pos);
-			os_free(bss->ssid.wpa_psk);
-			bss->ssid.wpa_psk = NULL;
+			hostapd_config_clear_wpa_psk(&bss->ssid.wpa_psk);
 			return 1;
 		}
 		bss->ssid.wpa_psk->group = 1;
@@ -2508,6 +2548,12 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			return 1;
 		}
 		conf->acs_num_scans = val;
+	} else if (os_strcmp(buf, "acs_chan_bias") == 0) {
+		if (hostapd_config_parse_acs_chan_bias(conf, pos)) {
+			wpa_printf(MSG_ERROR, "Line %d: invalid acs_chan_bias",
+				   line);
+			return -1;
+		}
 #endif /* CONFIG_ACS */
 	} else if (os_strcmp(buf, "dtim_period") == 0) {
 		bss->dtim_period = atoi(pos);

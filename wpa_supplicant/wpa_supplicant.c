@@ -1654,6 +1654,13 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 }
 
 
+static int bss_is_ibss(struct wpa_bss *bss)
+{
+	return (bss->caps & (IEEE80211_CAP_ESS | IEEE80211_CAP_IBSS)) ==
+		IEEE80211_CAP_IBSS;
+}
+
+
 void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			  const struct wpa_ssid *ssid,
 			  struct hostapd_freq_params *freq)
@@ -1662,19 +1669,53 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	struct hostapd_hw_modes *mode = NULL;
 	int ht40plus[] = { 36, 44, 52, 60, 100, 108, 116, 124, 132, 149, 157,
 			   184, 192 };
+	int vht80[] = { 36, 52, 100, 116, 132, 149 };
 	struct hostapd_channel_data *pri_chan = NULL, *sec_chan = NULL;
 	u8 channel;
-	int i, chan_idx, ht40 = -1, res;
+	int i, chan_idx, ht40 = -1, res, obss_scan = 1;
 	unsigned int j;
+	struct hostapd_freq_params vht_freq;
 
 	freq->freq = ssid->frequency;
+
+	for (j = 0; j < wpa_s->last_scan_res_used; j++) {
+		struct wpa_bss *bss = wpa_s->last_scan_res[j];
+
+		if (ssid->mode != WPAS_MODE_IBSS)
+			break;
+
+		/* Don't adjust control freq in case of fixed_freq */
+		if (ssid->fixed_freq)
+			break;
+
+		if (!bss_is_ibss(bss))
+			continue;
+
+		if (ssid->ssid_len == bss->ssid_len &&
+		    os_memcmp(ssid->ssid, bss->ssid, bss->ssid_len) == 0) {
+			wpa_printf(MSG_DEBUG,
+				   "IBSS already found in scan results, adjust control freq: %d",
+				   bss->freq);
+			freq->freq = bss->freq;
+			obss_scan = 0;
+			break;
+		}
+	}
 
 	/* For IBSS check HT_IBSS flag */
 	if (ssid->mode == WPAS_MODE_IBSS &&
 	    !(wpa_s->drv_flags & WPA_DRIVER_FLAGS_HT_IBSS))
 		return;
 
-	hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
+	if (wpa_s->group_cipher == WPA_CIPHER_WEP40 ||
+	    wpa_s->group_cipher == WPA_CIPHER_WEP104 ||
+	    wpa_s->pairwise_cipher == WPA_CIPHER_TKIP) {
+		wpa_printf(MSG_DEBUG,
+			   "IBSS: WEP/TKIP detected, do not try to enable HT");
+		return;
+	}
+
+	hw_mode = ieee80211_freq_to_chan(freq->freq, &channel);
 	for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
 		if (wpa_s->hw.modes[i].mode == hw_mode) {
 			mode = &wpa_s->hw.modes[i];
@@ -1745,7 +1786,7 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 		break;
 	}
 
-	if (freq->sec_channel_offset) {
+	if (freq->sec_channel_offset && obss_scan) {
 		struct wpa_scan_results *scan_res;
 
 		scan_res = wpa_supplicant_get_scan_results(wpa_s, NULL, 0);
@@ -1782,6 +1823,55 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	wpa_printf(MSG_DEBUG,
 		   "IBSS/mesh: setup freq channel %d, sec_channel_offset %d",
 		   freq->channel, freq->sec_channel_offset);
+
+	/* Not sure if mesh is ready for VHT */
+	if (ssid->mode != WPAS_MODE_IBSS)
+		return;
+
+	/* For IBSS check VHT_IBSS flag */
+	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_VHT_IBSS))
+		return;
+
+	vht_freq = *freq;
+
+	vht_freq.vht_enabled = vht_supported(mode);
+	if (!vht_freq.vht_enabled)
+		return;
+
+	/* setup center_freq1, bandwidth */
+	for (j = 0; j < ARRAY_SIZE(vht80); j++) {
+		if (freq->channel >= vht80[j] &&
+		    freq->channel < vht80[j] + 16)
+			break;
+	}
+
+	if (j == ARRAY_SIZE(vht80))
+		return;
+
+	for (i = vht80[j]; i < vht80[j] + 16; i += 4) {
+		struct hostapd_channel_data *chan;
+
+		chan = hw_get_channel_chan(mode, i, NULL);
+		if (!chan)
+			return;
+
+		/* Back to HT configuration if channel not usable */
+		if (chan->flag & (HOSTAPD_CHAN_DISABLED | HOSTAPD_CHAN_NO_IR))
+			return;
+	}
+
+	if (hostapd_set_freq_params(&vht_freq, mode->mode, freq->freq,
+				    freq->channel, freq->ht_enabled,
+				    vht_freq.vht_enabled,
+				    freq->sec_channel_offset,
+				    VHT_CHANWIDTH_80MHZ,
+				    vht80[i] + 6, 0, 0) != 0)
+		return;
+
+	*freq = vht_freq;
+
+	wpa_printf(MSG_DEBUG, "IBSS: VHT setup freq cf1 %d, cf2 %d, bw %d",
+		   freq->center_freq1, freq->center_freq2, freq->bandwidth);
 }
 
 
@@ -2114,6 +2204,7 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		ibss_mesh_setup_freq(wpa_s, ssid, &params.freq);
 
 	if (ssid->mode == WPAS_MODE_IBSS) {
+		params.fixed_freq = ssid->fixed_freq;
 		if (ssid->beacon_int)
 			params.beacon_int = ssid->beacon_int;
 		else
@@ -3980,6 +4071,23 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	wpa_s->hw.modes = wpa_drv_get_hw_feature_data(wpa_s,
 						      &wpa_s->hw.num_modes,
 						      &wpa_s->hw.flags);
+	if (wpa_s->hw.modes) {
+		u16 i;
+
+		for (i = 0; i < wpa_s->hw.num_modes; i++) {
+			if (wpa_s->hw.modes[i].vht_capab) {
+				wpa_s->hw_capab = CAPAB_VHT;
+				break;
+			}
+
+			if (wpa_s->hw.modes[i].ht_capab &
+			    HT_CAP_INFO_SUPP_CHANNEL_WIDTH_SET)
+				wpa_s->hw_capab = CAPAB_HT40;
+			else if (wpa_s->hw.modes[i].ht_capab &&
+				 wpa_s->hw_capab == CAPAB_NO_HT_VHT)
+				wpa_s->hw_capab = CAPAB_HT;
+		}
+	}
 
 	capa_res = wpa_drv_get_capa(wpa_s, &capa);
 	if (capa_res == 0) {

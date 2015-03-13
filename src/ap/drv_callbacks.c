@@ -1210,9 +1210,21 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 #endif /* NEED_AP_MLME */
 	case EVENT_INTERFACE_ENABLED:
 		wpa_msg(hapd->msg_ctx, MSG_INFO, INTERFACE_ENABLED);
+		if (hapd->disabled && hapd->started) {
+			hapd->disabled = 0;
+			/*
+			 * Try to re-enable interface if the driver stopped it
+			 * when the interface got disabled.
+			 */
+			wpa_auth_reconfig_group_keys(hapd->wpa_auth);
+			hapd->reenable_beacon = 1;
+			ieee802_11_set_beacon(hapd);
+		}
 		break;
 	case EVENT_INTERFACE_DISABLED:
+		hostapd_free_stas(hapd);
 		wpa_msg(hapd->msg_ctx, MSG_INFO, INTERFACE_DISABLED);
+		hapd->disabled = 1;
 		break;
 #ifdef CONFIG_ACS
 	case EVENT_ACS_CHANNEL_SELECTED:
