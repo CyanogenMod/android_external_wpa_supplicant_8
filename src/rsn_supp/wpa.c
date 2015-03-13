@@ -1244,6 +1244,7 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 			sm->cur_pmksa = sa;
 	}
 
+	sm->msg_3_of_4_ok = 1;
 	return;
 
 failed:
@@ -1435,6 +1436,12 @@ static void wpa_supplicant_process_1_of_2(struct wpa_sm *sm,
 	u16 key_info;
 	int rekey, ret;
 	struct wpa_gtk_data gd;
+
+	if (!sm->msg_3_of_4_ok) {
+		wpa_msg(sm->ctx->msg_ctx, MSG_INFO,
+			"WPA: Group Key Handshake started prior to completion of 4-way handshake");
+		goto failed;
+	}
 
 	os_memset(&gd, 0, sizeof(gd));
 
@@ -2282,6 +2289,8 @@ void wpa_sm_notify_assoc(struct wpa_sm *sm, const u8 *bssid)
  */
 void wpa_sm_notify_disassoc(struct wpa_sm *sm)
 {
+	eloop_cancel_timeout(wpa_sm_start_preauth, sm, NULL);
+	eloop_cancel_timeout(wpa_sm_rekey_ptk, sm, NULL);
 	peerkey_deinit(sm);
 	rsn_preauth_deinit(sm);
 	pmksa_cache_clear_current(sm);
@@ -2293,6 +2302,8 @@ void wpa_sm_notify_disassoc(struct wpa_sm *sm)
 
 	/* Keys are not needed in the WPA state machine anymore */
 	wpa_sm_drop_sa(sm);
+
+	sm->msg_3_of_4_ok = 0;
 }
 
 
