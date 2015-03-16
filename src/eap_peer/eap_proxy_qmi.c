@@ -481,8 +481,11 @@ static Boolean wpa_qmi_read_card_imsi(int sim_num)
 
 			/* Received IMSI is in the 3GPP format
 				converting it into ascii string */
-			imsi = os_malloc((2 * length));
-			os_memset(imsi, 0, (2 * length));
+			imsi = os_zalloc(2 * length);
+			if (imsi == NULL) {
+				wpa_printf(MSG_ERROR, "Couldn't allocate memmory for imsi");
+				return FALSE;
+			}
 			for (src = 1, dst = 0;
 				(src < length) && (dst < (length * 2));
 				src++) {
@@ -964,9 +967,13 @@ static void handle_qmi_eap_reply(
 	u8 *resp_data;
 	u32 length;
 
+	if (eap_proxy == NULL) {
+		wpa_printf(MSG_ERROR, "eap_proxy is NULL");
+		return;
+	}
 	if (QMI_STATE_RESP_PENDING == eap_proxy->qmi_state) {
-		if (NULL == eap_proxy || QMI_EAP_SERVICE != serviceId ||
-				QMI_EAP_SEND_EAP_PKT_RSP_ID != rspId) {
+		if (QMI_EAP_SERVICE != serviceId ||
+			QMI_EAP_SEND_EAP_PKT_RSP_ID != rspId) {
 			wpa_printf(MSG_ERROR, "Bad Param: serviceId=%d;"
 				 " rspId=%d\n", serviceId, rspId);
 			eap_proxy->qmi_state = QMI_STATE_RESP_TIME_OUT;
@@ -1738,7 +1745,7 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 						/* IMSI RAW */
 						imsi_id_len = imsi_len_g + 1;
 				}
-			} else {
+			} else if (identity) {
 				/* idx is non-zero implies username available */
 				imsi_identity = identity;
 				imsi_id_len = config->identity_len;
@@ -1753,10 +1760,12 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 				idx = imsi_len_g + 1;
 			}
 
-			/* mcc valus */
-			imsi_identity[idx + 16] = imsi[0];
-			imsi_identity[idx + 17] = imsi[1];
-			imsi_identity[idx + 18] = imsi[2];
+			if (imsi_identity != NULL) {
+				/* mcc valus */
+				imsi_identity[idx + 16] = imsi[0];
+				imsi_identity[idx + 17] = imsi[1];
+				imsi_identity[idx + 18] = imsi[2];
+			}
 
 			/* mnc valus */
 			mnc_len = card_mnc_len;
