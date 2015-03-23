@@ -1075,6 +1075,13 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s,
 			  int only_first_ssid)
 {
 	unsigned int i;
+#ifdef MTK_HARDWARE
+	struct wpa_bss *temp_bss = NULL;
+	struct dl_list *list_next = NULL;
+	int shared_freq = 0;
+	int num = 0;
+#endif
+
 
 	if (only_first_ssid)
 		wpa_dbg(wpa_s, MSG_DEBUG, "Try to find BSS matching pre-selected network id=%d",
@@ -1082,6 +1089,49 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s,
 	else
 		wpa_dbg(wpa_s, MSG_DEBUG, "Selecting BSS from priority group %d",
 			group->priority);
+#ifdef MTK_HARDWARE
+       if (os_strncmp(wpa_s->ifname, "wlan", 4) == 0)
+               num = get_shared_radio_freqs(wpa_s, &shared_freq, 1);
+       /*
+	* for channel conflict revise feature
+	* if p2p/wfd is connected, search in full scan result to find the ssid.
+	* because framework also base on
+	* this result, but not last scan result.
+	*
+	* changes in function wpa_bss_in_use will asure the intended bsses
+	* are not removed from full scan result.
+	*/
+       if (num > 0 && shared_freq > 0) {
+	       wpa_printf(MSG_DEBUG, "try to find a bss on freq %d", shared_freq);
+	       temp_bss = dl_list_first(&wpa_s->bss, struct wpa_bss, list);
+	       for (i = 0; i < wpa_s->num_bss; i++) {
+		       list_next = temp_bss->list.next;
+		       if (temp_bss->freq != shared_freq) {
+			       temp_bss = dl_list_entry(list_next, struct wpa_bss, list);
+			       continue;
+		       }
+		       *selected_ssid = wpa_scan_res_match(wpa_s, i, temp_bss, group,
+				       only_first_ssid);
+
+		       if (!*selected_ssid) {
+			       temp_bss = dl_list_entry(list_next, struct wpa_bss, list);
+			       continue;
+		       }
+
+		       wpa_printf(MSG_DEBUG, "on Freq %d, "
+				       "found a BSS in previous scan res", shared_freq);
+		       return temp_bss;
+	       }
+	       /*
+		* it is rarely that we aren't able to find this ssid in full scan result,
+		* unless this bss was removed just after
+		* framework select this bss and before send command to wpa_supplicant
+		*/
+	       wpa_printf(MSG_ERROR, "didn't find BSS on freq %d, "
+			       "try to find on other freqs", shared_freq);
+       }
+#endif
+
 
 	for (i = 0; i < wpa_s->last_scan_res_used; i++) {
 		struct wpa_bss *bss = wpa_s->last_scan_res[i];
@@ -1656,6 +1706,10 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 
 			wpa_msg_ctrl(wpa_s, MSG_INFO,
 				     WPA_EVENT_NETWORK_NOT_FOUND);
+#ifdef MTK_HARDWARE
+			if (os_strncmp(wpa_s->ifname, "wlan", 4) == 0)
+				wpa_s->current_ssid = NULL;
+#endif
 		}
 	}
 	return 0;
