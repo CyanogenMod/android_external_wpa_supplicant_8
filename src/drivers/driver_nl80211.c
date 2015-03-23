@@ -11092,7 +11092,9 @@ static int wpa_driver_nl80211_shared_freq(void *priv)
 	dl_list_for_each(driver, &drv->global->interfaces,
 			 struct wpa_driver_nl80211_data, list) {
 		if (drv == driver ||
+#ifndef MTK_HARDWARE
 		    os_strcmp(drv->phyname, driver->phyname) != 0 ||
+#endif
 		    !driver->associated)
 			continue;
 
