@@ -2257,6 +2257,11 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			params.bssid = bss->bssid;
 			params.freq.freq = bss->freq;
 		}
+#ifdef MTK_HARDWARE
+		else {
+  			params.freq.freq = bss->freq;
+		}
+#endif
 		params.bssid_hint = bss->bssid;
 		params.freq_hint = bss->freq;
 	} else {
@@ -2644,6 +2649,9 @@ void wpa_supplicant_disable_network(struct wpa_supplicant *wpa_s,
 	}
 }
 
+#ifdef MTK_HARDWARE
+extern int wpa_supplicant_pending_scan(struct wpa_supplicant *wpa_s);
+#endif
 
 /**
  * wpa_supplicant_select_network - Attempt association with a network
@@ -2711,10 +2719,27 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 
 	wpa_s->disconnected = 0;
 	wpa_s->reassociate = 1;
-
+#ifdef MTK_HARDWARE
+       if (wpa_s->connect_without_scan ||
+		       wpa_supplicant_fast_associate(wpa_s) != 1) {
+	       /*
+		* Can't connect to AP when WFD is connected.
+		*/
+	       if (radio_work_pending(wpa_s, "scan") ||
+			       wpa_supplicant_pending_scan(wpa_s)) {
+		       wpa_printf(MSG_INFO, "[channel conflict revise] there're pending"
+				       " scan request, clear it");
+		       wpa_supplicant_cancel_scan(wpa_s);
+		       /* radio_remove_works(wpa_s, "scan", 0); */
+		       wpa_s->scan_res_handler = NULL;
+	       }
+	       wpa_supplicant_req_scan(wpa_s, 0, disconnected ? 100000 : 0);
+       }
+#else
 	if (wpa_s->connect_without_scan ||
 	    wpa_supplicant_fast_associate(wpa_s) != 1)
 		wpa_supplicant_req_scan(wpa_s, 0, disconnected ? 100000 : 0);
+#endif
 
 	if (ssid)
 		wpas_notify_network_selected(wpa_s, ssid);
