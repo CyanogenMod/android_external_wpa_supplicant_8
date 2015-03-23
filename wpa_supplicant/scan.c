@@ -1136,6 +1136,13 @@ void wpa_supplicant_req_scan(struct wpa_supplicant *wpa_s, int sec, int usec)
 }
 
 
+#ifdef MTK_HARDWARE
+int wpa_supplicant_pending_scan(struct wpa_supplicant *wpa_s)
+{
+	return eloop_is_timeout_registered(wpa_supplicant_scan, wpa_s, NULL);
+}
+#endif
+
 /**
  * wpa_supplicant_delayed_sched_scan - Request a delayed scheduled scan
  * @wpa_s: Pointer to wpa_supplicant data
