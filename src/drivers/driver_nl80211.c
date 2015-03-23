@@ -10204,7 +10204,9 @@ static int wpa_driver_nl80211_shared_freq(void *priv)
 	dl_list_for_each(driver, &drv->global->interfaces,
 			 struct wpa_driver_nl80211_data, list) {
 		if (drv == driver ||
+#ifndef MTK_HARDWARE /* P2P vs lagecy wifi multi-channel concurrence */
 		    os_strcmp(drv->phyname, driver->phyname) != 0 ||
+#endif /*Mediatek Modified*/
 #ifdef ANDROID_P2P
 		    (!driver->associated && !is_ap_interface(driver->nlmode)))
 #else
