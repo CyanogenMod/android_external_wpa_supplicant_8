@@ -33,9 +33,11 @@ L_CFLAGS += -DNO_APSME_ATTR
 endif
 
 # Set Android extended P2P functionality
+ifneq ($(USES_TI_MAC80211),true)
 L_CFLAGS += -DANDROID_P2P
 ifeq ($(BOARD_HOSTAPD_PRIVATE_LIB),)
 L_CFLAGS += -DANDROID_P2P_STUB
+endif
 endif
 
 ifeq ($(BOARD_WIFI_SKIP_CAPABILITIES), true)
