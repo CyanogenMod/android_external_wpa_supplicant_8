@@ -6522,47 +6522,6 @@ static int nl80211_signal_poll(void *priv, struct wpa_signal_info *si)
 }
 
 
-static int wpa_driver_nl80211_shared_freq(void *priv)
-{
-	struct i802_bss *bss = priv;
-	struct wpa_driver_nl80211_data *drv = bss->drv;
-	struct wpa_driver_nl80211_data *driver;
-	int freq = 0;
-
-	/*
-	 * If the same PHY is in connected state with some other interface,
-	 * then retrieve the assoc freq.
-	 */
-	wpa_printf(MSG_DEBUG, "nl80211: Get shared freq for PHY %s",
-		   drv->phyname);
-
-	dl_list_for_each(driver, &drv->global->interfaces,
-			 struct wpa_driver_nl80211_data, list) {
-		if (drv == driver ||
-		    os_strcmp(drv->phyname, driver->phyname) != 0 ||
-		    !driver->associated)
-			continue;
-
-		wpa_printf(MSG_DEBUG, "nl80211: Found a match for PHY %s - %s "
-			   MACSTR,
-			   driver->phyname, driver->first_bss->ifname,
-			   MAC2STR(driver->first_bss->addr));
-		if (is_ap_interface(driver->nlmode))
-			freq = driver->first_bss->freq;
-		else
-			freq = nl80211_get_assoc_freq(driver);
-		wpa_printf(MSG_DEBUG, "nl80211: Shared freq for PHY %s: %d",
-			   drv->phyname, freq);
-	}
-
-	if (!freq)
-		wpa_printf(MSG_DEBUG, "nl80211: No shared interface for "
-			   "PHY (%s) in associated state", drv->phyname);
-
-	return freq;
-}
-
-
 static int nl80211_send_frame(void *priv, const u8 *data, size_t data_len,
 			      int encrypt)
 {
@@ -8423,11 +8382,23 @@ static int wpa_driver_do_acs(void *priv, struct drv_acs_params *params)
 	    (params->ht_enabled &&
 	     nla_put_flag(msg, QCA_WLAN_VENDOR_ATTR_ACS_HT_ENABLED)) ||
 	    (params->ht40_enabled &&
-	     nla_put_flag(msg, QCA_WLAN_VENDOR_ATTR_ACS_HT40_ENABLED))) {
+	     nla_put_flag(msg, QCA_WLAN_VENDOR_ATTR_ACS_HT40_ENABLED)) ||
+	    (params->vht_enabled &&
+	     nla_put_flag(msg, QCA_WLAN_VENDOR_ATTR_ACS_VHT_ENABLED)) ||
+	    nla_put_u16(msg, QCA_WLAN_VENDOR_ATTR_ACS_CHWIDTH,
+			params->ch_width) ||
+	    (params->ch_list_len &&
+	     nla_put(msg, QCA_WLAN_VENDOR_ATTR_ACS_CH_LIST, params->ch_list_len,
+		     params->ch_list))) {
 		nlmsg_free(msg);
 		return -ENOBUFS;
 	}
 	nla_nest_end(msg, data);
+
+	wpa_printf(MSG_DEBUG,
+		   "nl80211: ACS Params: HW_MODE: %d HT: %d HT40: %d VHT: %d BW: %d CH_LIST_LEN: %u",
+		   params->hw_mode, params->ht_enabled, params->ht40_enabled,
+		   params->vht_enabled, params->ch_width, params->ch_list_len);
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	if (ret) {
@@ -8498,7 +8469,6 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.signal_monitor = nl80211_signal_monitor,
 	.signal_poll = nl80211_signal_poll,
 	.send_frame = nl80211_send_frame,
-	.shared_freq = wpa_driver_nl80211_shared_freq,
 	.set_param = nl80211_set_param,
 	.get_radio_name = nl80211_get_radio_name,
 	.add_pmkid = nl80211_add_pmkid,
