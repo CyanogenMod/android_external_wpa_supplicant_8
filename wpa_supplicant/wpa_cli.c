@@ -92,6 +92,7 @@ static DEFINE_DL_LIST(bsses); /* struct cli_txt_entry */
 static DEFINE_DL_LIST(p2p_peers); /* struct cli_txt_entry */
 static DEFINE_DL_LIST(p2p_groups); /* struct cli_txt_entry */
 static DEFINE_DL_LIST(ifnames); /* struct cli_txt_entry */
+static DEFINE_DL_LIST(networks); /* struct cli_txt_entry */
 
 
 static void print_help(const char *cmd);
@@ -99,6 +100,7 @@ static void wpa_cli_mon_receive(int sock, void *eloop_ctx, void *sock_ctx);
 static void wpa_cli_close_connection(void);
 static char * wpa_cli_get_default_ifname(void);
 static char ** wpa_list_cmd_list(void);
+static void update_networks(struct wpa_ctrl *ctrl);
 
 
 static void usage(void)
@@ -168,11 +170,12 @@ static void cli_txt_list_del_addr(struct dl_list *txt_list, const char *txt)
 
 
 #ifdef CONFIG_P2P
-static void cli_txt_list_del_word(struct dl_list *txt_list, const char *txt)
+static void cli_txt_list_del_word(struct dl_list *txt_list, const char *txt,
+				  int separator)
 {
 	const char *end;
 	char *buf;
-	end = os_strchr(txt, ' ');
+	end = os_strchr(txt, separator);
 	if (end == NULL)
 		end = txt + os_strlen(txt);
 	buf = dup_binstr(txt, end - txt);
@@ -213,14 +216,16 @@ static int cli_txt_list_add_addr(struct dl_list *txt_list, const char *txt)
 	os_snprintf(buf, sizeof(buf), MACSTR, MAC2STR(addr));
 	return cli_txt_list_add(txt_list, buf);
 }
+#endif /* CONFIG_P2P */
 
 
-static int cli_txt_list_add_word(struct dl_list *txt_list, const char *txt)
+static int cli_txt_list_add_word(struct dl_list *txt_list, const char *txt,
+				 int separator)
 {
 	const char *end;
 	char *buf;
 	int ret;
-	end = os_strchr(txt, ' ');
+	end = os_strchr(txt, separator);
 	if (end == NULL)
 		end = txt + os_strlen(txt);
 	buf = dup_binstr(txt, end - txt);
@@ -230,7 +235,6 @@ static int cli_txt_list_add_word(struct dl_list *txt_list, const char *txt)
 	os_free(buf);
 	return ret;
 }
-#endif /* CONFIG_P2P */
 
 
 static char ** cli_txt_list_array(struct dl_list *txt_list)
@@ -1451,14 +1455,18 @@ static int wpa_cli_cmd_disable_network(struct wpa_ctrl *ctrl, int argc,
 static int wpa_cli_cmd_add_network(struct wpa_ctrl *ctrl, int argc,
 				   char *argv[])
 {
-	return wpa_ctrl_command(ctrl, "ADD_NETWORK");
+	int res = wpa_ctrl_command(ctrl, "ADD_NETWORK");
+	update_networks(ctrl);
+	return res;
 }
 
 
 static int wpa_cli_cmd_remove_network(struct wpa_ctrl *ctrl, int argc,
 				      char *argv[])
 {
-	return wpa_cli_cmd(ctrl, "REMOVE_NETWORK", 1, argc, argv);
+	int res = wpa_cli_cmd(ctrl, "REMOVE_NETWORK", 1, argc, argv);
+	update_networks(ctrl);
+	return res;
 }
 
 
@@ -1519,6 +1527,105 @@ static int wpa_cli_cmd_get_network(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static const char *network_fields[] = {
+	"ssid", "scan_ssid", "bssid", "bssid_blacklist",
+	"bssid_whitelist", "psk", "proto", "key_mgmt",
+	"bg_scan_period", "pairwise", "group", "auth_alg", "scan_freq",
+	"freq_list",
+#ifdef IEEE8021X_EAPOL
+	"eap", "identity", "anonymous_identity", "password", "ca_cert",
+	"ca_path", "client_cert", "private_key", "private_key_passwd",
+	"dh_file", "subject_match", "altsubject_match",
+	"domain_suffix_match", "domain_match", "ca_cert2", "ca_path2",
+	"client_cert2", "private_key2", "private_key2_passwd",
+	"dh_file2", "subject_match2", "altsubject_match2",
+	"domain_suffix_match2", "domain_match2", "phase1", "phase2",
+	"pcsc", "pin", "engine_id", "key_id", "cert_id", "ca_cert_id",
+	"pin2", "engine2_id", "key2_id", "cert2_id", "ca_cert2_id",
+	"engine", "engine2", "eapol_flags", "sim_num",
+	"openssl_ciphers", "erp",
+#endif /* IEEE8021X_EAPOL */
+	"wep_key0", "wep_key1", "wep_key2", "wep_key3",
+	"wep_tx_keyidx", "priority",
+#ifdef IEEE8021X_EAPOL
+	"eap_workaround", "pac_file", "fragment_size", "ocsp",
+#endif /* IEEE8021X_EAPOL */
+#ifdef CONFIG_MESH
+	"mode", "no_auto_peer",
+#else /* CONFIG_MESH */
+	"mode",
+#endif /* CONFIG_MESH */
+	"proactive_key_caching", "disabled", "id_str",
+#ifdef CONFIG_IEEE80211W
+	"ieee80211w",
+#endif /* CONFIG_IEEE80211W */
+	"peerkey", "mixed_cell", "frequency", "fixed_freq",
+#ifdef CONFIG_MESH
+	"mesh_basic_rates", "dot11MeshMaxRetries",
+	"dot11MeshRetryTimeout", "dot11MeshConfirmTimeout",
+	"dot11MeshHoldingTimeout",
+#endif /* CONFIG_MESH */
+	"wpa_ptk_rekey", "bgscan", "ignore_broadcast_ssid",
+#ifdef CONFIG_P2P
+	"go_p2p_dev_addr", "p2p_client_list", "psk_list",
+#endif /* CONFIG_P2P */
+#ifdef CONFIG_HT_OVERRIDES
+	"disable_ht", "disable_ht40", "disable_sgi", "disable_ldpc",
+	"ht40_intolerant", "disable_max_amsdu", "ampdu_factor",
+	"ampdu_density", "ht_mcs",
+#endif /* CONFIG_HT_OVERRIDES */
+#ifdef CONFIG_VHT_OVERRIDES
+	"disable_vht", "vht_capa", "vht_capa_mask", "vht_rx_mcs_nss_1",
+	"vht_rx_mcs_nss_2", "vht_rx_mcs_nss_3", "vht_rx_mcs_nss_4",
+	"vht_rx_mcs_nss_5", "vht_rx_mcs_nss_6", "vht_rx_mcs_nss_7",
+	"vht_rx_mcs_nss_8", "vht_tx_mcs_nss_1", "vht_tx_mcs_nss_2",
+	"vht_tx_mcs_nss_3", "vht_tx_mcs_nss_4", "vht_tx_mcs_nss_5",
+	"vht_tx_mcs_nss_6", "vht_tx_mcs_nss_7", "vht_tx_mcs_nss_8",
+#endif /* CONFIG_VHT_OVERRIDES */
+	"ap_max_inactivity", "dtim_period", "beacon_int",
+#ifdef CONFIG_MACSEC
+	"macsec_policy",
+#endif /* CONFIG_MACSEC */
+#ifdef CONFIG_HS20
+	"update_identifier",
+#endif /* CONFIG_HS20 */
+	"mac_addr"
+};
+
+
+static char ** wpa_cli_complete_network(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	int i, num_fields = ARRAY_SIZE(network_fields);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+		res = cli_txt_list_array(&networks);
+		break;
+	case 2:
+		res = os_calloc(num_fields + 1, sizeof(char *));
+		if (res == NULL)
+			return NULL;
+		for (i = 0; i < num_fields; i++) {
+			res[i] = os_strdup(network_fields[i]);
+			if (res[i] == NULL)
+				break;
+		}
+	}
+	return res;
+}
+
+
+static char ** wpa_cli_complete_network_id(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	if (arg == 1)
+		return cli_txt_list_array(&networks);
+	return NULL;
+}
+
+
 static int wpa_cli_cmd_dup_network(struct wpa_ctrl *ctrl, int argc,
 				   char *argv[])
 {
@@ -1534,6 +1641,31 @@ static int wpa_cli_cmd_dup_network(struct wpa_ctrl *ctrl, int argc,
 	}
 
 	return wpa_cli_cmd(ctrl, "DUP_NETWORK", 3, argc, argv);
+}
+
+
+static char ** wpa_cli_complete_dup_network(const char *str, int pos)
+{
+	int arg = get_cmd_arg_num(str, pos);
+	int i, num_fields = ARRAY_SIZE(network_fields);
+	char **res = NULL;
+
+	switch (arg) {
+	case 1:
+	case 2:
+		res = cli_txt_list_array(&networks);
+		break;
+	case 3:
+		res = os_calloc(num_fields + 1, sizeof(char *));
+		if (res == NULL)
+			return NULL;
+		for (i = 0; i < num_fields; i++) {
+			res[i] = os_strdup(network_fields[i]);
+			if (res[i] == NULL)
+				break;
+		}
+	}
+	return res;
 }
 
 
@@ -1711,20 +1843,20 @@ static int wpa_cli_cmd_interface_add(struct wpa_ctrl *ctrl, int argc,
 		printf("Invalid INTERFACE_ADD command: needs at least one "
 		       "argument (interface name)\n"
 		       "All arguments: ifname confname driver ctrl_interface "
-		       "driver_param bridge_name\n");
+		       "driver_param bridge_name [create]\n");
 		return -1;
 	}
 
 	/*
 	 * INTERFACE_ADD <ifname>TAB<confname>TAB<driver>TAB<ctrl_interface>TAB
-	 * <driver_param>TAB<bridge_name>
+	 * <driver_param>TAB<bridge_name>[TAB<create>]
 	 */
 	res = os_snprintf(cmd, sizeof(cmd),
-			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s",
+			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s\t%s",
 			  argv[0],
 			  argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "",
 			  argc > 3 ? argv[3] : "", argc > 4 ? argv[4] : "",
-			  argc > 5 ? argv[5] : "");
+			  argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "");
 	if (os_snprintf_error(sizeof(cmd), res))
 		return -1;
 	cmd[sizeof(cmd) - 1] = '\0';
@@ -2776,29 +2908,33 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "list_networks", wpa_cli_cmd_list_networks, NULL,
 	  cli_cmd_flag_none,
 	  "= list configured networks" },
-	{ "select_network", wpa_cli_cmd_select_network, NULL,
+	{ "select_network", wpa_cli_cmd_select_network,
+	  wpa_cli_complete_network_id,
 	  cli_cmd_flag_none,
 	  "<network id> = select a network (disable others)" },
-	{ "enable_network", wpa_cli_cmd_enable_network, NULL,
+	{ "enable_network", wpa_cli_cmd_enable_network,
+	  wpa_cli_complete_network_id,
 	  cli_cmd_flag_none,
 	  "<network id> = enable a network" },
-	{ "disable_network", wpa_cli_cmd_disable_network, NULL,
+	{ "disable_network", wpa_cli_cmd_disable_network,
+	  wpa_cli_complete_network_id,
 	  cli_cmd_flag_none,
 	  "<network id> = disable a network" },
 	{ "add_network", wpa_cli_cmd_add_network, NULL,
 	  cli_cmd_flag_none,
 	  "= add a network" },
-	{ "remove_network", wpa_cli_cmd_remove_network, NULL,
+	{ "remove_network", wpa_cli_cmd_remove_network,
+	  wpa_cli_complete_network_id,
 	  cli_cmd_flag_none,
 	  "<network id> = remove a network" },
-	{ "set_network", wpa_cli_cmd_set_network, NULL,
+	{ "set_network", wpa_cli_cmd_set_network, wpa_cli_complete_network,
 	  cli_cmd_flag_sensitive,
 	  "<network id> <variable> <value> = set network variables (shows\n"
 	  "  list of variables when run without arguments)" },
-	{ "get_network", wpa_cli_cmd_get_network, NULL,
+	{ "get_network", wpa_cli_cmd_get_network, wpa_cli_complete_network,
 	  cli_cmd_flag_none,
 	  "<network id> <variable> = get network variables" },
-	{ "dup_network", wpa_cli_cmd_dup_network, NULL,
+	{ "dup_network", wpa_cli_cmd_dup_network, wpa_cli_complete_dup_network,
 	  cli_cmd_flag_none,
 	  "<src network id> <dst network id> <variable> = duplicate network variables"
 	},
@@ -3614,7 +3750,7 @@ static void cli_event(const char *str)
 		s = os_strchr(start, ' ');
 		if (s == NULL)
 			return;
-		cli_txt_list_add_word(&p2p_groups, s + 1);
+		cli_txt_list_add_word(&p2p_groups, s + 1, ' ');
 		return;
 	}
 
@@ -3622,7 +3758,7 @@ static void cli_event(const char *str)
 		s = os_strchr(start, ' ');
 		if (s == NULL)
 			return;
-		cli_txt_list_del_word(&p2p_groups, s + 1);
+		cli_txt_list_del_word(&p2p_groups, s + 1, ' ');
 		return;
 	}
 #endif /* CONFIG_P2P */
@@ -3781,7 +3917,11 @@ static void start_edit(void)
 	ps = wpa_ctrl_get_remote_ifname(ctrl_conn);
 #endif /* CONFIG_CTRL_IFACE_UDP_REMOTE */
 
+#ifdef CONFIG_WPA_CLI_HISTORY_DIR
+	home = CONFIG_WPA_CLI_HISTORY_DIR;
+#else /* CONFIG_WPA_CLI_HISTORY_DIR */
 	home = getenv("HOME");
+#endif /* CONFIG_WPA_CLI_HISTORY_DIR */
 	if (home) {
 		const char *fname = ".wpa_cli_history";
 		int hfile_len = os_strlen(home) + 1 + os_strlen(fname) + 1;
@@ -3864,6 +4004,38 @@ static void update_ifnames(struct wpa_ctrl *ctrl)
 }
 
 
+static void update_networks(struct wpa_ctrl *ctrl)
+{
+	char buf[4096];
+	size_t len = sizeof(buf);
+	int ret;
+	char *cmd = "LIST_NETWORKS";
+	char *pos, *end;
+	int header = 1;
+
+	cli_txt_list_flush(&networks);
+
+	if (ctrl == NULL)
+		return;
+	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len, NULL);
+	if (ret < 0)
+		return;
+	buf[len] = '\0';
+
+	pos = buf;
+	while (pos) {
+		end = os_strchr(pos, '\n');
+		if (end == NULL)
+			break;
+		*end = '\0';
+		if (!header)
+			cli_txt_list_add_word(&networks, pos, '\t');
+		header = 0;
+		pos = end + 1;
+	}
+}
+
+
 static void try_connection(void *eloop_ctx, void *timeout_ctx)
 {
 	if (ctrl_conn)
@@ -3884,6 +4056,7 @@ static void try_connection(void *eloop_ctx, void *timeout_ctx)
 	}
 
 	update_bssid_list(ctrl_conn);
+	update_networks(ctrl_conn);
 
 	if (warning_displayed)
 		printf("Connection established.\n");
@@ -3905,6 +4078,7 @@ static void wpa_cli_interactive(void)
 	cli_txt_list_flush(&p2p_groups);
 	cli_txt_list_flush(&bsses);
 	cli_txt_list_flush(&ifnames);
+	cli_txt_list_flush(&networks);
 	if (edit_started)
 		edit_deinit(hfile, wpa_cli_edit_filter_history_cb);
 	os_free(hfile);
