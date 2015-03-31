@@ -5299,6 +5299,11 @@ static int p2p_ctrl_service_del_asp(struct wpa_supplicant *wpa_s, char *cmd)
 {
 	u32 adv_id;
 
+	if (os_strcmp(cmd, "all") == 0) {
+		wpas_p2p_service_flush_asp(wpa_s);
+		return 0;
+	}
+
 	if (sscanf(cmd, "%x", &adv_id) != 1)
 		return -1;
 
@@ -6697,6 +6702,8 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 			   MAC2STR(wpa_s->bssid),
 			   MAC2STR(wpa_s->pending_bssid));
 	}
+
+	eloop_cancel_timeout(wpas_network_reenabled, wpa_s, NULL);
 }
 
 
@@ -6942,6 +6949,15 @@ static void wpas_ctrl_scan(struct wpa_supplicant *wpa_s, char *params,
 		*reply_len = os_snprintf(reply, reply_size, "FAIL-BUSY\n");
 		return;
 	}
+
+#ifdef CONFIG_INTERWORKING
+	if (wpa_s->fetch_anqp_in_progress || wpa_s->network_select) {
+		wpa_printf(MSG_DEBUG,
+			   "Interworking select in progress - reject new scan");
+		*reply_len = os_snprintf(reply, reply_size, "FAIL-BUSY\n");
+		return;
+	}
+#endif /* CONFIG_INTERWORKING */
 
 	if (params) {
 		if (os_strncasecmp(params, "TYPE=ONLY", 9) == 0)
@@ -8248,6 +8264,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_cancel_scan(wpa_s);
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
+		eloop_cancel_timeout(wpas_network_reenabled, wpa_s, NULL);
 	} else if (os_strcmp(buf, "SCAN") == 0) {
 		wpas_ctrl_scan(wpa_s, NULL, reply, reply_size, &reply_len);
 	} else if (os_strncmp(buf, "SCAN ", 5) == 0) {

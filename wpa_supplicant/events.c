@@ -71,6 +71,59 @@ static int wpas_temp_disabled(struct wpa_supplicant *wpa_s,
 }
 
 
+/**
+ * wpas_reenabled_network_time - Time until first network is re-enabled
+ * @wpa_s: Pointer to wpa_supplicant data
+ * Returns: If all enabled networks are temporarily disabled, returns the time
+ *	(in sec) until the first network is re-enabled. Otherwise returns 0.
+ *
+ * This function is used in case all enabled networks are temporarily disabled,
+ * in which case it returns the time (in sec) that the first network will be
+ * re-enabled. The function assumes that at least one network is enabled.
+ */
+static int wpas_reenabled_network_time(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_ssid *ssid;
+	int disabled_for, res = 0;
+
+#ifdef CONFIG_INTERWORKING
+	if (wpa_s->conf->auto_interworking && wpa_s->conf->interworking &&
+	    wpa_s->conf->cred)
+		return 0;
+#endif /* CONFIG_INTERWORKING */
+
+	for (ssid = wpa_s->conf->ssid; ssid; ssid = ssid->next) {
+		if (ssid->disabled)
+			continue;
+
+		disabled_for = wpas_temp_disabled(wpa_s, ssid);
+		if (!disabled_for)
+			return 0;
+
+		if (!res || disabled_for < res)
+			res = disabled_for;
+	}
+
+	return res;
+}
+
+
+void wpas_network_reenabled(void *eloop_ctx, void *timeout_ctx)
+{
+	struct wpa_supplicant *wpa_s = eloop_ctx;
+
+	if (wpa_s->disconnected || wpa_s->wpa_state != WPA_SCANNING)
+		return;
+
+	wpa_dbg(wpa_s, MSG_DEBUG,
+		"Try to associate due to network getting re-enabled");
+	if (wpa_supplicant_fast_associate(wpa_s) != 1) {
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
+	}
+}
+
+
 static struct wpa_bss * wpa_supplicant_get_new_bss(
 	struct wpa_supplicant *wpa_s, const u8 *bssid)
 {
@@ -105,11 +158,32 @@ static void wpa_supplicant_update_current_bss(struct wpa_supplicant *wpa_s)
 static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 {
 	struct wpa_ssid *ssid, *old_ssid;
+	u8 drv_ssid[MAX_SSID_LEN];
+	size_t drv_ssid_len;
 	int res;
 
 	if (wpa_s->conf->ap_scan == 1 && wpa_s->current_ssid) {
 		wpa_supplicant_update_current_bss(wpa_s);
-		return 0;
+
+		if (wpa_s->current_ssid->ssid_len == 0)
+			return 0; /* current profile still in use */
+		res = wpa_drv_get_ssid(wpa_s, drv_ssid);
+		if (res < 0) {
+			wpa_msg(wpa_s, MSG_INFO,
+				"Failed to read SSID from driver");
+			return 0; /* try to use current profile */
+		}
+		drv_ssid_len = res;
+
+		if (drv_ssid_len == wpa_s->current_ssid->ssid_len &&
+		    os_memcmp(drv_ssid, wpa_s->current_ssid->ssid,
+			      drv_ssid_len) == 0)
+			return 0; /* current profile still in use */
+
+		wpa_msg(wpa_s, MSG_DEBUG,
+			"Driver-initiated BSS selection changed the SSID to %s",
+			wpa_ssid_txt(drv_ssid, drv_ssid_len));
+		/* continue selecting a new network profile */
 	}
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Select network based on association "
@@ -1421,6 +1495,17 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 {
 	struct wpa_bss *selected;
 	struct wpa_ssid *ssid = NULL;
+	int time_to_reenable = wpas_reenabled_network_time(wpa_s);
+
+	if (time_to_reenable > 0) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Postpone network selection by %d seconds since all networks are disabled",
+			time_to_reenable);
+		eloop_cancel_timeout(wpas_network_reenabled, wpa_s, NULL);
+		eloop_register_timeout(time_to_reenable, 0,
+				       wpas_network_reenabled, wpa_s, NULL);
+		return 0;
+	}
 
 	if (wpa_s->p2p_mgmt)
 		return 0; /* no normal connection on p2p_mgmt interface */
@@ -1945,6 +2030,8 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 		return;
 	}
 #endif /* CONFIG_AP */
+
+	eloop_cancel_timeout(wpas_network_reenabled, wpa_s, NULL);
 
 	ft_completed = wpa_ft_is_completed(wpa_s->wpa);
 	if (data && wpa_supplicant_event_associnfo(wpa_s, data) < 0)
@@ -2867,6 +2954,14 @@ static void wpa_supplicant_update_channel_list(
 			ifs->hw.modes = wpa_drv_get_hw_feature_data(
 				ifs, &ifs->hw.num_modes, &ifs->hw.flags);
 		}
+	}
+
+	/* Restart sched_scan with updated channel list */
+	if (wpa_s->sched_scanning) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Channel list changed restart sched scan.");
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+		wpa_supplicant_req_scan(wpa_s, 0, 0);
 	}
 }
 
