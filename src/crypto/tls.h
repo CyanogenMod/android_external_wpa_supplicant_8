@@ -12,8 +12,6 @@
 struct tls_connection;
 
 struct tls_keys {
-	const u8 *master_key; /* TLS master secret */
-	size_t master_key_len;
 	const u8 *client_random;
 	size_t client_random_len;
 	const u8 *server_random;
@@ -308,10 +306,10 @@ int __must_check tls_connection_set_verify(void *tls_ctx,
 					   int verify_peer);
 
 /**
- * tls_connection_get_keys - Get master key and random data from TLS connection
+ * tls_connection_get_keys - Get random data from TLS connection
  * @tls_ctx: TLS context data from tls_init()
  * @conn: Connection context data from tls_connection_init()
- * @keys: Structure of key/random data (filled on success)
+ * @keys: Structure of client/server random data (filled on success)
  * Returns: 0 on success, -1 on failure
  */
 int __must_check tls_connection_get_keys(void *tls_ctx,
@@ -325,6 +323,7 @@ int __must_check tls_connection_get_keys(void *tls_ctx,
  * @label: Label (e.g., description of the key) for PRF
  * @server_random_first: seed is 0 = client_random|server_random,
  * 1 = server_random|client_random
+ * @skip_keyblock: Skip TLS key block from the beginning of PRF output
  * @out: Buffer for output data from TLS-PRF
  * @out_len: Length of the output buffer
  * Returns: 0 on success, -1 on failure
@@ -342,6 +341,7 @@ int __must_check  tls_connection_prf(void *tls_ctx,
 				     struct tls_connection *conn,
 				     const char *label,
 				     int server_random_first,
+				     int skip_keyblock,
 				     u8 *out, size_t out_len);
 
 /**
@@ -526,16 +526,6 @@ int tls_connection_get_read_alerts(void *tls_ctx, struct tls_connection *conn);
  */
 int tls_connection_get_write_alerts(void *tls_ctx,
 				    struct tls_connection *conn);
-
-/**
- * tls_connection_get_keyblock_size - Get TLS key_block size
- * @tls_ctx: TLS context data from tls_init()
- * @conn: Connection context data from tls_connection_init()
- * Returns: Size of the key_block for the negotiated cipher suite or -1 on
- * failure
- */
-int tls_connection_get_keyblock_size(void *tls_ctx,
-				     struct tls_connection *conn);
 
 /**
  * tls_capabilities - Get supported TLS capabilities

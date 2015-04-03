@@ -21,6 +21,8 @@
 #include "osu_client.h"
 
 
+extern const char *spp_xsd_fname;
+
 static int hs20_spp_update_response(struct hs20_osu_client *ctx,
 				    const char *session_id,
 				    const char *spp_status,
@@ -59,7 +61,7 @@ static int hs20_spp_validate(struct hs20_osu_client *ctx, xml_node_t *node,
 		return -1;
 	}
 
-	ret = xml_validate(xctx, node, "spp.xsd", &err);
+	ret = xml_validate(xctx, node, spp_xsd_fname, &err);
 	if (ret < 0) {
 		wpa_printf(MSG_INFO, "XML schema validation error(s)\n%s", err);
 		write_summary(ctx, "SPP XML schema validation failed");
@@ -952,7 +954,9 @@ int cmd_prov(struct hs20_osu_client *ctx, const char *url)
 		return -1;
 	}
 
-	wpa_printf(MSG_INFO, "Credential provisioning requested");
+	wpa_printf(MSG_INFO,
+		   "Credential provisioning requested - URL: %s ca_fname: %s",
+		   url, ctx->ca_fname ? ctx->ca_fname : "N/A");
 
 	os_free(ctx->server_url);
 	ctx->server_url = os_strdup(url);

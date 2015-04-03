@@ -25,6 +25,8 @@
 #include "crypto/sha256.h"
 #include "osu_client.h"
 
+const char *spp_xsd_fname = "spp.xsd";
+
 
 void write_result(struct hs20_osu_client *ctx, const char *fmt, ...)
 {
@@ -547,8 +549,9 @@ int hs20_add_pps_mo(struct hs20_osu_client *ctx, const char *uri,
 	wpa_printf(MSG_INFO, "SP FQDN: %s", fqdn);
 
 	if (!server_dnsname_suffix_match(ctx, fqdn)) {
-		wpa_printf(MSG_INFO, "FQDN '%s' for new PPS MO did not have suffix match with server's dNSName values",
-			   fqdn);
+		wpa_printf(MSG_INFO,
+			   "FQDN '%s' for new PPS MO did not have suffix match with server's dNSName values, count: %d",
+			   fqdn, (int) ctx->server_dnsname_count);
 		write_result(ctx, "FQDN '%s' for new PPS MO did not have suffix match with server's dNSName values",
 			     fqdn);
 		free(fqdn);
@@ -2094,10 +2097,14 @@ static int osu_connect(struct hs20_osu_client *ctx, const char *bssid,
 	}
 
 	ctx->no_reconnect = 1;
-	if (methods & 0x02)
+	if (methods & 0x02) {
+		wpa_printf(MSG_DEBUG, "Calling cmd_prov from osu_connect");
 		res = cmd_prov(ctx, url);
-	else if (methods & 0x01)
+	} else if (methods & 0x01) {
+		wpa_printf(MSG_DEBUG,
+			   "Calling cmd_oma_dm_prov from osu_connect");
 		res = cmd_oma_dm_prov(ctx, url);
+	}
 
 	wpa_printf(MSG_INFO, "Remove OSU network connection");
 	write_summary(ctx, "Remove OSU network connection");
@@ -2290,12 +2297,19 @@ selected:
 		}
 
 		if (connect == 2) {
-			if (last->methods & 0x02)
+			if (last->methods & 0x02) {
+				wpa_printf(MSG_DEBUG,
+					   "Calling cmd_prov from cmd_osu_select");
 				ret = cmd_prov(ctx, last->url);
-			else if (last->methods & 0x01)
+			} else if (last->methods & 0x01) {
+				wpa_printf(MSG_DEBUG,
+					   "Calling cmd_oma_dm_prov from cmd_osu_select");
 				ret = cmd_oma_dm_prov(ctx, last->url);
-			else
+			} else {
+				wpa_printf(MSG_DEBUG,
+					   "No supported OSU provisioning method");
 				ret = -1;
+			}
 		} else if (connect)
 			ret = osu_connect(ctx, last->bssid, last->osu_ssid,
 					  last->url, last->methods,
@@ -2972,6 +2986,7 @@ static void usage(void)
 	       "    [-w<wpa_supplicant ctrl_iface dir>] "
 	       "[-r<result file>] [-f<debug file>] \\\n"
 	       "    [-s<summary file>] \\\n"
+	       "    [-x<spp.xsd file name>] \\\n"
 	       "    <command> [arguments..]\n"
 	       "commands:\n"
 	       "- to_tnds <XML MO> <XML MO in TNDS format> [URN]\n"
@@ -3013,7 +3028,7 @@ int main(int argc, char *argv[])
 		return -1;
 
 	for (;;) {
-		c = getopt(argc, argv, "df:hKNO:qr:s:S:tw:");
+		c = getopt(argc, argv, "df:hKNO:qr:s:S:tw:x:");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -3050,6 +3065,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'w':
 			wpas_ctrl_path = optarg;
+			break;
+		case 'x':
+			spp_xsd_fname = optarg;
 			break;
 		case 'h':
 		default:
@@ -3125,6 +3143,7 @@ int main(int argc, char *argv[])
 			exit(0);
 		}
 		ctx.ca_fname = argv[optind + 2];
+		wpa_printf(MSG_DEBUG, "Calling cmd_prov from main");
 		cmd_prov(&ctx, argv[optind + 1]);
 	} else if (strcmp(argv[optind], "sim_prov") == 0) {
 		if (argc - optind < 2) {
