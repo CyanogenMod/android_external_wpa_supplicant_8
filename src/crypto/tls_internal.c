@@ -192,26 +192,31 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 
 	if (params->subject_match) {
 		wpa_printf(MSG_INFO, "TLS: subject_match not supported");
+		tlsv1_cred_free(cred);
 		return -1;
 	}
 
 	if (params->altsubject_match) {
 		wpa_printf(MSG_INFO, "TLS: altsubject_match not supported");
+		tlsv1_cred_free(cred);
 		return -1;
 	}
 
 	if (params->suffix_match) {
 		wpa_printf(MSG_INFO, "TLS: suffix_match not supported");
+		tlsv1_cred_free(cred);
 		return -1;
 	}
 
 	if (params->domain_match) {
 		wpa_printf(MSG_INFO, "TLS: domain_match not supported");
+		tlsv1_cred_free(cred);
 		return -1;
 	}
 
 	if (params->openssl_ciphers) {
-		wpa_printf(MSG_INFO, "GnuTLS: openssl_ciphers not supported");
+		wpa_printf(MSG_INFO, "TLS: openssl_ciphers not supported");
+		tlsv1_cred_free(cred);
 		return -1;
 	}
 
@@ -348,25 +353,57 @@ int tls_connection_get_keys(void *tls_ctx, struct tls_connection *conn,
 }
 
 
-int tls_connection_prf(void *tls_ctx, struct tls_connection *conn,
-		       const char *label, int server_random_first,
-		       u8 *out, size_t out_len)
+static int tls_get_keyblock_size(struct tls_connection *conn)
 {
 #ifdef CONFIG_TLS_INTERNAL_CLIENT
+	if (conn->client)
+		return tlsv1_client_get_keyblock_size(conn->client);
+#endif /* CONFIG_TLS_INTERNAL_CLIENT */
+#ifdef CONFIG_TLS_INTERNAL_SERVER
+	if (conn->server)
+		return tlsv1_server_get_keyblock_size(conn->server);
+#endif /* CONFIG_TLS_INTERNAL_SERVER */
+	return -1;
+}
+
+
+int tls_connection_prf(void *tls_ctx, struct tls_connection *conn,
+		       const char *label, int server_random_first,
+		       int skip_keyblock, u8 *out, size_t out_len)
+{
+	int ret = -1, skip = 0;
+	u8 *tmp_out = NULL;
+	u8 *_out = out;
+
+	if (skip_keyblock) {
+		skip = tls_get_keyblock_size(conn);
+		if (skip < 0)
+			return -1;
+		tmp_out = os_malloc(skip + out_len);
+		if (!tmp_out)
+			return -1;
+		_out = tmp_out;
+	}
+
+#ifdef CONFIG_TLS_INTERNAL_CLIENT
 	if (conn->client) {
-		return tlsv1_client_prf(conn->client, label,
-					server_random_first,
-					out, out_len);
+		ret = tlsv1_client_prf(conn->client, label,
+				       server_random_first,
+				       _out, out_len);
 	}
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
 	if (conn->server) {
-		return tlsv1_server_prf(conn->server, label,
-					server_random_first,
-					out, out_len);
+		ret = tlsv1_server_prf(conn->server, label,
+				       server_random_first,
+				       _out, out_len);
 	}
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
-	return -1;
+	if (ret == 0 && skip_keyblock)
+		os_memcpy(out, _out + skip, out_len);
+	bin_clear_free(tmp_out, skip);
+
+	return ret;
 }
 
 
@@ -634,21 +671,6 @@ int tls_connection_get_write_alerts(void *tls_ctx,
 				    struct tls_connection *conn)
 {
 	return 0;
-}
-
-
-int tls_connection_get_keyblock_size(void *tls_ctx,
-				     struct tls_connection *conn)
-{
-#ifdef CONFIG_TLS_INTERNAL_CLIENT
-	if (conn->client)
-		return tlsv1_client_get_keyblock_size(conn->client);
-#endif /* CONFIG_TLS_INTERNAL_CLIENT */
-#ifdef CONFIG_TLS_INTERNAL_SERVER
-	if (conn->server)
-		return tlsv1_server_get_keyblock_size(conn->server);
-#endif /* CONFIG_TLS_INTERNAL_SERVER */
-	return -1;
 }
 
 

@@ -2366,6 +2366,14 @@ static char * wpa_supplicant_ie_txt(char *pos, char *end, const char *proto,
 	}
 #endif /* CONFIG_SUITEB192 */
 
+	if (data.key_mgmt & WPA_KEY_MGMT_OSEN) {
+		ret = os_snprintf(pos, end - pos, "%sOSEN",
+				  pos == start ? "" : "+");
+		if (os_snprintf_error(end - pos, ret))
+			return pos;
+		pos += ret;
+	}
+
 	pos = wpa_supplicant_cipher_txt(pos, end, data.pairwise_cipher);
 
 	if (data.capabilities & WPA_CAPABILITY_PREAUTH) {
@@ -2433,7 +2441,7 @@ static int wpa_supplicant_ctrl_iface_scan_result(
 {
 	char *pos, *end;
 	int ret;
-	const u8 *ie, *ie2, *p2p, *mesh;
+	const u8 *ie, *ie2, *osen_ie, *p2p, *mesh;
 
 	mesh = wpa_bss_get_ie(bss, WLAN_EID_MESH_ID);
 	p2p = wpa_bss_get_vendor_ie(bss, P2P_IE_VENDOR_TYPE);
@@ -2460,8 +2468,12 @@ static int wpa_supplicant_ctrl_iface_scan_result(
 		pos = wpa_supplicant_ie_txt(pos, end, mesh ? "RSN" : "WPA2",
 					    ie2, 2 + ie2[1]);
 	}
+	osen_ie = wpa_bss_get_vendor_ie(bss, OSEN_IE_VENDOR_TYPE);
+	if (osen_ie)
+		pos = wpa_supplicant_ie_txt(pos, end, "OSEN",
+					    osen_ie, 2 + osen_ie[1]);
 	pos = wpa_supplicant_wps_ie_txt(wpa_s, pos, end, bss);
-	if (!ie && !ie2 && bss->caps & IEEE80211_CAP_PRIVACY) {
+	if (!ie && !ie2 && !osen_ie && (bss->caps & IEEE80211_CAP_PRIVACY)) {
 		ret = os_snprintf(pos, end - pos, "[WEP]");
 		if (os_snprintf_error(end - pos, ret))
 			return -1;
@@ -3937,7 +3949,7 @@ static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 	size_t i;
 	int ret;
 	char *pos, *end;
-	const u8 *ie, *ie2;
+	const u8 *ie, *ie2, *osen_ie;
 
 	pos = buf;
 	end = buf + buflen;
@@ -4054,8 +4066,13 @@ static int print_bss_info(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 		if (ie2)
 			pos = wpa_supplicant_ie_txt(pos, end, "WPA2", ie2,
 						    2 + ie2[1]);
+		osen_ie = wpa_bss_get_vendor_ie(bss, OSEN_IE_VENDOR_TYPE);
+		if (osen_ie)
+			pos = wpa_supplicant_ie_txt(pos, end, "OSEN",
+						    osen_ie, 2 + osen_ie[1]);
 		pos = wpa_supplicant_wps_ie_txt(wpa_s, pos, end, bss);
-		if (!ie && !ie2 && bss->caps & IEEE80211_CAP_PRIVACY) {
+		if (!ie && !ie2 && !osen_ie &&
+		    (bss->caps & IEEE80211_CAP_PRIVACY)) {
 			ret = os_snprintf(pos, end - pos, "[WEP]");
 			if (os_snprintf_error(end - pos, ret))
 				return 0;
@@ -8504,11 +8521,14 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 					   char *cmd)
 {
 	struct wpa_interface iface;
-	char *pos;
+	char *pos, *extra;
+	struct wpa_supplicant *wpa_s;
+	unsigned int create_iface = 0;
+	u8 mac_addr[ETH_ALEN];
 
 	/*
 	 * <ifname>TAB<confname>TAB<driver>TAB<ctrl_interface>TAB<driver_param>
-	 * TAB<bridge_ifname>
+	 * TAB<bridge_ifname>[TAB<create>]
 	 */
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE GLOBAL INTERFACE_ADD '%s'", cmd);
 
@@ -8568,12 +8588,47 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 			iface.bridge_ifname = NULL;
 		if (pos == NULL)
 			break;
+
+		extra = pos;
+		pos = os_strchr(pos, '\t');
+		if (pos)
+			*pos++ = '\0';
+		if (os_strcmp(extra, "create") == 0)
+			create_iface = 1;
+		else
+			return -1;
 	} while (0);
 
-	if (wpa_supplicant_get_iface(global, iface.ifname))
-		return -1;
+	if (create_iface) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE creating interface '%s'",
+			   iface.ifname);
+		if (!global->ifaces)
+			return -1;
+		if (wpa_drv_if_add(global->ifaces, WPA_IF_STATION, iface.ifname,
+				   NULL, NULL, NULL, mac_addr, NULL) < 0) {
+			wpa_printf(MSG_ERROR,
+				   "CTRL_IFACE interface creation failed");
+			return -1;
+		}
 
-	return wpa_supplicant_add_iface(global, &iface, NULL) ? 0 : -1;
+		wpa_printf(MSG_DEBUG,
+			   "CTRL_IFACE interface '%s' created with MAC addr: "
+			   MACSTR, iface.ifname, MAC2STR(mac_addr));
+	}
+
+	if (wpa_supplicant_get_iface(global, iface.ifname))
+		goto fail;
+
+	wpa_s = wpa_supplicant_add_iface(global, &iface, NULL);
+	if (!wpa_s)
+		goto fail;
+	wpa_s->added_vif = create_iface;
+	return 0;
+
+fail:
+	if (create_iface)
+		wpa_drv_if_remove(global->ifaces, WPA_IF_STATION, iface.ifname);
+	return -1;
 }
 
 
@@ -8581,13 +8636,22 @@ static int wpa_supplicant_global_iface_remove(struct wpa_global *global,
 					      char *cmd)
 {
 	struct wpa_supplicant *wpa_s;
+	int ret;
+	unsigned int delete_iface;
 
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE GLOBAL INTERFACE_REMOVE '%s'", cmd);
 
 	wpa_s = wpa_supplicant_get_iface(global, cmd);
 	if (wpa_s == NULL)
 		return -1;
-	return wpa_supplicant_remove_iface(global, wpa_s, 0);
+	delete_iface = wpa_s->added_vif;
+	ret = wpa_supplicant_remove_iface(global, wpa_s, 0);
+	if (!ret && delete_iface) {
+		wpa_printf(MSG_DEBUG, "CTRL_IFACE deleting the interface '%s'",
+			   cmd);
+		ret = wpa_drv_if_remove(global->ifaces, WPA_IF_STATION, cmd);
+	}
+	return ret;
 }
 
 
