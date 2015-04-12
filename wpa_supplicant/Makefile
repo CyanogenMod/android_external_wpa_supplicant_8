@@ -317,6 +317,10 @@ CFLAGS += -DCONFIG_INTERWORKING
 NEED_GAS=y
 endif
 
+ifdef CONFIG_NO_ROAMING
+CFLAGS += -DCONFIG_NO_ROAMING
+endif
+
 include ../src/drivers/drivers.mak
 ifdef CONFIG_AP
 OBJS_d += $(DRV_BOTH_OBJS)
@@ -1162,7 +1166,9 @@ endif
 endif
 ifdef NEED_AES_CBC
 NEED_AES_ENC=y
+ifneq ($(CONFIG_TLS), openssl)
 AESOBJS += ../src/crypto/aes-cbc.o
+endif
 endif
 ifdef NEED_AES_ENC
 ifdef CONFIG_INTERNAL_AES

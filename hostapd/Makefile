@@ -227,6 +227,7 @@ CFLAGS += -DCONFIG_SAE
 OBJS += ../src/common/sae.o
 NEED_ECC=y
 NEED_DH_GROUPS=y
+NEED_AP_MLME=y
 endif
 
 ifdef CONFIG_WNM
@@ -683,7 +684,9 @@ endif
 endif
 ifdef NEED_AES_CBC
 NEED_AES_DEC=y
+ifneq ($(CONFIG_TLS), openssl)
 AESOBJS += ../src/crypto/aes-cbc.o
+endif
 endif
 ifdef NEED_AES_DEC
 ifdef CONFIG_INTERNAL_AES
