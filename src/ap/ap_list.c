@@ -193,14 +193,14 @@ void ap_list_process_beacon(struct hostapd_iface *iface,
 			  elems->supp_rates, elems->supp_rates_len,
 			  elems->ext_supp_rates, elems->ext_supp_rates_len);
 
-	if (elems->erp_info && elems->erp_info_len == 1)
+	if (elems->erp_info)
 		ap->erp = elems->erp_info[0];
 	else
 		ap->erp = -1;
 
-	if (elems->ds_params && elems->ds_params_len == 1)
+	if (elems->ds_params)
 		ap->channel = elems->ds_params[0];
-	else if (elems->ht_operation && elems->ht_operation_len >= 1)
+	else if (elems->ht_operation)
 		ap->channel = elems->ht_operation[0];
 	else if (fi)
 		ap->channel = fi->channel;

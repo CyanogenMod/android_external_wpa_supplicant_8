@@ -9,8 +9,6 @@
 #ifndef WPA_COMMON_H
 #define WPA_COMMON_H
 
-#define WPA_MAX_SSID_LEN 32
-
 /* IEEE 802.11i */
 #define PMKID_LEN 16
 #define PMK_LEN 32
@@ -308,7 +306,6 @@ struct wpa_igtk_kde {
 } STRUCT_PACKED;
 #endif /* CONFIG_IEEE80211W */
 
-#ifdef CONFIG_IEEE80211R
 struct rsn_mdie {
 	u8 mobility_domain[MOBILITY_DOMAIN_ID_LEN];
 	u8 ft_capab;
@@ -336,7 +333,6 @@ struct rsn_rdie {
 	le16 status_code;
 } STRUCT_PACKED;
 
-#endif /* CONFIG_IEEE80211R */
 
 #ifdef _MSC_VER
 #pragma pack(pop)

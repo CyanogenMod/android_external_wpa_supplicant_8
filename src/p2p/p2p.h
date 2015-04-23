@@ -9,7 +9,8 @@
 #ifndef P2P_H
 #define P2P_H
 
-#include "wps/wps_defs.h"
+#include "common/ieee802_11_defs.h"
+#include "wps/wps.h"
 
 /* P2P ASP Setup Capability */
 #define P2PS_SETUP_NONE 0
@@ -95,7 +96,7 @@ struct p2p_go_neg_results {
 	/**
 	 * ssid - SSID of the group
 	 */
-	u8 ssid[32];
+	u8 ssid[SSID_MAX_LEN];
 
 	/**
 	 * ssid_len - Length of SSID in octets
@@ -268,27 +269,27 @@ struct p2p_peer_info {
 	/**
 	 * device_name - Device Name (0..32 octets encoded in UTF-8)
 	 */
-	char device_name[33];
+	char device_name[WPS_DEV_NAME_MAX_LEN + 1];
 
 	/**
 	 * manufacturer - Manufacturer (0..64 octets encoded in UTF-8)
 	 */
-	char manufacturer[65];
+	char manufacturer[WPS_MANUFACTURER_MAX_LEN + 1];
 
 	/**
 	 * model_name - Model Name (0..32 octets encoded in UTF-8)
 	 */
-	char model_name[33];
+	char model_name[WPS_MODEL_NAME_MAX_LEN + 1];
 
 	/**
 	 * model_number - Model Number (0..32 octets encoded in UTF-8)
 	 */
-	char model_number[33];
+	char model_number[WPS_MODEL_NUMBER_MAX_LEN + 1];
 
 	/**
 	 * serial_number - Serial Number (0..32 octets encoded in UTF-8)
 	 */
-	char serial_number[33];
+	char serial_number[WPS_SERIAL_NUMBER_MAX_LEN + 1];
 
 	/**
 	 * level - Signal level
@@ -316,7 +317,7 @@ struct p2p_peer_info {
 	 * This list includes from 0 to 16 Secondary Device Types as indicated
 	 * by wps_sec_dev_type_list_len (8 * number of types).
 	 */
-	u8 wps_sec_dev_type_list[128];
+	u8 wps_sec_dev_type_list[WPS_SEC_DEV_TYPE_MAX_LEN];
 
 	/**
 	 * wps_sec_dev_type_list_len - Length of secondary device type list
@@ -495,7 +496,7 @@ struct p2p_config {
 	 * This data will be added to the end of the SSID after the
 	 * DIRECT-<random two octets> prefix.
 	 */
-	u8 ssid_postfix[32 - 9];
+	u8 ssid_postfix[SSID_MAX_LEN - 9];
 
 	/**
 	 * ssid_postfix_len - Length of the ssid_postfix data
@@ -1607,7 +1608,7 @@ struct p2p_group_config {
 	/**
 	 * ssid - Group SSID
 	 */
-	u8 ssid[32];
+	u8 ssid[SSID_MAX_LEN];
 
 	/**
 	 * ssid_len - Length of SSID
@@ -2214,7 +2215,7 @@ struct p2p_nfc_params {
 	size_t oob_dev_pw_len;
 	int go_freq;
 	u8 go_dev_addr[ETH_ALEN];
-	u8 go_ssid[32];
+	u8 go_ssid[SSID_MAX_LEN];
 	size_t go_ssid_len;
 };
 

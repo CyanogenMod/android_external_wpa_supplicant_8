@@ -71,7 +71,7 @@ struct p2p_device {
 	char country[3];
 	struct p2p_channels channels;
 	int oper_freq;
-	u8 oper_ssid[32];
+	u8 oper_ssid[SSID_MAX_LEN];
 	size_t oper_ssid_len;
 
 	/**
@@ -322,7 +322,7 @@ struct p2p_data {
 	/**
 	 * ssid - Selected SSID for GO Negotiation (if local end will be GO)
 	 */
-	u8 ssid[32];
+	u8 ssid[SSID_MAX_LEN];
 
 	/**
 	 * ssid_len - ssid length in octets
@@ -403,7 +403,7 @@ struct p2p_data {
 	enum p2p_invite_role inv_role;
 	u8 inv_bssid[ETH_ALEN];
 	int inv_bssid_set;
-	u8 inv_ssid[32];
+	u8 inv_ssid[SSID_MAX_LEN];
 	size_t inv_ssid_len;
 	u8 inv_sa[ETH_ALEN];
 	u8 inv_group_bssid[ETH_ALEN];
@@ -578,7 +578,7 @@ struct p2p_message {
 	const u8 *p2p_device_addr;
 	const u8 *pri_dev_type;
 	u8 num_sec_dev_types;
-	char device_name[33];
+	char device_name[WPS_DEV_NAME_MAX_LEN + 1];
 	u16 config_methods;
 
 	/* WPS IE */
