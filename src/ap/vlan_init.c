@@ -485,7 +485,8 @@ static void vlan_newlink(char *ifname, struct hostapd_data *hapd)
 	wpa_printf(MSG_DEBUG, "VLAN: vlan_newlink(%s)", ifname);
 
 	while (vlan) {
-		if (os_strcmp(ifname, vlan->ifname) == 0) {
+		if (os_strcmp(ifname, vlan->ifname) == 0 && !vlan->configured) {
+			vlan->configured = 1;
 
 			if (hapd->conf->vlan_bridge[0]) {
 				os_snprintf(br_name, sizeof(br_name), "%s%d",
@@ -651,6 +652,11 @@ vlan_read_ifnames(struct nlmsghdr *h, size_t len, int del,
 
 	if (!ifname[0])
 		return;
+	if (del && if_nametoindex(ifname)) {
+		 /* interface still exists, race condition ->
+		  * iface has just been recreated */
+		return;
+	}
 
 	wpa_printf(MSG_DEBUG,
 		   "VLAN: RTM_%sLINK: ifi_index=%d ifname=%s ifi_family=%d ifi_flags=0x%x (%s%s%s%s)",
@@ -953,7 +959,8 @@ int vlan_remove_dynamic(struct hostapd_data *hapd, int vlan_id)
 	if (vlan_id <= 0 || vlan_id > MAX_VLAN_ID)
 		return 1;
 
-	wpa_printf(MSG_DEBUG, "VLAN: %s(vlan_id=%d)", __func__, vlan_id);
+	wpa_printf(MSG_DEBUG, "VLAN: %s(ifname=%s vlan_id=%d)",
+		   __func__, hapd->conf->iface, vlan_id);
 
 	vlan = hapd->conf->vlan;
 	while (vlan) {
