@@ -2545,7 +2545,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			return 1;
 		}
 	} else if (os_strcmp(buf, "wps_rf_bands") == 0) {
-		if (os_strcmp(pos, "a") == 0)
+		if (os_strcmp(pos, "ad") == 0)
+			bss->wps_rf_bands = WPS_RF_60GHZ;
+		else if (os_strcmp(pos, "a") == 0)
 			bss->wps_rf_bands = WPS_RF_50GHZ;
 		else if (os_strcmp(pos, "g") == 0 ||
 			 os_strcmp(pos, "b") == 0)
@@ -3138,6 +3140,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		bss->disable_dgaf = atoi(pos);
 	} else if (os_strcmp(buf, "proxy_arp") == 0) {
 		bss->proxy_arp = atoi(pos);
+	} else if (os_strcmp(buf, "na_mcast_to_ucast") == 0) {
+		bss->na_mcast_to_ucast = atoi(pos);
 	} else if (os_strcmp(buf, "osen") == 0) {
 		bss->osen = atoi(pos);
 	} else if (os_strcmp(buf, "anqp_domain_id") == 0) {

@@ -55,11 +55,11 @@
 #include "wpas_kay.h"
 #include "mesh.h"
 
-const char *wpa_supplicant_version =
+const char *const wpa_supplicant_version =
 "wpa_supplicant v" VERSION_STR "\n"
 "Copyright (c) 2003-2015, Jouni Malinen <j@w1.fi> and contributors";
 
-const char *wpa_supplicant_license =
+const char *const wpa_supplicant_license =
 "This software may be distributed under the terms of the BSD license.\n"
 "See README for more details.\n"
 #ifdef EAP_TLS_OPENSSL
@@ -70,16 +70,16 @@ const char *wpa_supplicant_license =
 
 #ifndef CONFIG_NO_STDOUT_DEBUG
 /* Long text divided into parts in order to fit in C89 strings size limits. */
-const char *wpa_supplicant_full_license1 =
+const char *const wpa_supplicant_full_license1 =
 "";
-const char *wpa_supplicant_full_license2 =
+const char *const wpa_supplicant_full_license2 =
 "This software may be distributed under the terms of the BSD license.\n"
 "\n"
 "Redistribution and use in source and binary forms, with or without\n"
 "modification, are permitted provided that the following conditions are\n"
 "met:\n"
 "\n";
-const char *wpa_supplicant_full_license3 =
+const char *const wpa_supplicant_full_license3 =
 "1. Redistributions of source code must retain the above copyright\n"
 "   notice, this list of conditions and the following disclaimer.\n"
 "\n"
@@ -87,7 +87,7 @@ const char *wpa_supplicant_full_license3 =
 "   notice, this list of conditions and the following disclaimer in the\n"
 "   documentation and/or other materials provided with the distribution.\n"
 "\n";
-const char *wpa_supplicant_full_license4 =
+const char *const wpa_supplicant_full_license4 =
 "3. Neither the name(s) of the above-listed copyright holder(s) nor the\n"
 "   names of its contributors may be used to endorse or promote products\n"
 "   derived from this software without specific prior written permission.\n"
@@ -96,7 +96,7 @@ const char *wpa_supplicant_full_license4 =
 "\"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n"
 "LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n"
 "A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n";
-const char *wpa_supplicant_full_license5 =
+const char *const wpa_supplicant_full_license5 =
 "OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n"
 "SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n"
 "LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n"
@@ -3077,12 +3077,34 @@ void wpa_supplicant_rx_eapol(void *ctx, const u8 *src_addr,
 	    (wpa_s->current_ssid == NULL ||
 	     wpa_s->current_ssid->mode != IEEE80211_MODE_IBSS)) {
 		/* Timeout for completing IEEE 802.1X and WPA authentication */
-		wpa_supplicant_req_auth_timeout(
-			wpa_s,
-			(wpa_key_mgmt_wpa_ieee8021x(wpa_s->key_mgmt) ||
-			 wpa_s->key_mgmt == WPA_KEY_MGMT_IEEE8021X_NO_WPA ||
-			 wpa_s->key_mgmt == WPA_KEY_MGMT_WPS) ?
-			70 : 10, 0);
+		int timeout = 10;
+
+		if (wpa_key_mgmt_wpa_ieee8021x(wpa_s->key_mgmt) ||
+		    wpa_s->key_mgmt == WPA_KEY_MGMT_IEEE8021X_NO_WPA ||
+		    wpa_s->key_mgmt == WPA_KEY_MGMT_WPS) {
+			/* Use longer timeout for IEEE 802.1X/EAP */
+			timeout = 70;
+		}
+
+		if (wpa_s->current_ssid && wpa_s->current_bss &&
+		    (wpa_s->current_ssid->key_mgmt & WPA_KEY_MGMT_WPS) &&
+		    eap_is_wps_pin_enrollee(&wpa_s->current_ssid->eap)) {
+			/*
+			 * Use shorter timeout if going through WPS AP iteration
+			 * for PIN config method with an AP that does not
+			 * advertise Selected Registrar.
+			 */
+			struct wpabuf *wps_ie;
+
+			wps_ie = wpa_bss_get_vendor_ie_multi(
+				wpa_s->current_bss, WPS_IE_VENDOR_TYPE);
+			if (wps_ie &&
+			    !wps_is_addr_authorized(wps_ie, wpa_s->own_addr, 1))
+				timeout = 10;
+			wpabuf_free(wps_ie);
+		}
+
+		wpa_supplicant_req_auth_timeout(wpa_s, timeout, 0);
 	}
 	wpa_s->eapol_received++;
 
@@ -4386,6 +4408,7 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 
 #ifdef CONFIG_P2P
 	if (wpa_s->global->p2p == NULL &&
+	    !wpa_s->global->p2p_disabled && !wpa_s->conf->p2p_disabled &&
 	    (wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
 	    wpas_p2p_add_p2pdev_interface(wpa_s, iface->conf_p2p_dev) < 0) {
 		wpa_printf(MSG_INFO,
