@@ -1774,11 +1774,11 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 				mnc_len = 3;
 			}
 
-			if (mnc_len == 2) {
+			if ((mnc_len == 2) && (imsi_identity != NULL)) {
 				imsi_identity[idx + 9]  = '0';
 				imsi_identity[idx + 10] = imsi[3];
 				imsi_identity[idx + 11] = imsi[4];
-			} else if (mnc_len == 3) {
+			} else if ((mnc_len == 3) && (imsi_identity != NULL)) {
 				imsi_identity[idx + 9]  = imsi[3];
 				imsi_identity[idx + 10] = imsi[4];
 				imsi_identity[idx + 11] = imsi[5];
