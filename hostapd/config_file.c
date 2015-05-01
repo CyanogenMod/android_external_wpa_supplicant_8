@@ -1723,7 +1723,7 @@ static int hs20_parse_osu_ssid(struct hostapd_bss_config *bss,
 	char *str;
 
 	str = wpa_config_parse_string(pos, &slen);
-	if (str == NULL || slen < 1 || slen > HOSTAPD_MAX_SSID_LEN) {
+	if (str == NULL || slen < 1 || slen > SSID_MAX_LEN) {
 		wpa_printf(MSG_ERROR, "Line %d: Invalid SSID '%s'", line, pos);
 		os_free(str);
 		return -1;
@@ -1970,7 +1970,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			   line);
 	} else if (os_strcmp(buf, "ssid") == 0) {
 		bss->ssid.ssid_len = os_strlen(pos);
-		if (bss->ssid.ssid_len > HOSTAPD_MAX_SSID_LEN ||
+		if (bss->ssid.ssid_len > SSID_MAX_LEN ||
 		    bss->ssid.ssid_len < 1) {
 			wpa_printf(MSG_ERROR, "Line %d: invalid SSID '%s'",
 				   line, pos);
@@ -1981,7 +1981,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 	} else if (os_strcmp(buf, "ssid2") == 0) {
 		size_t slen;
 		char *str = wpa_config_parse_string(pos, &slen);
-		if (str == NULL || slen < 1 || slen > HOSTAPD_MAX_SSID_LEN) {
+		if (str == NULL || slen < 1 || slen > SSID_MAX_LEN) {
 			wpa_printf(MSG_ERROR, "Line %d: invalid SSID '%s'",
 				   line, pos);
 			os_free(str);
@@ -2545,7 +2545,9 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			return 1;
 		}
 	} else if (os_strcmp(buf, "wps_rf_bands") == 0) {
-		if (os_strcmp(pos, "a") == 0)
+		if (os_strcmp(pos, "ad") == 0)
+			bss->wps_rf_bands = WPS_RF_60GHZ;
+		else if (os_strcmp(pos, "a") == 0)
 			bss->wps_rf_bands = WPS_RF_50GHZ;
 		else if (os_strcmp(pos, "g") == 0 ||
 			 os_strcmp(pos, "b") == 0)
@@ -2837,7 +2839,7 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		os_free(bss->wps_pin_requests);
 		bss->wps_pin_requests = os_strdup(pos);
 	} else if (os_strcmp(buf, "device_name") == 0) {
-		if (os_strlen(pos) > 32) {
+		if (os_strlen(pos) > WPS_DEV_NAME_MAX_LEN) {
 			wpa_printf(MSG_ERROR, "Line %d: Too long "
 				   "device_name", line);
 			return 1;
@@ -3138,6 +3140,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		bss->disable_dgaf = atoi(pos);
 	} else if (os_strcmp(buf, "proxy_arp") == 0) {
 		bss->proxy_arp = atoi(pos);
+	} else if (os_strcmp(buf, "na_mcast_to_ucast") == 0) {
+		bss->na_mcast_to_ucast = atoi(pos);
 	} else if (os_strcmp(buf, "osen") == 0) {
 		bss->osen = atoi(pos);
 	} else if (os_strcmp(buf, "anqp_domain_id") == 0) {

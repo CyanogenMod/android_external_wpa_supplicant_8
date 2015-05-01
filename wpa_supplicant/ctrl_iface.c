@@ -153,7 +153,8 @@ static int set_disallow_aps(struct wpa_supplicant *wpa_s, char *val)
 			}
 			ssid = ns;
 
-			if ((end - pos) & 0x01 || end - pos > 2 * 32 ||
+			if ((end - pos) & 0x01 ||
+			    end - pos > 2 * SSID_MAX_LEN ||
 			    hexstr2bin(pos, ssid[ssid_count].ssid,
 				       (end - pos) / 2) < 0) {
 				os_free(ssid);
@@ -1728,7 +1729,7 @@ static int wpa_supplicant_ctrl_iface_status(struct wpa_supplicant *wpa_s,
 		if (ssid) {
 			u8 *_ssid = ssid->ssid;
 			size_t ssid_len = ssid->ssid_len;
-			u8 ssid_buf[MAX_SSID_LEN];
+			u8 ssid_buf[SSID_MAX_LEN];
 			if (ssid_len == 0) {
 				int _res = wpa_drv_get_ssid(wpa_s, ssid_buf);
 				if (_res < 0)
@@ -7706,7 +7707,7 @@ static int wpas_ctrl_iface_send_neigbor_rep(struct wpa_supplicant *wpa_s,
 
 	if (os_strncmp(cmd, " ssid=", 6) == 0) {
 		ssid.ssid_len = os_strlen(cmd + 6);
-		if (ssid.ssid_len > 32)
+		if (ssid.ssid_len > SSID_MAX_LEN)
 			return -1;
 		ssid.ssid = (u8 *) (cmd + 6);
 		ssid_p = &ssid;
@@ -8685,7 +8686,7 @@ static int wpa_supplicant_global_iface_list(struct wpa_global *global,
 	char *pos, *end;
 
 	for (i = 0; wpa_drivers[i]; i++) {
-		struct wpa_driver_ops *drv = wpa_drivers[i];
+		const struct wpa_driver_ops *drv = wpa_drivers[i];
 		if (drv->get_interfaces == NULL)
 			continue;
 		tmp = drv->get_interfaces(global->drv_priv[i]);

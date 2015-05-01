@@ -68,6 +68,7 @@ static BIO * BIO_from_keystore(const char *key)
 	free(value);
 	return bio;
 }
+
 #endif /* ANDROID */
 
 static int tls_openssl_ref_count = 0;
@@ -88,7 +89,7 @@ struct tls_connection {
 	SSL_CTX *ssl_ctx;
 	SSL *ssl;
 	BIO *ssl_in, *ssl_out;
-#ifndef OPENSSL_NO_ENGINE
+#if defined(ANDROID) || !defined(OPENSSL_NO_ENGINE)
 	ENGINE *engine;        /* functional reference to the engine */
 	EVP_PKEY *private_key; /* the private key if using engine */
 #endif /* OPENSSL_NO_ENGINE */
@@ -884,11 +885,52 @@ void tls_deinit(void *ssl_ctx)
 	}
 }
 
+#ifdef ANDROID
+/* EVP_PKEY_from_keystore comes from system/security/keystore-engine. */
+EVP_PKEY* EVP_PKEY_from_keystore(const char* key_id);
+#endif
+
+#ifndef OPENSSL_NO_ENGINE
+
+/* Cryptoki return values */
+#define CKR_PIN_INCORRECT 0x000000a0
+#define CKR_PIN_INVALID 0x000000a1
+#define CKR_PIN_LEN_RANGE 0x000000a2
+
+/* libp11 */
+#define ERR_LIB_PKCS11	ERR_LIB_USER
+
+static int tls_is_pin_error(unsigned int err)
+{
+	return ERR_GET_LIB(err) == ERR_LIB_PKCS11 &&
+		(ERR_GET_REASON(err) == CKR_PIN_INCORRECT ||
+		 ERR_GET_REASON(err) == CKR_PIN_INVALID ||
+		 ERR_GET_REASON(err) == CKR_PIN_LEN_RANGE);
+}
+
+#endif /* OPENSSL_NO_ENGINE */
+
 
 static int tls_engine_init(struct tls_connection *conn, const char *engine_id,
 			   const char *pin, const char *key_id,
 			   const char *cert_id, const char *ca_cert_id)
 {
+#if defined(ANDROID) && defined(OPENSSL_IS_BORINGSSL)
+#if !defined(OPENSSL_NO_ENGINE)
+#error "This code depends on OPENSSL_NO_ENGINE being defined by BoringSSL."
+#endif
+
+	conn->engine = NULL;
+	conn->private_key = EVP_PKEY_from_keystore(key_id);
+	if (!conn->private_key) {
+		wpa_printf(MSG_ERROR,
+			   "ENGINE: cannot load private key with id '%s' [%s]",
+			   key_id,
+			   ERR_error_string(ERR_get_error(), NULL));
+		return TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
+	}
+#endif
+
 #ifndef OPENSSL_NO_ENGINE
 	int ret = -1;
 	if (engine_id == NULL) {
@@ -936,11 +978,16 @@ static int tls_engine_init(struct tls_connection *conn, const char *engine_id,
 							    key_id, NULL,
 							    &key_cb);
 		if (!conn->private_key) {
+			unsigned long err = ERR_get_error();
+
 			wpa_printf(MSG_ERROR,
 				   "ENGINE: cannot load private key with id '%s' [%s]",
 				   key_id,
-				   ERR_error_string(ERR_get_error(), NULL));
-			ret = TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
+				   ERR_error_string(err, NULL));
+			if (tls_is_pin_error(err))
+				ret = TLS_SET_PARAMS_ENGINE_PRV_BAD_PIN;
+			else
+				ret = TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
 			goto err;
 		}
 	}
@@ -981,14 +1028,16 @@ err:
 
 static void tls_engine_deinit(struct tls_connection *conn)
 {
-#ifndef OPENSSL_NO_ENGINE
+#if defined(ANDROID) || !defined(OPENSSL_NO_ENGINE)
 	wpa_printf(MSG_DEBUG, "ENGINE: engine deinit");
 	if (conn->private_key) {
 		EVP_PKEY_free(conn->private_key);
 		conn->private_key = NULL;
 	}
 	if (conn->engine) {
+#if !defined(OPENSSL_IS_BORINGSSL)
 		ENGINE_finish(conn->engine);
+#endif
 		conn->engine = NULL;
 	}
 #endif /* OPENSSL_NO_ENGINE */
@@ -2184,9 +2233,13 @@ static int tls_engine_get_cert(struct tls_connection *conn,
 
 	if (!ENGINE_ctrl_cmd(conn->engine, "LOAD_CERT_CTRL",
 			     0, &params, NULL, 1)) {
+		unsigned long err = ERR_get_error();
+
 		wpa_printf(MSG_ERROR, "ENGINE: cannot load client cert with id"
 			   " '%s' [%s]", cert_id,
-			   ERR_error_string(ERR_get_error(), NULL));
+			   ERR_error_string(err, NULL));
+		if (tls_is_pin_error(err))
+			return TLS_SET_PARAMS_ENGINE_PRV_BAD_PIN;
 		return TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
 	}
 	if (!params.cert) {
@@ -2278,7 +2331,7 @@ static int tls_connection_engine_ca_cert(void *_ssl_ctx,
 
 static int tls_connection_engine_private_key(struct tls_connection *conn)
 {
-#ifndef OPENSSL_NO_ENGINE
+#if defined(ANDROID) || !defined(OPENSSL_NO_ENGINE)
 	if (SSL_use_PrivateKey(conn->ssl, conn->private_key) != 1) {
 		tls_show_errors(MSG_ERROR, __func__,
 				"ENGINE: cannot use private key for TLS");
@@ -2703,8 +2756,7 @@ static int openssl_tls_prf(void *tls_ctx, struct tls_connection *conn,
 		return -1;
 	ssl = conn->ssl;
 	if (ssl == NULL || ssl->s3 == NULL || ssl->session == NULL ||
-	    ssl->s3->client_random == NULL || ssl->s3->server_random == NULL ||
-	    ssl->session->master_key == NULL)
+	    ssl->session->master_key_length <= 0)
 		return -1;
 
 	if (skip_keyblock) {

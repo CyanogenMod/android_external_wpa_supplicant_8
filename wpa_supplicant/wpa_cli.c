@@ -26,16 +26,16 @@
 #endif /* ANDROID */
 
 
-static const char *wpa_cli_version =
+static const char *const wpa_cli_version =
 "wpa_cli v" VERSION_STR "\n"
 "Copyright (c) 2004-2015, Jouni Malinen <j@w1.fi> and contributors";
 
 
-static const char *wpa_cli_license =
+static const char *const wpa_cli_license =
 "This software may be distributed under the terms of the BSD license.\n"
 "See README for more details.\n";
 
-static const char *wpa_cli_full_license =
+static const char *const wpa_cli_full_license =
 "This software may be distributed under the terms of the BSD license.\n"
 "\n"
 "Redistribution and use in source and binary forms, with or without\n"
@@ -967,12 +967,12 @@ static int wpa_cli_cmd_wps_reg(struct wpa_ctrl *ctrl, int argc, char *argv[])
 		res = os_snprintf(cmd, sizeof(cmd), "WPS_REG %s %s",
 				  argv[0], argv[1]);
 	else if (argc == 5 || argc == 6) {
-		char ssid_hex[2 * 32 + 1];
+		char ssid_hex[2 * SSID_MAX_LEN + 1];
 		char key_hex[2 * 64 + 1];
 		int i;
 
 		ssid_hex[0] = '\0';
-		for (i = 0; i < 32; i++) {
+		for (i = 0; i < SSID_MAX_LEN; i++) {
 			if (argv[2][i] == '\0')
 				break;
 			os_snprintf(&ssid_hex[i * 2], 3, "%02x", argv[2][i]);
@@ -1096,12 +1096,12 @@ static int wpa_cli_cmd_wps_er_config(struct wpa_ctrl *ctrl, int argc,
 	int res;
 
 	if (argc == 5 || argc == 6) {
-		char ssid_hex[2 * 32 + 1];
+		char ssid_hex[2 * SSID_MAX_LEN + 1];
 		char key_hex[2 * 64 + 1];
 		int i;
 
 		ssid_hex[0] = '\0';
-		for (i = 0; i < 32; i++) {
+		for (i = 0; i < SSID_MAX_LEN; i++) {
 			if (argv[2][i] == '\0')
 				break;
 			os_snprintf(&ssid_hex[i * 2], 3, "%02x", argv[2][i]);
@@ -2805,7 +2805,7 @@ struct wpa_cli_cmd {
 	const char *usage;
 };
 
-static struct wpa_cli_cmd wpa_cli_commands[] = {
+static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "status", wpa_cli_cmd_status, NULL,
 	  cli_cmd_flag_none,
 	  "[verbose] = get current WPA/EAPOL/EAP status" },
@@ -3350,7 +3350,7 @@ static struct wpa_cli_cmd wpa_cli_commands[] = {
 /*
  * Prints command usage, lines are padded with the specified string.
  */
-static void print_cmd_help(struct wpa_cli_cmd *cmd, const char *pad)
+static void print_cmd_help(const struct wpa_cli_cmd *cmd, const char *pad)
 {
 	char c;
 	size_t n;
@@ -3488,7 +3488,7 @@ static char ** wpa_cli_edit_completion_cb(void *ctx, const char *str, int pos)
 
 static int wpa_request(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
-	struct wpa_cli_cmd *cmd, *match = NULL;
+	const struct wpa_cli_cmd *cmd, *match = NULL;
 	int count;
 	int ret = 0;
 

@@ -1,6 +1,6 @@
 /*
  * IEEE 802.11 Common routines
- * Copyright (c) 2002-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2002-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -10,6 +10,7 @@
 
 #include "common.h"
 #include "defs.h"
+#include "wpa_common.h"
 #include "ieee802_11_defs.h"
 #include "ieee802_11_common.h"
 
@@ -196,6 +197,12 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 
 		switch (id) {
 		case WLAN_EID_SSID:
+			if (elen > SSID_MAX_LEN) {
+				wpa_printf(MSG_DEBUG,
+					   "Ignored too long SSID element (elen=%u)",
+					   elen);
+				break;
+			}
 			elems->ssid = pos;
 			elems->ssid_len = elen;
 			break;
@@ -204,8 +211,9 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->supp_rates_len = elen;
 			break;
 		case WLAN_EID_DS_PARAMS:
+			if (elen < 1)
+				break;
 			elems->ds_params = pos;
-			elems->ds_params_len = elen;
 			break;
 		case WLAN_EID_CF_PARAMS:
 		case WLAN_EID_TIM:
@@ -215,8 +223,9 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->challenge_len = elen;
 			break;
 		case WLAN_EID_ERP_INFO:
+			if (elen < 1)
+				break;
 			elems->erp_info = pos;
-			elems->erp_info_len = elen;
 			break;
 		case WLAN_EID_EXT_SUPP_RATES:
 			elems->ext_supp_rates = pos;
@@ -239,24 +248,31 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->supp_channels_len = elen;
 			break;
 		case WLAN_EID_MOBILITY_DOMAIN:
+			if (elen < sizeof(struct rsn_mdie))
+				break;
 			elems->mdie = pos;
 			elems->mdie_len = elen;
 			break;
 		case WLAN_EID_FAST_BSS_TRANSITION:
+			if (elen < sizeof(struct rsn_ftie))
+				break;
 			elems->ftie = pos;
 			elems->ftie_len = elen;
 			break;
 		case WLAN_EID_TIMEOUT_INTERVAL:
+			if (elen != 5)
+				break;
 			elems->timeout_int = pos;
-			elems->timeout_int_len = elen;
 			break;
 		case WLAN_EID_HT_CAP:
+			if (elen < sizeof(struct ieee80211_ht_capabilities))
+				break;
 			elems->ht_capabilities = pos;
-			elems->ht_capabilities_len = elen;
 			break;
 		case WLAN_EID_HT_OPERATION:
+			if (elen < sizeof(struct ieee80211_ht_operation))
+				break;
 			elems->ht_operation = pos;
-			elems->ht_operation_len = elen;
 			break;
 		case WLAN_EID_MESH_CONFIG:
 			elems->mesh_config = pos;
@@ -271,12 +287,14 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->peer_mgmt_len = elen;
 			break;
 		case WLAN_EID_VHT_CAP:
+			if (elen < sizeof(struct ieee80211_vht_capabilities))
+				break;
 			elems->vht_capabilities = pos;
-			elems->vht_capabilities_len = elen;
 			break;
 		case WLAN_EID_VHT_OPERATION:
+			if (elen < sizeof(struct ieee80211_vht_operation))
+				break;
 			elems->vht_operation = pos;
-			elems->vht_operation_len = elen;
 			break;
 		case WLAN_EID_VHT_OPERATING_MODE_NOTIFICATION:
 			if (elen != 1)
@@ -546,27 +564,27 @@ enum hostapd_hw_mode ieee80211_freq_to_chan(int freq, u8 *channel)
 }
 
 
-static const char *us_op_class_cc[] = {
+static const char *const us_op_class_cc[] = {
 	"US", "CA", NULL
 };
 
-static const char *eu_op_class_cc[] = {
+static const char *const eu_op_class_cc[] = {
 	"AL", "AM", "AT", "AZ", "BA", "BE", "BG", "BY", "CH", "CY", "CZ", "DE",
 	"DK", "EE", "EL", "ES", "FI", "FR", "GE", "HR", "HU", "IE", "IS", "IT",
 	"LI", "LT", "LU", "LV", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT",
 	"RO", "RS", "RU", "SE", "SI", "SK", "TR", "UA", "UK", NULL
 };
 
-static const char *jp_op_class_cc[] = {
+static const char *const jp_op_class_cc[] = {
 	"JP", NULL
 };
 
-static const char *cn_op_class_cc[] = {
+static const char *const cn_op_class_cc[] = {
 	"CN", "CA", NULL
 };
 
 
-static int country_match(const char *cc[], const char *country)
+static int country_match(const char *const cc[], const char *const country)
 {
 	int i;
 

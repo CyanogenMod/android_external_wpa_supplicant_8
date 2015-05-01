@@ -39,6 +39,14 @@
 #define WPS_PIN_SCAN_IGNORE_SEL_REG 3
 #endif /* WPS_PIN_SCAN_IGNORE_SEL_REG */
 
+/*
+ * The minimum time in seconds before trying to associate to a WPS PIN AP that
+ * does not have Selected Registrar TRUE.
+ */
+#ifndef WPS_PIN_TIME_IGNORE_SEL_REG
+#define WPS_PIN_TIME_IGNORE_SEL_REG 5
+#endif /* WPS_PIN_TIME_IGNORE_SEL_REG */
+
 static void wpas_wps_timeout(void *eloop_ctx, void *timeout_ctx);
 static void wpas_clear_wps(struct wpa_supplicant *wpa_s);
 
@@ -880,7 +888,8 @@ static int wpa_supplicant_wps_rf_band(void *ctx)
 	if (!wpa_s->current_ssid || !wpa_s->assoc_freq)
 		return 0;
 
-	return (wpa_s->assoc_freq > 2484) ? WPS_RF_50GHZ : WPS_RF_24GHZ;
+	return (wpa_s->assoc_freq > 50000) ? WPS_RF_60GHZ :
+		(wpa_s->assoc_freq > 2484) ? WPS_RF_50GHZ : WPS_RF_24GHZ;
 }
 
 
@@ -1216,6 +1225,7 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 int wpas_wps_start_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		       const char *pin, int p2p_group, u16 dev_pw_id)
 {
+	os_get_reltime(&wpa_s->wps_pin_start_time);
 	return wpas_wps_start_dev_pw(wpa_s, NULL, bssid, pin, p2p_group,
 				     dev_pw_id, NULL, NULL, 0, 0);
 }
@@ -1487,6 +1497,8 @@ int wpas_wps_init(struct wpa_supplicant *wpa_s)
 				wps->dev.rf_bands |= WPS_RF_24GHZ;
 			else if (modes[m].mode == HOSTAPD_MODE_IEEE80211A)
 				wps->dev.rf_bands |= WPS_RF_50GHZ;
+			else if (modes[m].mode == HOSTAPD_MODE_IEEE80211AD)
+				wps->dev.rf_bands |= WPS_RF_60GHZ;
 		}
 	}
 	if (wps->dev.rf_bands == 0) {
@@ -1609,9 +1621,15 @@ int wpas_wps_ssid_bss_match(struct wpa_supplicant *wpa_s,
 		 * external Registrar.
 		 */
 		if (!wps_is_addr_authorized(wps_ie, wpa_s->own_addr, 1)) {
-			if (wpa_s->scan_runs < WPS_PIN_SCAN_IGNORE_SEL_REG) {
-				wpa_printf(MSG_DEBUG, "   skip - WPS AP "
-					   "without active PIN Registrar");
+			struct os_reltime age;
+
+			os_reltime_age(&wpa_s->wps_pin_start_time, &age);
+
+			if (wpa_s->scan_runs < WPS_PIN_SCAN_IGNORE_SEL_REG ||
+			    age.sec < WPS_PIN_TIME_IGNORE_SEL_REG) {
+				wpa_printf(MSG_DEBUG,
+					   "   skip - WPS AP without active PIN Registrar (scan_runs=%d age=%d)",
+					   wpa_s->scan_runs, (int) age.sec);
 				wpabuf_free(wps_ie);
 				return 0;
 			}
@@ -1910,7 +1928,7 @@ static int wpas_wps_network_to_cred(struct wpa_ssid *ssid,
 				    struct wps_credential *cred)
 {
 	os_memset(cred, 0, sizeof(*cred));
-	if (ssid->ssid_len > 32)
+	if (ssid->ssid_len > SSID_MAX_LEN)
 		return -1;
 	os_memcpy(cred->ssid, ssid->ssid, ssid->ssid_len);
 	cred->ssid_len = ssid->ssid_len;
@@ -2582,6 +2600,10 @@ static int wpas_wps_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 			 (attr.rf_bands == NULL ||
 			  *attr.rf_bands & WPS_RF_50GHZ))
 			freq = 5000 + 5 * chan;
+		else if (chan >= 1 && chan <= 4 &&
+			 (attr.rf_bands == NULL ||
+			  *attr.rf_bands & WPS_RF_60GHZ))
+			freq = 56160 + 2160 * chan;
 
 		if (freq) {
 			wpa_printf(MSG_DEBUG,

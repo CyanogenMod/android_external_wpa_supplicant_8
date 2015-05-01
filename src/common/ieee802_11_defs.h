@@ -10,6 +10,8 @@
 #ifndef IEEE802_11_DEFS_H
 #define IEEE802_11_DEFS_H
 
+#include <utils/common.h>
+
 /* IEEE 802.11 defines */
 
 #define WLAN_FC_PVER		0x0003
@@ -1353,5 +1355,7 @@ struct rrm_link_measurement_report {
 	u8 rsni;
 	u8 variable[0];
 } STRUCT_PACKED;
+
+#define SSID_MAX_LEN 32
 
 #endif /* IEEE802_11_DEFS_H */

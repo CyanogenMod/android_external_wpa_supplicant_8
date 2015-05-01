@@ -9,6 +9,13 @@
  */
 
 #include "utils/includes.h"
+#ifdef CONFIG_FULL_DYNAMIC_VLAN
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <linux/sockios.h>
+#include <linux/if_vlan.h>
+#include <linux/if_bridge.h>
+#endif /* CONFIG_FULL_DYNAMIC_VLAN */
 
 #include "utils/common.h"
 #include "hostapd.h"
@@ -19,12 +26,6 @@
 
 
 #ifdef CONFIG_FULL_DYNAMIC_VLAN
-
-#include <net/if.h>
-#include <sys/ioctl.h>
-#include <linux/sockios.h>
-#include <linux/if_vlan.h>
-#include <linux/if_bridge.h>
 
 #include "drivers/priv_netlink.h"
 #include "utils/eloop.h"
@@ -784,8 +785,7 @@ static void full_dynamic_vlan_deinit(struct full_dynamic_vlan *priv)
 #endif /* CONFIG_FULL_DYNAMIC_VLAN */
 
 
-int vlan_setup_encryption_dyn(struct hostapd_data *hapd,
-			      struct hostapd_ssid *mssid, const char *dyn_vlan)
+int vlan_setup_encryption_dyn(struct hostapd_data *hapd, const char *dyn_vlan)
 {
         int i;
 
@@ -795,10 +795,11 @@ int vlan_setup_encryption_dyn(struct hostapd_data *hapd,
 	/* Static WEP keys are set here; IEEE 802.1X and WPA uses their own
 	 * functions for setting up dynamic broadcast keys. */
 	for (i = 0; i < 4; i++) {
-		if (mssid->wep.key[i] &&
+		if (hapd->conf->ssid.wep.key[i] &&
 		    hostapd_drv_set_key(dyn_vlan, hapd, WPA_ALG_WEP, NULL, i,
-					i == mssid->wep.idx, NULL, 0,
-					mssid->wep.key[i], mssid->wep.len[i]))
+					i == hapd->conf->ssid.wep.idx, NULL, 0,
+					hapd->conf->ssid.wep.key[i],
+					hapd->conf->ssid.wep.len[i]))
 		{
 			wpa_printf(MSG_ERROR, "VLAN: Could not set WEP "
 				   "encryption for dynamic VLAN");
