@@ -675,8 +675,23 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_AP
 	u8 *_p2p_dev_addr = NULL;
 #endif /* CONFIG_AP */
+	char *prio = NULL;
+	int priority = 0;
 
-	if (cmd == NULL || os_strcmp(cmd, "any") == 0) {
+	if (cmd) {
+		prio = os_strstr(cmd, "prio=");
+		if (prio) {
+			priority = atoi(prio + 5);
+			wpa_printf(MSG_INFO, "WPS: priority is %d", priority);
+		}
+	}
+
+	/*
+	 * Command is NULL or starts with either "any" or "prio=",
+	 * hence no bssid specified
+	 */
+	if (cmd == NULL || os_strcmp(cmd, "any")
+	   || os_strncmp(cmd, "prio=", 5) == 0) {
 		_bssid = NULL;
 #ifdef CONFIG_P2P
 	} else if (os_strncmp(cmd, "p2p_dev_addr=", 13) == 0) {
@@ -699,7 +714,7 @@ static int wpa_supplicant_ctrl_iface_wps_pbc(struct wpa_supplicant *wpa_s,
 		return wpa_supplicant_ap_wps_pbc(wpa_s, _bssid, _p2p_dev_addr);
 #endif /* CONFIG_AP */
 
-	return wpas_wps_start_pbc(wpa_s, _bssid, 0);
+	return wpas_wps_start_pbc(wpa_s, _bssid, 0, priority);
 }
 
 
@@ -708,8 +723,16 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 					     size_t buflen)
 {
 	u8 bssid[ETH_ALEN], *_bssid = bssid;
-	char *pin;
-	int ret;
+	char *pin, *prio;
+	int ret, priority = 0;
+
+	prio = strstr(cmd, " prio=");
+	if (prio) {
+		*prio = '\0';
+		prio += 6;
+		priority = atoi(prio);
+		wpa_printf(MSG_INFO, "WPS: priority is %d", priority);
+	}
 
 	pin = os_strchr(cmd, ' ');
 	if (pin)
@@ -746,7 +769,7 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 
 	if (pin) {
 		ret = wpas_wps_start_pin(wpa_s, _bssid, pin, 0,
-					 DEV_PW_DEFAULT);
+					 DEV_PW_DEFAULT, priority);
 		if (ret < 0)
 			return -1;
 		ret = os_snprintf(buf, buflen, "%s", pin);
@@ -755,7 +778,8 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 		return ret;
 	}
 
-	ret = wpas_wps_start_pin(wpa_s, _bssid, NULL, 0, DEV_PW_DEFAULT);
+	ret = wpas_wps_start_pin(wpa_s, _bssid, NULL, 0, DEV_PW_DEFAULT,
+				 priority);
 	if (ret < 0)
 		return -1;
 
@@ -820,13 +844,28 @@ static int wpa_supplicant_ctrl_iface_wps_nfc(struct wpa_supplicant *wpa_s,
 {
 	u8 bssid[ETH_ALEN], *_bssid = bssid;
 
-	if (cmd == NULL || cmd[0] == '\0')
+	char *prio = NULL;
+	int priority = 0;
+
+	if (cmd) {
+		prio = os_strstr(cmd, "prio=");
+		if (prio) {
+			priority = atoi(prio + 5);
+			wpa_printf(MSG_INFO, "WPS: priority is %d", priority);
+		}
+	}
+
+	/*
+	 * Command is NULL or starts with either "any" or "prio=",
+	 * hence no bssid specified
+	 */
+	if (cmd == NULL || cmd[0] == '\0' || os_strncmp(cmd, "prio=", 5) == 0)
 		_bssid = NULL;
 	else if (hwaddr_aton(cmd, bssid))
 		return -1;
 
 	return wpas_wps_start_nfc(wpa_s, NULL, _bssid, NULL, 0, 0, NULL, NULL,
-				  0, 0);
+				  0, 0, priority);
 }
 
 

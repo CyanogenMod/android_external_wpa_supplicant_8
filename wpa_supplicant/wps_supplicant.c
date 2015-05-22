@@ -913,6 +913,7 @@ static void wpas_clear_wps(struct wpa_supplicant *wpa_s)
 			if (ssid == wpa_s->current_ssid) {
 				wpa_supplicant_deauthenticate(
 					wpa_s, WLAN_REASON_DEAUTH_LEAVING);
+				ssid->priority = 0;
 			}
 			id = ssid->id;
 			remove_ssid = ssid;
@@ -945,7 +946,7 @@ static void wpas_wps_timeout(void *eloop_ctx, void *timeout_ctx)
 
 static struct wpa_ssid * wpas_wps_add_network(struct wpa_supplicant *wpa_s,
 					      int registrar, const u8 *dev_addr,
-					      const u8 *bssid)
+					      const u8 *bssid, const int priority)
 {
 	struct wpa_ssid *ssid;
 
@@ -955,6 +956,7 @@ static struct wpa_ssid * wpas_wps_add_network(struct wpa_supplicant *wpa_s,
 	wpas_notify_network_added(wpa_s, ssid);
 	wpa_config_set_network_defaults(ssid);
 	ssid->temporary = 1;
+	ssid->priority = priority;
 	if (wpa_config_set(ssid, "key_mgmt", "WPS", 0) < 0 ||
 	    wpa_config_set(ssid, "eap", "WSC", 0) < 0 ||
 	    wpa_config_set(ssid, "identity", registrar ?
@@ -1086,11 +1088,11 @@ static void wpas_wps_reassoc(struct wpa_supplicant *wpa_s,
 
 
 int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
-		       int p2p_group)
+		       int p2p_group, const int priority)
 {
 	struct wpa_ssid *ssid;
 	wpas_clear_wps(wpa_s);
-	ssid = wpas_wps_add_network(wpa_s, 0, NULL, bssid);
+	ssid = wpas_wps_add_network(wpa_s, 0, NULL, bssid, priority);
 	if (ssid == NULL)
 		return -1;
 	ssid->temporary = 1;
@@ -1122,7 +1124,8 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 				 const u8 *dev_addr, const u8 *bssid,
 				 const char *pin, int p2p_group, u16 dev_pw_id,
 				 const u8 *peer_pubkey_hash,
-				 const u8 *ssid_val, size_t ssid_len, int freq)
+				 const u8 *ssid_val, size_t ssid_len, int freq,
+				 const int priority)
 {
 	struct wpa_ssid *ssid;
 	char val[128 + 2 * WPS_OOB_PUBKEY_HASH_LEN];
@@ -1132,7 +1135,7 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 	wpas_clear_wps(wpa_s);
 	if (bssid && is_zero_ether_addr(bssid))
 		bssid = NULL;
-	ssid = wpas_wps_add_network(wpa_s, 0, dev_addr, bssid);
+	ssid = wpas_wps_add_network(wpa_s, 0, dev_addr, bssid, priority);
 	if (ssid == NULL) {
 		wpa_printf(MSG_DEBUG, "WPS: Could not add network");
 		return -1;
@@ -1192,10 +1195,11 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 
 
 int wpas_wps_start_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
-		       const char *pin, int p2p_group, u16 dev_pw_id)
+		       const char *pin, int p2p_group, u16 dev_pw_id,
+		       const int priority)
 {
 	return wpas_wps_start_dev_pw(wpa_s, NULL, bssid, pin, p2p_group,
-				     dev_pw_id, NULL, NULL, 0, 0);
+				     dev_pw_id, NULL, NULL, 0, 0, priority);
 }
 
 
@@ -1245,7 +1249,7 @@ int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 	if (!pin)
 		return -1;
 	wpas_clear_wps(wpa_s);
-	ssid = wpas_wps_add_network(wpa_s, 1, NULL, bssid);
+	ssid = wpas_wps_add_network(wpa_s, 1, NULL, bssid, 0);
 	if (ssid == NULL)
 		return -1;
 	ssid->temporary = 1;
@@ -2176,7 +2180,8 @@ int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *go_dev_addr,
 		       const u8 *bssid,
 		       const struct wpabuf *dev_pw, u16 dev_pw_id,
 		       int p2p_group, const u8 *peer_pubkey_hash,
-		       const u8 *ssid, size_t ssid_len, int freq)
+		       const u8 *ssid, size_t ssid_len, int freq,
+		       const int priority)
 {
 	struct wps_context *wps = wpa_s->wps;
 	char pw[32 * 2 + 1];
@@ -2231,7 +2236,7 @@ int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *go_dev_addr,
 	return wpas_wps_start_dev_pw(wpa_s, go_dev_addr, bssid,
 				     dev_pw ? pw : NULL,
 				     p2p_group, dev_pw_id, peer_pubkey_hash,
-				     ssid, ssid_len, freq);
+				     ssid, ssid_len, freq, priority);
 }
 
 
@@ -2569,7 +2574,7 @@ static int wpas_wps_nfc_rx_handover_sel(struct wpa_supplicant *wpa_s,
 
 	ret = wpas_wps_start_nfc(wpa_s, NULL, bssid, NULL, dev_pw_id, 0,
 				 attr.oob_dev_password,
-				 attr.ssid, attr.ssid_len, freq);
+				 attr.ssid, attr.ssid_len, freq, 0);
 
 out:
 	wpabuf_free(wps);

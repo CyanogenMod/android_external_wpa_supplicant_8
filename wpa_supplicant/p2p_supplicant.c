@@ -1182,7 +1182,7 @@ static void wpas_start_wps_enrollee(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_ap_deinit(wpa_s);
 	wpas_copy_go_neg_results(wpa_s, res);
 	if (res->wps_method == WPS_PBC) {
-		wpas_wps_start_pbc(wpa_s, res->peer_interface_addr, 1);
+		wpas_wps_start_pbc(wpa_s, res->peer_interface_addr, 1, 0);
 #ifdef CONFIG_WPS_NFC
 	} else if (res->wps_method == WPS_NFC) {
 		wpas_wps_start_nfc(wpa_s, res->peer_device_addr,
@@ -1193,14 +1193,14 @@ static void wpas_start_wps_enrollee(struct wpa_supplicant *wpa_s,
 				   DEV_PW_NFC_CONNECTION_HANDOVER ?
 				   wpa_s->parent->p2p_peer_oob_pubkey_hash :
 				   NULL,
-				   NULL, 0, 0);
+				   NULL, 0, 0, 0);
 #endif /* CONFIG_WPS_NFC */
 	} else {
 		u16 dev_pw_id = DEV_PW_DEFAULT;
 		if (wpa_s->p2p_wps_method == WPS_PIN_KEYPAD)
 			dev_pw_id = DEV_PW_REGISTRAR_SPECIFIED;
 		wpas_wps_start_pin(wpa_s, res->peer_interface_addr,
-				   wpa_s->p2p_pin, 1, dev_pw_id);
+				   wpa_s->p2p_pin, 1, dev_pw_id, 0);
 	}
 }
 
