@@ -191,7 +191,11 @@ static void wpas_p2p_set_own_freq_preference(struct wpa_supplicant *wpa_s,
 {
 	if (wpa_s->global->p2p_disabled || wpa_s->global->p2p == NULL)
 		return;
-	if (wpa_s->parent->conf->p2p_ignore_shared_freq &&
+
+	/* Use the wpa_s used to control the P2P Device operation */
+	wpa_s = wpa_s->global->p2p_init_wpa_s;
+
+	if (wpa_s->conf->p2p_ignore_shared_freq &&
 	    freq > 0 && wpa_s->num_multichan_concurrent > 1 &&
 	    wpas_p2p_num_unused_channels(wpa_s) > 0) {
 		wpa_printf(MSG_DEBUG, "P2P: Ignore own channel preference %d MHz due to p2p_ignore_shared_freq=1 configuration",
@@ -1109,13 +1113,14 @@ static void wpas_p2p_add_persistent_group_client(struct wpa_supplicant *wpa_s,
 	u8 *n;
 	size_t i;
 	int found = 0;
+	struct wpa_supplicant *p2p_wpa_s = wpa_s->global->p2p_init_wpa_s;
 
 	ssid = wpa_s->current_ssid;
 	if (ssid == NULL || ssid->mode != WPAS_MODE_P2P_GO ||
 	    !ssid->p2p_persistent_group)
 		return;
 
-	for (s = wpa_s->parent->conf->ssid; s; s = s->next) {
+	for (s = p2p_wpa_s->conf->ssid; s; s = s->next) {
 		if (s->disabled != 2 || s->mode != WPAS_MODE_P2P_GO)
 			continue;
 
@@ -1174,8 +1179,8 @@ static void wpas_p2p_add_persistent_group_client(struct wpa_supplicant *wpa_s,
 			  0xff, ETH_ALEN);
 	}
 
-	if (wpa_s->parent->conf->update_config &&
-	    wpa_config_write(wpa_s->parent->confname, wpa_s->parent->conf))
+	if (p2p_wpa_s->conf->update_config &&
+	    wpa_config_write(p2p_wpa_s->confname, p2p_wpa_s->conf))
 		wpa_printf(MSG_DEBUG, "P2P: Failed to update configuration");
 }
 
@@ -2248,6 +2253,7 @@ static void wpas_find_stopped(void *ctx)
 {
 	struct wpa_supplicant *wpa_s = ctx;
 	wpa_msg_global(wpa_s, MSG_INFO, P2P_EVENT_FIND_STOPPED);
+	wpas_notify_p2p_find_stopped(wpa_s);
 }
 
 
@@ -2825,6 +2831,7 @@ static void wpas_remove_persistent_peer(struct wpa_supplicant *wpa_s,
 					const u8 *peer, int inv)
 {
 	size_t i;
+	struct wpa_supplicant *p2p_wpa_s = wpa_s->global->p2p_init_wpa_s;
 
 	if (ssid == NULL)
 		return;
@@ -2854,8 +2861,8 @@ static void wpas_remove_persistent_peer(struct wpa_supplicant *wpa_s,
 		   ssid->p2p_client_list + (i + 1) * 2 * ETH_ALEN,
 		   (ssid->num_p2p_clients - i - 1) * 2 * ETH_ALEN);
 	ssid->num_p2p_clients--;
-	if (wpa_s->parent->conf->update_config &&
-	    wpa_config_write(wpa_s->parent->confname, wpa_s->parent->conf))
+	if (p2p_wpa_s->conf->update_config &&
+	    wpa_config_write(p2p_wpa_s->confname, p2p_wpa_s->conf))
 		wpa_printf(MSG_DEBUG, "P2P: Failed to update configuration");
 }
 
@@ -3453,7 +3460,6 @@ int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_DEBUG, "P2P: Failed to add P2P Device interface");
 		return -1;
 	}
-	wpa_s->p2p_dev = p2pdev_wpa_s;
 
 	wpa_s->pending_interface_name[0] = '\0';
 	return 0;
@@ -5950,7 +5956,11 @@ int wpas_p2p_assoc_req_ie(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 
 	if (wpa_s->global->p2p_disabled)
 		return -1;
-	if (wpa_s->conf->p2p_disabled)
+	/*
+	 * Advertize mandatory cross connection capability even on
+	 * p2p_disabled=1 interface when associating with a P2P Manager WLAN AP.
+	 */
+	if (wpa_s->conf->p2p_disabled && p2p_group)
 		return -1;
 	if (wpa_s->global->p2p == NULL)
 		return -1;
@@ -7304,16 +7314,17 @@ void wpas_p2p_remove_client(struct wpa_supplicant *wpa_s, const u8 *peer,
 {
 	struct wpa_ssid *s;
 	struct wpa_supplicant *w;
+	struct wpa_supplicant *p2p_wpa_s = wpa_s->global->p2p_init_wpa_s;
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Remove client " MACSTR, MAC2STR(peer));
 
 	/* Remove from any persistent group */
-	for (s = wpa_s->parent->conf->ssid; s; s = s->next) {
+	for (s = p2p_wpa_s->conf->ssid; s; s = s->next) {
 		if (s->disabled != 2 || s->mode != WPAS_MODE_P2P_GO)
 			continue;
 		if (!iface_addr)
-			wpas_remove_persistent_peer(wpa_s, s, peer, 0);
-		wpas_p2p_remove_psk(wpa_s->parent, s, peer, iface_addr);
+			wpas_remove_persistent_peer(p2p_wpa_s, s, peer, 0);
+		wpas_p2p_remove_psk(p2p_wpa_s, s, peer, iface_addr);
 	}
 
 	/* Remove from any operating group */
