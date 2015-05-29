@@ -575,6 +575,26 @@ inv_args:
 }
 
 
+/**
+ * wpas_dbus_handler_p2p_cancel - Cancel P2P group formation
+ * @message: Pointer to incoming dbus message
+ * @wpa_s: %wpa_supplicant data structure
+ * Returns: NULL on success or DBus error on failure
+ *
+ * Handler for "Cancel" method call. Returns NULL if P2P cancel succeeds or DBus
+ * error on P2P cancel failure
+ */
+DBusMessage * wpas_dbus_handler_p2p_cancel(DBusMessage *message,
+					   struct wpa_supplicant *wpa_s)
+{
+	if (wpas_p2p_cancel(wpa_s))
+		return wpas_dbus_error_unknown_error(message,
+						     "P2P cancel failed");
+
+	return NULL;
+}
+
+
 DBusMessage * wpas_dbus_handler_p2p_invite(DBusMessage *message,
 					   struct wpa_supplicant *wpa_s)
 {
@@ -1214,6 +1234,43 @@ dbus_bool_t wpas_dbus_getter_p2p_peer_device_name(DBusMessageIter *iter,
 	}
 
 	tmp = os_strdup(info->device_name);
+	if (!tmp) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		return FALSE;
+	}
+
+	if (!wpas_dbus_simple_property_getter(iter, DBUS_TYPE_STRING, &tmp,
+					      error)) {
+		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
+		os_free(tmp);
+		return FALSE;
+	}
+
+	os_free(tmp);
+	return TRUE;
+}
+
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_manufacturer(DBusMessageIter *iter,
+						   DBusError *error,
+						   void *user_data)
+{
+	struct peer_handler_args *peer_args = user_data;
+	const struct p2p_peer_info *info;
+	char *tmp;
+
+	if (!wpa_dbus_p2p_check_enabled(peer_args->wpa_s, NULL, NULL, error))
+		return FALSE;
+
+	/* get the peer info */
+	info = p2p_get_peer_found(peer_args->wpa_s->global->p2p,
+				  peer_args->p2p_device_addr, 0);
+	if (info == NULL) {
+		dbus_set_error(error, DBUS_ERROR_FAILED, "failed to find peer");
+		return FALSE;
+	}
+
+	tmp = os_strdup(info->manufacturer);
 	if (!tmp) {
 		dbus_set_error_const(error, DBUS_ERROR_NO_MEMORY, "no memory");
 		return FALSE;

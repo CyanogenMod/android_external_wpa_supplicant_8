@@ -2583,6 +2583,12 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 		  END_ARGS
 	  }
 	},
+	{ "Cancel", WPAS_DBUS_NEW_IFACE_WPS,
+	  (WPADBusMethodHandler) wpas_dbus_handler_wps_cancel,
+	  {
+		  END_ARGS
+	  }
+	},
 #endif /* CONFIG_WPS */
 #ifdef CONFIG_P2P
 	{ "Find", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
@@ -2639,6 +2645,12 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 	  (WPADBusMethodHandler) wpas_dbus_handler_p2p_group_add,
 	  {
 		  { "args", "a{sv}", ARG_IN },
+		  END_ARGS
+	  }
+	},
+	{ "Cancel", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
+	  (WPADBusMethodHandler) wpas_dbus_handler_p2p_cancel,
+	  {
 		  END_ARGS
 	  }
 	},
@@ -3293,6 +3305,10 @@ int wpas_dbus_unregister_interface(struct wpa_supplicant *wpa_s)
 static const struct wpa_dbus_property_desc wpas_dbus_p2p_peer_properties[] = {
 	{ "DeviceName", WPAS_DBUS_NEW_IFACE_P2P_PEER, "s",
 	  wpas_dbus_getter_p2p_peer_device_name,
+	  NULL
+	},
+	{ "Manufacturer", WPAS_DBUS_NEW_IFACE_P2P_PEER, "s",
+	  wpas_dbus_getter_p2p_peer_manufacturer,
 	  NULL
 	},
 	{ "PrimaryDeviceType", WPAS_DBUS_NEW_IFACE_P2P_PEER, "ay",
