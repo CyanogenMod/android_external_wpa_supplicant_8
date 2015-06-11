@@ -268,6 +268,16 @@ void wpas_notify_wps_event_success(struct wpa_supplicant *wpa_s)
 #endif /* CONFIG_WPS */
 }
 
+void wpas_notify_wps_event_pbc_overlap(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->p2p_mgmt)
+		return;
+
+#ifdef CONFIG_WPS
+	wpas_dbus_signal_wps_event_pbc_overlap(wpa_s);
+#endif /* CONFIG_WPS */
+}
+
 
 void wpas_notify_network_added(struct wpa_supplicant *wpa_s,
 			       struct wpa_ssid *ssid)
@@ -561,9 +571,9 @@ void wpas_notify_p2p_group_removed(struct wpa_supplicant *wpa_s,
 
 
 void wpas_notify_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
-				const u8 *src, u16 dev_passwd_id)
+				const u8 *src, u16 dev_passwd_id, u8 go_intent)
 {
-	wpas_dbus_signal_p2p_go_neg_req(wpa_s, src, dev_passwd_id);
+	wpas_dbus_signal_p2p_go_neg_req(wpa_s, src, dev_passwd_id, go_intent);
 }
 
 
@@ -780,10 +790,12 @@ void wpas_notify_network_type_changed(struct wpa_supplicant *wpa_s,
 		ssid->disabled = 0;
 		wpas_dbus_unregister_network(wpa_s, ssid->id);
 		ssid->disabled = 2;
+		ssid->p2p_persistent_group = 1;
 		wpas_dbus_register_persistent_group(wpa_s, ssid);
 	} else {
 		/* Changed from persistent group to normal network profile */
 		wpas_dbus_unregister_persistent_group(wpa_s, ssid->id);
+		ssid->p2p_persistent_group = 0;
 		wpas_dbus_register_network(wpa_s, ssid);
 	}
 #endif /* CONFIG_P2P */

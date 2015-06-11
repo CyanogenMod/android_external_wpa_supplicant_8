@@ -119,6 +119,18 @@ dbus_bool_t wpas_dbus_getter_p2p_peer_manufacturer(DBusMessageIter *iter,
 						   DBusError *error,
 						   void *user_data);
 
+dbus_bool_t wpas_dbus_getter_p2p_peer_modelname(DBusMessageIter *iter,
+						DBusError *error,
+						void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_modelnumber(DBusMessageIter *iter,
+						  DBusError *error,
+						  void *user_data);
+
+dbus_bool_t wpas_dbus_getter_p2p_peer_serialnumber(DBusMessageIter *iter,
+						   DBusError *error,
+						   void *user_data);
+
 dbus_bool_t wpas_dbus_getter_p2p_peer_primary_device_type(
 	DBusMessageIter *iter, DBusError *error, void *user_data);
 

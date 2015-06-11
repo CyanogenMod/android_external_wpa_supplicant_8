@@ -493,6 +493,16 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 
 	wpas_mac_addr_rand_scan_clear(wpa_s, MAC_ADDR_RAND_ALL);
 
+	/*
+	 * Need to remove any pending gas-query radio work before the
+	 * gas_query_deinit() call because gas_query::work has not yet been set
+	 * for works that have not been started. gas_query_free() will be unable
+	 * to cancel such pending radio works and once the pending gas-query
+	 * radio work eventually gets removed, the deinit notification call to
+	 * gas_query_start_cb() would result in dereferencing freed memory.
+	 */
+	if (wpa_s->radio)
+		radio_remove_works(wpa_s, "gas-query", 0);
 	gas_query_deinit(wpa_s->gas);
 	wpa_s->gas = NULL;
 
@@ -873,7 +883,8 @@ int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s)
 
 	eapol_sm_invalidate_cached_session(wpa_s->eapol);
 	if (wpa_s->current_ssid) {
-		wpa_s->own_disconnect_req = 1;
+		if (wpa_s->wpa_state >= WPA_AUTHENTICATING)
+			wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(wpa_s,
 					      WLAN_REASON_DEAUTH_LEAVING);
 	}
@@ -2604,7 +2615,8 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 	int disconnected = 0;
 
 	if (ssid && ssid != wpa_s->current_ssid && wpa_s->current_ssid) {
-		wpa_s->own_disconnect_req = 1;
+		if (wpa_s->wpa_state >= WPA_AUTHENTICATING)
+			wpa_s->own_disconnect_req = 1;
 		wpa_supplicant_deauthenticate(
 			wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		disconnected = 1;
@@ -4335,6 +4347,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 		wpa_config_free(wpa_s->conf);
 		wpa_s->conf = NULL;
 	}
+
+	os_free(wpa_s->ssids_from_scan_req);
 
 	os_free(wpa_s);
 }

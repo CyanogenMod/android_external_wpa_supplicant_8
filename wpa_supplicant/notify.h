@@ -45,6 +45,7 @@ void wpas_notify_wps_event_m2d(struct wpa_supplicant *wpa_s,
 void wpas_notify_wps_event_fail(struct wpa_supplicant *wpa_s,
 				struct wps_event_fail *fail);
 void wpas_notify_wps_event_success(struct wpa_supplicant *wpa_s);
+void wpas_notify_wps_event_pbc_overlap(struct wpa_supplicant *wpa_s);
 void wpas_notify_network_added(struct wpa_supplicant *wpa_s,
 			       struct wpa_ssid *ssid);
 void wpas_notify_network_removed(struct wpa_supplicant *wpa_s,
@@ -93,7 +94,7 @@ void wpas_notify_p2p_group_removed(struct wpa_supplicant *wpa_s,
 				   const struct wpa_ssid *ssid,
 				   const char *role);
 void wpas_notify_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
-				const u8 *src, u16 dev_passwd_id);
+				const u8 *src, u16 dev_passwd_id, u8 go_intent);
 void wpas_notify_p2p_go_neg_completed(struct wpa_supplicant *wpa_s,
 				      struct p2p_go_neg_results *res);
 void wpas_notify_p2p_invitation_result(struct wpa_supplicant *wpa_s,
