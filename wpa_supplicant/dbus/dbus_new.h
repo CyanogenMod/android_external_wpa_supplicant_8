@@ -152,6 +152,7 @@ void wpas_dbus_signal_wps_event_m2d(struct wpa_supplicant *wpa_s,
 void wpas_dbus_signal_wps_event_fail(struct wpa_supplicant *wpa_s,
 				     struct wps_event_fail *fail);
 void wpas_dbus_signal_wps_event_success(struct wpa_supplicant *wpa_s);
+void wpas_dbus_signal_wps_event_pbc_overlap(struct wpa_supplicant *wpa_s);
 int wpas_dbus_register_network(struct wpa_supplicant *wpa_s,
 			       struct wpa_ssid *ssid);
 int wpas_dbus_unregister_network(struct wpa_supplicant *wpa_s, int nid);
@@ -185,7 +186,8 @@ void wpas_dbus_signal_p2p_provision_discovery(struct wpa_supplicant *wpa_s,
 					      u16 config_methods,
 					      unsigned int generated_pin);
 void wpas_dbus_signal_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
-				     const u8 *src, u16 dev_passwd_id);
+				     const u8 *src, u16 dev_passwd_id,
+				     u8 go_intent);
 void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 					const struct wpa_ssid *ssid,
 					int client, int network_id);
@@ -296,6 +298,11 @@ static inline void wpas_dbus_signal_wps_event_success(
 {
 }
 
+static inline void wpas_dbus_signal_wps_event_pbc_overlap(
+	struct wpa_supplicant *wpa_s)
+{
+}
+
 static inline int wpas_dbus_register_network(struct wpa_supplicant *wpa_s,
 					     struct wpa_ssid *ssid)
 {
@@ -378,10 +385,10 @@ wpas_dbus_signal_p2p_provision_discovery(struct wpa_supplicant *wpa_s,
 {
 }
 
-static inline void wpas_dbus_signal_p2p_go_neg_req(
-				struct wpa_supplicant *wpa_s,
-				const u8 *src,
-				u16 dev_passwd_id)
+static inline void wpas_dbus_signal_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
+						   const u8 *src,
+						   u16 dev_passwd_id,
+						   u8 go_intent)
 {
 }
 
