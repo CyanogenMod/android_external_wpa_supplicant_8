@@ -66,17 +66,6 @@ struct wpa_interface {
 	 */
 	const char *confanother;
 
-#ifdef CONFIG_P2P
-	/**
-	 * conf_p2p_dev - Configuration file used to hold the
-	 * P2P Device configuration parameters.
-	 *
-	 * This can also be %NULL. In such a case, if a P2P Device dedicated
-	 * interfaces is created, the main configuration file will be used.
-	 */
-	const char *conf_p2p_dev;
-#endif /* CONFIG_P2P */
-
 	/**
 	 * ctrl_interface - Control interface parameter
 	 *
@@ -227,6 +216,18 @@ struct wpa_params {
 	 * its internal entropy store over restarts.
 	 */
 	char *entropy_file;
+
+#ifdef CONFIG_P2P
+	/**
+	 * conf_p2p_dev - Configuration file used to hold the
+	 * P2P Device configuration parameters.
+	 *
+	 * This can also be %NULL. In such a case, if a P2P Device dedicated
+	 * interfaces is created, the main configuration file will be used.
+	 */
+	const char *conf_p2p_dev;
+#endif /* CONFIG_P2P */
+
 };
 
 struct p2p_srv_bonjour {
@@ -366,6 +367,8 @@ struct wps_ap_info {
 	} type;
 	unsigned int tries;
 	struct os_reltime last_attempt;
+	unsigned int pbc_active;
+	u8 uuid[WPS_UUID_LEN];
 };
 
 struct wpa_ssid_value {
@@ -818,6 +821,7 @@ struct wpa_supplicant {
 	unsigned int p2p_peer_oob_pk_hash_known:1;
 	unsigned int p2p_disable_ip_addr_req:1;
 	unsigned int p2ps_join_addr_valid:1;
+	unsigned int p2p_cli_probe:1;
 	int p2p_persistent_go_freq;
 	int p2p_persistent_id;
 	int p2p_go_intent;

@@ -603,6 +603,7 @@ void wpas_dbus_signal_wps_event_success(struct wpa_supplicant *wpa_s)
 /**
  * wpas_dbus_signal_wps_event_fail - Signals Fail WPS event
  * @wpa_s: %wpa_supplicant network interface data
+ * @fail: WPS failure information
  *
  * Sends Event dbus signal with name "fail" and dictionary containing
  * "msg field with fail message number (int32) as arguments
@@ -644,6 +645,7 @@ void wpas_dbus_signal_wps_event_fail(struct wpa_supplicant *wpa_s,
 /**
  * wpas_dbus_signal_wps_event_m2d - Signals M2D WPS event
  * @wpa_s: %wpa_supplicant network interface data
+ * @m2d: M2D event data information
  *
  * Sends Event dbus signal with name "m2d" and dictionary containing
  * fields of wps_event_m2d structure.
@@ -709,6 +711,7 @@ void wpas_dbus_signal_wps_event_m2d(struct wpa_supplicant *wpa_s,
 /**
  * wpas_dbus_signal_wps_cred - Signals new credentials
  * @wpa_s: %wpa_supplicant network interface data
+ * @cred: WPS Credential information
  *
  * Sends signal with credentials in directory argument
  */
@@ -1100,6 +1103,16 @@ error:
 }
 
 
+/**
+ * wpas_dbus_signal_p2p_go_neg_req - Signal P2P GO Negotiation Request RX
+ * @wpa_s: %wpa_supplicant network interface data
+ * @src: Source address of the message triggering this notification
+ * @dev_passwd_id: WPS Device Password Id
+ * @go_intent: Peer's GO Intent value
+ *
+ * Sends signal to notify that a peer P2P Device is requesting group owner
+ * negotiation with us.
+ */
 void wpas_dbus_signal_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
 				     const u8 *src, u16 dev_passwd_id,
 				     u8 go_intent)
@@ -1297,10 +1310,9 @@ void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 
 
 /**
- *
- * Method to emit GONegotiation Success or Failure signals based
- * on status.
- * @status: Status of the GO neg request. 0 for success, other for errors.
+ * wpas_dbus_signal_p2p_go_neg_resp - Emit GONegotiation Success/Failure signal
+ * @wpa_s: %wpa_supplicant network interface data
+ * @res: Result of the GO Neg Request
  */
 void wpas_dbus_signal_p2p_go_neg_resp(struct wpa_supplicant *wpa_s,
 				      struct p2p_go_neg_results *res)
@@ -1801,6 +1813,7 @@ static void wpas_dbus_signal_persistent_group_removed(
 /**
  * wpas_dbus_signal_p2p_wps_failed - Signals WpsFailed event
  * @wpa_s: %wpa_supplicant network interface data
+ * @fail: WPS failure information
  *
  * Sends Event dbus signal with name "fail" and dictionary containing
  * "msg" field with fail message number (int32) as arguments
@@ -2552,6 +2565,12 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 		  END_ARGS
 	  }
 	},
+	{ "Reconnect", WPAS_DBUS_NEW_IFACE_INTERFACE,
+	  (WPADBusMethodHandler) wpas_dbus_handler_reconnect,
+	  {
+		  END_ARGS
+	  }
+	},
 	{ "RemoveNetwork", WPAS_DBUS_NEW_IFACE_INTERFACE,
 	  (WPADBusMethodHandler) wpas_dbus_handler_remove_network,
 	  {
@@ -2712,6 +2731,13 @@ static const struct wpa_dbus_method_desc wpas_dbus_interface_methods[] = {
 	  (WPADBusMethodHandler) wpas_dbus_handler_p2p_rejectpeer,
 	  {
 		  { "peer", "o", ARG_IN },
+		  END_ARGS
+	  }
+	},
+	{ "RemoveClient", WPAS_DBUS_NEW_IFACE_P2PDEVICE,
+	  (WPADBusMethodHandler) wpas_dbus_handler_p2p_remove_client,
+	  {
+		  { "args", "a{sv}", ARG_IN },
 		  END_ARGS
 	  }
 	},
@@ -3502,7 +3528,7 @@ void wpas_dbus_signal_peer_device_lost(struct wpa_supplicant *wpa_s,
 /**
  * wpas_dbus_register_peer - Register a discovered peer object with dbus
  * @wpa_s: wpa_supplicant interface structure
- * @ssid: network configuration data
+ * @dev_addr: P2P Device Address of the peer
  * Returns: 0 on success, -1 on failure
  *
  * Registers network representing object with dbus

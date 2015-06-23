@@ -2557,6 +2557,21 @@ wpa_supplicant_event_interface_status(struct wpa_supplicant *wpa_s,
 			wpa_msg(wpa_s, MSG_INFO, "Failed to initialize the "
 				"driver after interface was added");
 		}
+
+#ifdef CONFIG_P2P
+		if (!wpa_s->global->p2p &&
+		    !wpa_s->global->p2p_disabled &&
+		    !wpa_s->conf->p2p_disabled &&
+		    (wpa_s->drv_flags &
+		     WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
+		    wpas_p2p_add_p2pdev_interface(
+			    wpa_s, wpa_s->global->params.conf_p2p_dev) < 0) {
+			wpa_printf(MSG_INFO,
+				   "P2P: Failed to enable P2P Device interface");
+			/* Try to continue without. P2P will be disabled. */
+		}
+#endif /* CONFIG_P2P */
+
 		break;
 	case EVENT_INTERFACE_REMOVED:
 		wpa_dbg(wpa_s, MSG_DEBUG, "Configured interface was removed");
@@ -2565,6 +2580,21 @@ wpa_supplicant_event_interface_status(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_set_state(wpa_s, WPA_INTERFACE_DISABLED);
 		l2_packet_deinit(wpa_s->l2);
 		wpa_s->l2 = NULL;
+
+#ifdef CONFIG_P2P
+		if (wpa_s->global->p2p &&
+		    wpa_s->global->p2p_init_wpa_s->parent == wpa_s &&
+		    (wpa_s->drv_flags &
+		     WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE)) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Removing P2P Device interface");
+			wpa_supplicant_remove_iface(
+				wpa_s->global, wpa_s->global->p2p_init_wpa_s,
+				0);
+			wpa_s->global->p2p_init_wpa_s = NULL;
+		}
+#endif /* CONFIG_P2P */
+
 #ifdef CONFIG_TERMINATE_ONLASTIF
 		/* check if last interface */
 		if (!any_interfaces(wpa_s->global->ifaces))
@@ -3495,6 +3525,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				wpas_p2p_probe_req_rx(
 					wpa_s, src, mgmt->da,
 					mgmt->bssid, ie, ie_len,
+					data->rx_mgmt.freq,
 					data->rx_mgmt.ssi_signal);
 				break;
 			}
@@ -3566,6 +3597,7 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				      data->rx_probe_req.bssid,
 				      data->rx_probe_req.ie,
 				      data->rx_probe_req.ie_len,
+				      0,
 				      data->rx_probe_req.ssi_signal);
 		break;
 	case EVENT_REMAIN_ON_CHANNEL:

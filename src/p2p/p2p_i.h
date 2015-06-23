@@ -14,6 +14,12 @@
 
 #define P2P_GO_NEG_CNF_MAX_RETRY_COUNT 1
 
+/*
+ * A threshold (in seconds) to prefer a direct Probe Response frame from a P2P
+ * Device over the P2P Client Info received from a GO.
+ */
+#define P2P_DEV_GROUP_CLIENT_RESP_THRESHOLD 1
+
 enum p2p_role_indication;
 
 /*
@@ -107,6 +113,8 @@ struct p2p_device {
 #define P2P_DEV_WAIT_INV_REQ_ACK BIT(19)
 #define P2P_DEV_P2PS_REPORTED BIT(20)
 #define P2P_DEV_PD_PEER_P2PS BIT(21)
+#define P2P_DEV_LAST_SEEN_AS_GROUP_CLIENT BIT(22)
+
 	unsigned int flags;
 
 	int status; /* enum p2p_status_code */
@@ -506,11 +514,9 @@ struct p2p_data {
 	struct p2ps_advertisement *p2ps_adv_list;
 	struct p2ps_provision *p2ps_prov;
 	u8 wild_card_hash[P2PS_HASH_LEN];
-	u8 query_hash[P2P_MAX_QUERY_HASH * P2PS_HASH_LEN];
-	u8 query_count;
 	u8 p2ps_seek;
+	u8 p2ps_seek_hash[P2P_MAX_QUERY_HASH * P2PS_HASH_LEN];
 	u8 p2ps_seek_count;
-	u8 p2ps_svc_found;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	struct wpabuf *wfd_ie_beacon;
@@ -795,6 +801,7 @@ void p2p_process_prov_disc_resp(struct p2p_data *p2p, const u8 *sa,
 int p2p_send_prov_disc_req(struct p2p_data *p2p, struct p2p_device *dev,
 			   int join, int force_freq);
 void p2p_reset_pending_pd(struct p2p_data *p2p);
+void p2ps_prov_free(struct p2p_data *p2p);
 
 /* p2p_invitation.c */
 void p2p_process_invitation_req(struct p2p_data *p2p, const u8 *sa,
@@ -840,7 +847,9 @@ void p2p_go_complete(struct p2p_data *p2p, struct p2p_device *peer);
 int p2p_match_dev_type(struct p2p_data *p2p, struct wpabuf *wps);
 int dev_type_list_match(const u8 *dev_type, const u8 *req_dev_type[],
 			size_t num_req_dev_type);
-struct wpabuf * p2p_build_probe_resp_ies(struct p2p_data *p2p);
+struct wpabuf * p2p_build_probe_resp_ies(struct p2p_data *p2p,
+					 const u8 *query_hash,
+					 u8 query_count);
 void p2p_build_ssid(struct p2p_data *p2p, u8 *ssid, size_t *ssid_len);
 int p2p_send_action(struct p2p_data *p2p, unsigned int freq, const u8 *dst,
 		    const u8 *src, const u8 *bssid, const u8 *buf,
