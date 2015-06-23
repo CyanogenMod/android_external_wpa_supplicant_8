@@ -87,7 +87,6 @@ static void nl80211_handle_destroy(struct nl_handle *handle)
 #undef nl_socket_set_nonblocking
 #define nl_socket_set_nonblocking(h) android_nl_socket_set_nonblocking(h)
 
-#define genl_ctrl_resolve android_genl_ctrl_resolve
 #endif /* ANDROID */
 
 
@@ -7245,11 +7244,12 @@ static int driver_nl80211_if_remove(void *priv, enum wpa_driver_if_type type,
 
 
 static int driver_nl80211_send_mlme(void *priv, const u8 *data,
-				    size_t data_len, int noack)
+				    size_t data_len, int noack,
+				    unsigned int freq)
 {
 	struct i802_bss *bss = priv;
 	return wpa_driver_nl80211_send_mlme(bss, data, data_len, noack,
-					    0, 0, 0, 0);
+					    freq, 0, 0, 0);
 }
 
 
@@ -7807,7 +7807,7 @@ static int nl80211_set_wowlan(void *priv,
 
 	wpa_printf(MSG_DEBUG, "nl80211: Setting wowlan");
 
-	if (!(msg = nl80211_drv_msg(drv, 0, NL80211_CMD_SET_WOWLAN)) ||
+	if (!(msg = nl80211_cmd_msg(bss, 0, NL80211_CMD_SET_WOWLAN)) ||
 	    !(wowlan_triggers = nla_nest_start(msg,
 					       NL80211_ATTR_WOWLAN_TRIGGERS)) ||
 	    (triggers->any &&
