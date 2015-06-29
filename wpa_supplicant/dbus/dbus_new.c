@@ -1424,12 +1424,10 @@ err:
 
 
 /**
- *
- * Method to emit Invitation Result signal based on status and
- * bssid
- * @status: Status of the Invite request. 0 for success, other
- * for errors
- * @bssid : Basic Service Set Identifier
+ * wpas_dbus_signal_p2p_invitation_result - Emit InvitationResult signal
+ * @wpa_s: %wpa_supplicant network interface data
+ * @status: Status of invitation process
+ * @bssid: Basic Service Set Identifier
  */
 void wpas_dbus_signal_p2p_invitation_result(struct wpa_supplicant *wpa_s,
 					    int status, const u8 *bssid)
@@ -3284,6 +3282,11 @@ static const struct wpa_dbus_signal_desc wpas_dbus_interface_signals[] = {
 };
 
 
+/**
+ * wpas_dbus_register_interface - Register an interface with D-Bus
+ * @wpa_s: wpa_supplicant interface structure
+ * Returns: 0 on success, -1 on failure
+ */
 int wpas_dbus_register_interface(struct wpa_supplicant *wpa_s)
 {
 
@@ -3334,6 +3337,11 @@ err:
 }
 
 
+/**
+ * wpas_dbus_unregister_interface - Unregister the interface from D-Bus
+ * @wpa_s: wpa_supplicant interface structure
+ * Returns: 0 on success, -1 on failure
+ */
 int wpas_dbus_unregister_interface(struct wpa_supplicant *wpa_s)
 {
 	struct wpas_dbus_priv *ctrl_iface;
@@ -3498,7 +3506,7 @@ static void wpas_dbus_signal_peer(struct wpa_supplicant *wpa_s,
 /**
  * wpas_dbus_signal_peer_found - Send a peer found signal
  * @wpa_s: %wpa_supplicant network interface data
- * @dev: peer device object
+ * @dev_addr: Peer P2P Device Address
  *
  * Notify listeners about find a p2p peer device found
  */
@@ -3513,7 +3521,7 @@ void wpas_dbus_signal_peer_device_found(struct wpa_supplicant *wpa_s,
 /**
  * wpas_dbus_signal_peer_lost - Send a peer lost signal
  * @wpa_s: %wpa_supplicant network interface data
- * @dev: peer device object
+ * @dev_addr: Peer P2P Device Address
  *
  * Notify listeners about lost a p2p peer device
  */
@@ -3660,6 +3668,13 @@ void wpas_dbus_signal_p2p_find_stopped(struct wpa_supplicant *wpa_s)
 }
 
 
+/**
+ * wpas_dbus_signal_peer_groups_changed - Send peer group change property signal
+ * @wpa_s: %wpa_supplicant network interface data
+ * @dev_addr: P2P Device Address
+ *
+ * Notify listeners about peer Groups property changes.
+ */
 void wpas_dbus_signal_peer_groups_changed(struct wpa_supplicant *wpa_s,
 					  const u8 *dev_addr)
 {

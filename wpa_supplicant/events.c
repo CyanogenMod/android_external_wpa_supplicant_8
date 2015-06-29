@@ -1628,6 +1628,9 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 			if (wpa_supplicant_req_sched_scan(wpa_s))
 				wpa_supplicant_req_new_scan(wpa_s, timeout_sec,
 							    timeout_usec);
+
+			wpa_msg_ctrl(wpa_s, MSG_INFO,
+				     WPA_EVENT_NETWORK_NOT_FOUND);
 		}
 	}
 	return 0;
@@ -1685,7 +1688,7 @@ int wpa_supplicant_fast_associate(struct wpa_supplicant *wpa_s)
 #else /* CONFIG_NO_SCAN_PROCESSING */
 	struct os_reltime now;
 
-	if (wpa_s->last_scan_res_used <= 0)
+	if (wpa_s->last_scan_res_used == 0)
 		return -1;
 
 	os_get_reltime(&now);
