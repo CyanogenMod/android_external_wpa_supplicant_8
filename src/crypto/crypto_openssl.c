@@ -1107,6 +1107,42 @@ int crypto_bignum_is_one(const struct crypto_bignum *a)
 }
 
 
+int crypto_bignum_legendre(const struct crypto_bignum *a,
+			   const struct crypto_bignum *p)
+{
+	BN_CTX *bnctx;
+	BIGNUM *exp = NULL, *tmp = NULL;
+	int res = -2;
+
+	bnctx = BN_CTX_new();
+	if (bnctx == NULL)
+		return -2;
+
+	exp = BN_new();
+	tmp = BN_new();
+	if (!exp || !tmp ||
+	    /* exp = (p-1) / 2 */
+	    !BN_sub(exp, (const BIGNUM *) p, BN_value_one()) ||
+	    !BN_rshift1(exp, exp) ||
+	    !BN_mod_exp(tmp, (const BIGNUM *) a, exp, (const BIGNUM *) p,
+			bnctx))
+		goto fail;
+
+	if (BN_is_word(tmp, 1))
+		res = 1;
+	else if (BN_is_zero(tmp))
+		res = 0;
+	else
+		res = -1;
+
+fail:
+	BN_clear_free(tmp);
+	BN_clear_free(exp);
+	BN_CTX_free(bnctx);
+	return res;
+}
+
+
 #ifdef CONFIG_ECC
 
 struct crypto_ec {
@@ -1114,6 +1150,8 @@ struct crypto_ec {
 	BN_CTX *bnctx;
 	BIGNUM *prime;
 	BIGNUM *order;
+	BIGNUM *a;
+	BIGNUM *b;
 };
 
 struct crypto_ec * crypto_ec_init(int group)
@@ -1138,6 +1176,26 @@ struct crypto_ec * crypto_ec_init(int group)
 	case 26:
 		nid = NID_secp224r1;
 		break;
+#ifdef NID_brainpoolP224r1
+	case 27:
+		nid = NID_brainpoolP224r1;
+		break;
+#endif /* NID_brainpoolP224r1 */
+#ifdef NID_brainpoolP256r1
+	case 28:
+		nid = NID_brainpoolP256r1;
+		break;
+#endif /* NID_brainpoolP256r1 */
+#ifdef NID_brainpoolP384r1
+	case 29:
+		nid = NID_brainpoolP384r1;
+		break;
+#endif /* NID_brainpoolP384r1 */
+#ifdef NID_brainpoolP512r1
+	case 30:
+		nid = NID_brainpoolP512r1;
+		break;
+#endif /* NID_brainpoolP512r1 */
 	default:
 		return NULL;
 	}
@@ -1150,9 +1208,11 @@ struct crypto_ec * crypto_ec_init(int group)
 	e->group = EC_GROUP_new_by_curve_name(nid);
 	e->prime = BN_new();
 	e->order = BN_new();
+	e->a = BN_new();
+	e->b = BN_new();
 	if (e->group == NULL || e->bnctx == NULL || e->prime == NULL ||
-	    e->order == NULL ||
-	    !EC_GROUP_get_curve_GFp(e->group, e->prime, NULL, NULL, e->bnctx) ||
+	    e->order == NULL || e->a == NULL || e->b == NULL ||
+	    !EC_GROUP_get_curve_GFp(e->group, e->prime, e->a, e->b, e->bnctx) ||
 	    !EC_GROUP_get_order(e->group, e->order, e->bnctx)) {
 		crypto_ec_deinit(e);
 		e = NULL;
@@ -1166,6 +1226,8 @@ void crypto_ec_deinit(struct crypto_ec *e)
 {
 	if (e == NULL)
 		return;
+	BN_clear_free(e->b);
+	BN_clear_free(e->a);
 	BN_clear_free(e->order);
 	BN_clear_free(e->prime);
 	EC_GROUP_free(e->group);
@@ -1313,6 +1375,33 @@ int crypto_ec_point_solve_y_coord(struct crypto_ec *e,
 }
 
 
+struct crypto_bignum *
+crypto_ec_point_compute_y_sqr(struct crypto_ec *e,
+			      const struct crypto_bignum *x)
+{
+	BIGNUM *tmp, *tmp2, *y_sqr = NULL;
+
+	tmp = BN_new();
+	tmp2 = BN_new();
+
+	/* y^2 = x^3 + ax + b */
+	if (tmp && tmp2 &&
+	    BN_mod_sqr(tmp, (const BIGNUM *) x, e->prime, e->bnctx) &&
+	    BN_mod_mul(tmp, tmp, (const BIGNUM *) x, e->prime, e->bnctx) &&
+	    BN_mod_mul(tmp2, e->a, (const BIGNUM *) x, e->prime, e->bnctx) &&
+	    BN_mod_add_quick(tmp2, tmp2, tmp, e->prime) &&
+	    BN_mod_add_quick(tmp2, tmp2, e->b, e->prime)) {
+		y_sqr = tmp2;
+		tmp2 = NULL;
+	}
+
+	BN_clear_free(tmp);
+	BN_clear_free(tmp2);
+
+	return (struct crypto_bignum *) y_sqr;
+}
+
+
 int crypto_ec_point_is_at_infinity(struct crypto_ec *e,
 				   const struct crypto_ec_point *p)
 {
@@ -1323,7 +1412,17 @@ int crypto_ec_point_is_at_infinity(struct crypto_ec *e,
 int crypto_ec_point_is_on_curve(struct crypto_ec *e,
 				const struct crypto_ec_point *p)
 {
-	return EC_POINT_is_on_curve(e->group, (const EC_POINT *) p, e->bnctx);
+	return EC_POINT_is_on_curve(e->group, (const EC_POINT *) p,
+				    e->bnctx) == 1;
+}
+
+
+int crypto_ec_point_cmp(const struct crypto_ec *e,
+			const struct crypto_ec_point *a,
+			const struct crypto_ec_point *b)
+{
+	return EC_POINT_cmp(e->group, (const EC_POINT *) a,
+			    (const EC_POINT *) b, e->bnctx);
 }
 
 #endif /* CONFIG_ECC */

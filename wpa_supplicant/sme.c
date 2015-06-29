@@ -67,7 +67,7 @@ static int sme_set_sae_group(struct wpa_supplicant *wpa_s)
 
 	for (;;) {
 		int group = groups[wpa_s->sme.sae_group_index];
-		if (group < 0)
+		if (group <= 0)
 			break;
 		if (sae_set_group(&wpa_s->sme.sae, group) == 0) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "SME: Selected SAE group %d",
@@ -698,6 +698,8 @@ static int sme_sae_auth(struct wpa_supplicant *wpa_s, u16 auth_transaction,
 		return -1;
 
 	if (auth_transaction == 1) {
+		u16 res;
+
 		groups = wpa_s->conf->sae_groups;
 
 		wpa_dbg(wpa_s, MSG_DEBUG, "SME SAE commit");
@@ -708,8 +710,14 @@ static int sme_sae_auth(struct wpa_supplicant *wpa_s, u16 auth_transaction,
 			return -1;
 		if (groups && groups[0] <= 0)
 			groups = NULL;
-		if (sae_parse_commit(&wpa_s->sme.sae, data, len, NULL, NULL,
-				     groups) != WLAN_STATUS_SUCCESS)
+		res = sae_parse_commit(&wpa_s->sme.sae, data, len, NULL, NULL,
+				       groups);
+		if (res == SAE_SILENTLY_DISCARD) {
+			wpa_printf(MSG_DEBUG,
+				   "SAE: Drop commit message due to reflection attack");
+			return 0;
+		}
+		if (res != WLAN_STATUS_SUCCESS)
 			return -1;
 
 		if (sae_process_commit(&wpa_s->sme.sae) < 0) {
@@ -831,12 +839,20 @@ void sme_event_auth(struct wpa_supplicant *wpa_s, union wpa_event_data *data)
 
 #ifdef CONFIG_IEEE80211R
 	if (data->auth.auth_type == WLAN_AUTH_FT) {
-		union wpa_event_data edata;
-		os_memset(&edata, 0, sizeof(edata));
-		edata.ft_ies.ies = data->auth.ies;
-		edata.ft_ies.ies_len = data->auth.ies_len;
-		os_memcpy(edata.ft_ies.target_ap, data->auth.peer, ETH_ALEN);
-		wpa_supplicant_event(wpa_s, EVENT_FT_RESPONSE, &edata);
+		if (wpa_ft_process_response(wpa_s->wpa, data->auth.ies,
+					    data->auth.ies_len, 0,
+					    data->auth.peer, NULL, 0) < 0) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"SME: FT Authentication response processing failed");
+			wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_DISCONNECTED "bssid="
+				MACSTR
+				" reason=%d locally_generated=1",
+				MAC2STR(wpa_s->pending_bssid),
+				WLAN_REASON_DEAUTH_LEAVING);
+			wpas_connection_failed(wpa_s, wpa_s->pending_bssid);
+			wpa_supplicant_mark_disassoc(wpa_s);
+			return;
+		}
 	}
 #endif /* CONFIG_IEEE80211R */
 
