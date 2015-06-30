@@ -2015,7 +2015,12 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 			wpa_ssid_txt(ssid->ssid, ssid->ssid_len));
 		os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
 	}
-	wpa_supplicant_cancel_sched_scan(wpa_s);
+
+#ifdef ANDROID
+	if (!wpa_s->pno)
+#endif
+		wpa_supplicant_cancel_sched_scan(wpa_s);
+
 	wpa_supplicant_cancel_scan(wpa_s);
 
 	/* Starting new association, so clear the possibly used WPA IE from the
