@@ -34,8 +34,6 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "eap_i.h"
 #include "eap_config.h"
 #include "eloop.h"
-#include "qmi.h"
-#include "qmi_eap_srvc.h"
 #include "eapol_supp/eapol_supp_sm.h"
 
 /*msec Response Timeout*/
@@ -86,12 +84,22 @@ typedef enum {
   EAP_IDENTITY_CFG_REALM = 0x07,
 } eap_identity_format_e;
 
+typedef union
+{
+       struct
+       {
+               void *resp_data; /* Pointer to the Response Packet*/
+               unsigned long length;     /*Length of the Response Packet*/
+       }eap_send_pkt_resp;
+
+}qmi_eap_sync_rsp_data_type;
+
+
 struct eap_proxy_sm {
-   int qmihandle[MAX_NO_OF_SIM_SUPPORTED];
-   int qmiTransactionId;
+   qmi_client_type qmi_auth_svc_client_ptr[MAX_NO_OF_SIM_SUPPORTED];
    qmi_state_e qmi_state;
    eap_proxy_qmi_srv_result srvc_result;
-   qmi_eap_async_rsp_data_type qmi_resp_data;
+   qmi_eap_sync_rsp_data_type qmi_resp_data;
    eap_proxy_state  proxy_state;
    Boolean iskey_valid;
    u8 *key;
@@ -104,6 +112,7 @@ struct eap_proxy_sm {
    Boolean isEap;
    int eap_type;
    int user_selected_sim;
+   int eap_auth_session_flag[MAX_NO_OF_SIM_SUPPORTED];
 };
 
 int eap_proxy_allowed_method(struct eap_peer_config *config, int vendor,
