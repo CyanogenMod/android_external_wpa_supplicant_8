@@ -509,7 +509,11 @@ endif
 
 ifdef CONFIG_EAP_PROXY
 L_CFLAGS += -DCONFIG_EAP_PROXY
+ifneq ($(CONFIG_EAP_PROXY),qmi)
+# QMI needs proprietary headers to build :(
+# Spin it into a blobbable lib
 OBJS += src/eap_peer/eap_proxy_$(CONFIG_EAP_PROXY).c
+endif
 include $(LOCAL_PATH)/eap_proxy_$(CONFIG_EAP_PROXY).mk
 CONFIG_IEEE8021X_EAPOL=y
 endif
@@ -1554,6 +1558,30 @@ LOCAL_SRC_FILES := $(OBJS_c)
 LOCAL_C_INCLUDES := $(INCLUDES)
 include $(BUILD_EXECUTABLE)
 
+# This needs QMI artifacts to be built
+ifneq ($(QCPATH),)
+
+ifeq ($(CONFIG_EAP_PROXY),qmi)
+include $(CLEAR_VARS)
+
+LOCAL_MODULE = libwpa_qmi_eap_proxy
+LOCAL_SHARED_LIBRARIES := libcutils liblog libwpa_client
+LOCAL_SRC_FILES += src/eap_peer/eap_proxy_$(CONFIG_EAP_PROXY).c
+LOCAL_SRC_FILES += src/utils/wpa_debug.c
+LOCAL_SRC_FILES += src/utils/wpabuf.c
+include $(LOCAL_PATH)/eap_proxy_$(CONFIG_EAP_PROXY).mk
+LOCAL_C_INCLUDES := $(INCLUDES)
+LOCAL_CFLAGS = $(L_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES += $(LIB_STATIC_EAP_PROXY)
+LOCAL_SHARED_LIBRARIES += $(LIB_SHARED_EAP_PROXY)
+
+include $(BUILD_SHARED_LIBRARY)
+
+endif # qmi EAP_PROXY
+endif # QCPATH
+
+
 ########################
 include $(CLEAR_VARS)
 LOCAL_MODULE := wpa_supplicant
@@ -1565,8 +1593,13 @@ LOCAL_STATIC_LIBRARIES += $(BOARD_WPA_SUPPLICANT_PRIVATE_LIB)
 endif
 LOCAL_SHARED_LIBRARIES := libc libcutils liblog
 ifdef CONFIG_EAP_PROXY
+ifneq ($(CONFIG_EAP_PROXY),qmi)
 LOCAL_STATIC_LIBRARIES += $(LIB_STATIC_EAP_PROXY)
 LOCAL_SHARED_LIBRARIES += $(LIB_SHARED_EAP_PROXY)
+else
+LOCAL_SHARED_LIBRARIES += libwpa_qmi_eap_proxy
+LOCAL_ADDITIONAL_DEPENDENCIES += $(LIB_SHARED_EAP_PROXY)
+endif
 endif
 ifeq ($(CONFIG_TLS), openssl)
 LOCAL_SHARED_LIBRARIES += libcrypto libssl libkeystore_binder
