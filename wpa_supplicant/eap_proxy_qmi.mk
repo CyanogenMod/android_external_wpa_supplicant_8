@@ -14,7 +14,6 @@ INCLUDES += $(TARGET_OUT_HEADERS)/qmi-framework/inc
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/inc
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/platform
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/core/lib/inc
-INCLUDES += $(LOCAL_PATH)/../../../vendor/qcom/proprietary/qmi/services
 
 ifdef CONFIG_EAP_PROXY_MDM_DETECT
 L_CFLAGS += -DCONFIG_EAP_PROXY_MDM_DETECT
