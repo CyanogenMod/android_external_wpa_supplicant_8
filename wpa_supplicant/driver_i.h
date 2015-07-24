@@ -900,4 +900,12 @@ static inline int wpa_drv_abort_scan(struct wpa_supplicant *wpa_s)
 	return wpa_s->driver->abort_scan(wpa_s->drv_priv);
 }
 
+static inline int wpa_drv_set_prob_oper_freq(struct wpa_supplicant *wpa_s,
+					     unsigned int freq)
+{
+	if (!wpa_s->driver->set_prob_oper_freq)
+		return 0;
+	return wpa_s->driver->set_prob_oper_freq(wpa_s->drv_priv, freq);
+}
+
 #endif /* DRIVER_I_H */
