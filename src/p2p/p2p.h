@@ -23,6 +23,11 @@
 #define P2P_MAX_QUERY_HASH 6
 
 /**
+ * P2P_MAX_PREF_CHANNELS - Maximum number of preferred channels
+ */
+#define P2P_MAX_PREF_CHANNELS 100
+
+/**
  * P2P_MAX_REG_CLASSES - Maximum number of regulatory classes
  */
 #define P2P_MAX_REG_CLASSES 10
@@ -2252,5 +2257,9 @@ int p2p_service_add_asp(struct p2p_data *p2p, int auto_accept, u32 adv_id,
 int p2p_service_del_asp(struct p2p_data *p2p, u32 adv_id);
 void p2p_service_flush_asp(struct p2p_data *p2p);
 struct p2ps_advertisement * p2p_get_p2ps_adv_list(struct p2p_data *p2p);
+
+void p2p_set_own_pref_freq_list(struct p2p_data *p2p,
+				const unsigned int *pref_freq_list,
+				unsigned int size);
 
 #endif /* P2P_H */
