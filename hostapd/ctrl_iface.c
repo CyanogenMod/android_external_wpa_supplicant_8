@@ -2487,7 +2487,7 @@ hostapd_global_ctrl_iface_fst_attach(struct hapd_interfaces *interfaces,
 		}
 	}
 
-	return EINVAL;
+	return -EINVAL;
 }
 
 
@@ -2509,7 +2509,7 @@ hostapd_global_ctrl_iface_fst_detach(struct hapd_interfaces *interfaces,
 		}
 	}
 
-	return EINVAL;
+	return -EINVAL;
 }
 
 #endif /* CONFIG_FST */
