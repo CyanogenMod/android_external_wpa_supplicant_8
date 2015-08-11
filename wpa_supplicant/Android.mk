@@ -1299,12 +1299,6 @@ ifdef CONFIG_WPS
 DBUS_OBJS += dbus/dbus_old_handlers_wps.c
 endif
 DBUS_OBJS += dbus/dbus_dict_helpers.c
-ifndef DBUS_LIBS
-DBUS_LIBS := $(shell $(PKG_CONFIG) --libs dbus-1)
-endif
-ifndef DBUS_INCLUDE
-DBUS_INCLUDE := $(shell $(PKG_CONFIG) --cflags dbus-1)
-endif
 DBUS_CFLAGS += $(DBUS_INCLUDE)
 endif
 
@@ -1320,12 +1314,6 @@ endif
 ifdef CONFIG_P2P
 DBUS_OBJS += dbus/dbus_new_handlers_p2p.c
 endif
-ifndef DBUS_LIBS
-DBUS_LIBS := $(shell $(PKG_CONFIG) --libs dbus-1)
-endif
-ifndef DBUS_INCLUDE
-DBUS_INCLUDE := $(shell $(PKG_CONFIG) --cflags dbus-1)
-endif
 ifdef CONFIG_CTRL_IFACE_DBUS_INTRO
 DBUS_OBJS += dbus/dbus_new_introspect.c
 DBUS_CFLAGS += -DCONFIG_CTRL_IFACE_DBUS_INTRO
@@ -1340,7 +1328,6 @@ endif
 
 OBJS += $(DBUS_OBJS)
 L_CFLAGS += $(DBUS_CFLAGS)
-LIBS += $(DBUS_LIBS)
 
 ifdef CONFIG_READLINE
 OBJS_c += src/utils/edit_readline.c
@@ -1582,6 +1569,9 @@ endif
 LOCAL_CFLAGS := $(L_CFLAGS)
 LOCAL_SRC_FILES := $(OBJS)
 LOCAL_C_INCLUDES := $(INCLUDES)
+ifeq ($(DBUS), y)
+LOCAL_SHARED_LIBRARIES += libdbus
+endif
 include $(BUILD_EXECUTABLE)
 
 ########################
