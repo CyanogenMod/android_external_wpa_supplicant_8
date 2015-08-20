@@ -9,7 +9,7 @@ ifdef CONFIG_EAP_PROXY_DUAL_SIM
 L_CFLAGS += -DCONFIG_EAP_PROXY_DUAL_SIM
 endif
 
-LIB_SHARED_EAP_PROXY := libqmi libqmiservices libidl libqcci_legacy
+LIB_SHARED_EAP_PROXY := libqmi libqmiservices libidl libqcci_legacy libqmi_client_qmux libdsutils libcutils libdiag
 
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/inc
 INCLUDES += $(TARGET_OUT_HEADERS)/qmi/platform
