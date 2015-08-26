@@ -243,6 +243,12 @@ char * os_readfile(const char *name, size_t *len)
 }
 
 
+int os_fsync(FILE *stream)
+{
+	return 0;
+}
+
+
 void * os_zalloc(size_t size)
 {
 	void *n = os_malloc(size);

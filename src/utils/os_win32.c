@@ -216,6 +216,24 @@ char * os_readfile(const char *name, size_t *len)
 }
 
 
+int os_fsync(FILE *stream)
+{
+	HANDLE hFile;
+
+	if (stream == NULL)
+		return -1;
+
+	hFile = _get_osfhandle(_fileno(stream));
+	if (hFile == INVALID_HANDLE_VALUE)
+		return -1;
+
+	if (!FlushFileBuffers(hFile))
+		return -1;
+
+	return 0;
+}
+
+
 void * os_zalloc(size_t size)
 {
 	return calloc(1, size);
