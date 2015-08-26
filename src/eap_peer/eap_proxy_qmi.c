@@ -1444,6 +1444,7 @@ static char bin_to_hexchar(u8 ch)
 	return ch + 'a' - 10;
 }
 
+extern struct eap_peer_config * eap_get_config(struct eap_sm *sm) __attribute__((weak));
 static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, struct eap_sm *eap_sm)
 {
 	struct eap_hdr *resp;
