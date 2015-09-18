@@ -2043,6 +2043,7 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 {
 	u8 bssid[ETH_ALEN];
 	int ft_completed;
+	int new_bss = 0;
 
 #ifdef CONFIG_AP
 	if (wpa_s->ap_iface) {
@@ -2074,6 +2075,7 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 	if (os_memcmp(bssid, wpa_s->bssid, ETH_ALEN) != 0) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Associated to a new BSS: BSSID="
 			MACSTR, MAC2STR(bssid));
+		new_bss = 1;
 		random_add_randomness(bssid, ETH_ALEN);
 		os_memcpy(wpa_s->bssid, bssid, ETH_ALEN);
 		os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
@@ -2087,17 +2089,17 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 			return;
 		}
+	}
 
 #ifdef ANDROID
-		if (wpa_s->conf->ap_scan == 1) {
+	if (wpa_s->conf->ap_scan == 1) {
 #else
-		if (wpa_s->conf->ap_scan == 1 &&
-		    wpa_s->drv_flags & WPA_DRIVER_FLAGS_BSS_SELECTION) {
+	if (wpa_s->conf->ap_scan == 1 &&
+	    wpa_s->drv_flags & WPA_DRIVER_FLAGS_BSS_SELECTION) {
 #endif
-			if (wpa_supplicant_assoc_update_ie(wpa_s) < 0)
-				wpa_msg(wpa_s, MSG_WARNING,
-					"WPA/RSN IEs not updated");
-		}
+		if (wpa_supplicant_assoc_update_ie(wpa_s) < 0 && new_bss)
+			wpa_msg(wpa_s, MSG_WARNING,
+				"WPA/RSN IEs not updated");
 	}
 
 #ifdef CONFIG_SME
