@@ -904,7 +904,8 @@ static int tls_engine_init(struct tls_connection *conn, const char *engine_id,
 #if !defined(OPENSSL_NO_ENGINE)
 #error "This code depends on OPENSSL_NO_ENGINE being defined by BoringSSL."
 #endif
-
+	if (!key_id)
+		return TLS_SET_PARAMS_ENGINE_PRV_INIT_FAILED;
 	conn->engine = NULL;
 	conn->private_key = EVP_PKEY_from_keystore(key_id);
 	if (!conn->private_key) {
