@@ -30,9 +30,10 @@ void wpas_wps_deinit(struct wpa_supplicant *wpa_s);
 int wpas_wps_eapol_cb(struct wpa_supplicant *wpa_s);
 enum wps_request_type wpas_wps_get_req_type(struct wpa_ssid *ssid);
 int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
-		       int p2p_group);
+		       int p2p_group, const int priority);
 int wpas_wps_start_pin(struct wpa_supplicant *wpa_s, const u8 *bssid,
-		       const char *pin, int p2p_group, u16 dev_pw_id);
+		       const char *pin, int p2p_group, u16 dev_pw_id,
+		       const int priority);
 int wpas_wps_cancel(struct wpa_supplicant *wpa_s);
 int wpas_wps_start_reg(struct wpa_supplicant *wpa_s, const u8 *bssid,
 		       const char *pin, struct wps_new_ap_settings *settings);
@@ -68,7 +69,8 @@ int wpas_wps_start_nfc(struct wpa_supplicant *wpa_s, const u8 *dev_addr,
 		       const u8 *bssid,
 		       const struct wpabuf *dev_pw, u16 dev_pw_id,
 		       int p2p_group, const u8 *peer_pubkey_hash,
-		       const u8 *ssid, size_t ssid_len, int freq);
+		       const u8 *ssid, size_t ssid_len, int freq,
+		       const int priority);
 int wpas_wps_nfc_tag_read(struct wpa_supplicant *wpa_s,
 			  const struct wpabuf *data, int forced_freq);
 struct wpabuf * wpas_wps_nfc_handover_req(struct wpa_supplicant *wpa_s,
