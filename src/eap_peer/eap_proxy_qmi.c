@@ -33,7 +33,6 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifdef CONFIG_EAP_PROXY
 #include "qmi_client.h"
 #include "eap_proxy_qmi.h"
-#include "qmi_uim_srvc.h"
 #include "qmi_client.h"
 #include "qmi_idl_lib.h"
 #include "authentication_service_v01.h"
@@ -278,7 +277,7 @@ static Boolean wpa_qmi_read_card_status(int sim_num)
 		   if (card_status_resp_msg.card_status.index_gw_pri != 0xFFFF) {
 			slot = (card_status_resp_msg.card_status.index_gw_pri & 0xFF00) >> 8;
 			if (slot == i) {
-			    session_type = QMI_UIM_SESSION_TYPE_PRI_GW_PROV;
+			    session_type = UIM_SESSION_TYPE_PRIMARY_GW_V01;
 			    wpa_printf (MSG_ERROR, "eap_proxy: read_card_status: prime slot = %d\n", slot);
 			    break;
 			}
@@ -286,7 +285,7 @@ static Boolean wpa_qmi_read_card_status(int sim_num)
 		   if (card_status_resp_msg.card_status.index_gw_sec != 0xFFFF) {
 			slot = (card_status_resp_msg.card_status.index_gw_sec & 0xFF00) >> 8;
 			if (slot == i) {
-			    session_type = QMI_UIM_SESSION_TYPE_SEC_GW_PROV;
+			    session_type = UIM_SESSION_TYPE_SECONDARY_GW_V01;
 			    wpa_printf (MSG_ERROR, "eap_proxy: read_card_status: second slot = %d\n", slot);
 			    break;
 			}
@@ -387,7 +386,7 @@ static Boolean wpa_qmi_read_card_imsi(int sim_num)
 	qmi_read_trans_req.session_information.session_type = session_type;
 #else
 	qmi_read_trans_req.session_information.session_type =
-				QMI_UIM_SESSION_TYPE_PRI_GW_PROV;
+				UIM_SESSION_TYPE_PRIMARY_GW_V01;
 #endif /* CONFIG_EAP_PROXY_DUAL_SIM */
 	qmi_read_trans_req.session_information.aid_len = 0;
 
