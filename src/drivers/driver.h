@@ -3394,6 +3394,13 @@ struct wpa_driver_ops {
 	 * Returns 0 on success, -1 on failure
 	 */
 	int (*set_band)(void *priv, enum set_band band);
+
+	/**
+	 * abort_scan - Request the driver to abort an ongoing scan
+	 * @priv: Private driver interface data
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*abort_scan)(void *priv);
 };
 
 
