@@ -679,7 +679,8 @@ eap_pwd_perform_confirm_exchange(struct eap_sm *sm, struct eap_pwd_data *data,
 	wpabuf_put_data(data->outbuf, conf, SHA256_MAC_LEN);
 
 fin:
-	os_free(cruft);
+	if (data->grp)
+		os_free(cruft);
 	BN_free(x);
 	BN_free(y);
 	ret->methodState = METHOD_DONE;
