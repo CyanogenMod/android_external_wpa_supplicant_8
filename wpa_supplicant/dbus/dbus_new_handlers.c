@@ -435,7 +435,7 @@ dbus_bool_t wpas_dbus_simple_array_property_getter(DBusMessageIter *iter,
 
 	for (i = 0; i < array_len; i++) {
 		if (!dbus_message_iter_append_basic(&array_iter, type,
-						    array + i * element_size)) {
+						    (char *)array + i * element_size)) {
 			dbus_set_error(error, DBUS_ERROR_FAILED,
 				       "%s: failed to construct message 2.5",
 				       __func__);
