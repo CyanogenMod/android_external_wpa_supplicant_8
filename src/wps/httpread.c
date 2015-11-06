@@ -278,8 +278,6 @@ static int httpread_hdr_analyze(struct httpread *h)
 			}
 		}
 		*uri = 0;       /* null terminate */
-		while (isgraph(*hbp))
-			hbp++;
 		while (*hbp == ' ' || *hbp == '\t')
 			hbp++;
 		/* get version */
@@ -506,10 +504,13 @@ static void httpread_read_handler(int sd, void *eloop_ctx, void *sock_ctx)
 			    new_alloc_nbytes < (h->content_length + 1))
 				new_alloc_nbytes = h->content_length + 1;
 			if (new_alloc_nbytes < h->body_alloc_nbytes ||
-			    new_alloc_nbytes > h->max_bytes) {
+			    new_alloc_nbytes > h->max_bytes +
+			    HTTPREAD_BODYBUF_DELTA) {
 				wpa_printf(MSG_DEBUG,
-					   "httpread: Unacceptable body length %d",
-					   new_alloc_nbytes);
+					   "httpread: Unacceptable body length %d (body_alloc_nbytes=%u max_bytes=%u)",
+					   new_alloc_nbytes,
+					   h->body_alloc_nbytes,
+					   h->max_bytes);
 				goto bad;
 			}
 			if ((new_body = os_realloc(h->body, new_alloc_nbytes))

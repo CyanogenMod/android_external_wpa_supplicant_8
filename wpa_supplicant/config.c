@@ -15,6 +15,7 @@
 #include "rsn_supp/wpa.h"
 #include "eap_peer/eap.h"
 #include "p2p/p2p.h"
+#include "fst/fst.h"
 #include "config.h"
 
 
@@ -2269,6 +2270,7 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->osu_dir);
 	os_free(config->bgscan);
 	os_free(config->wowlan_triggers);
+	os_free(config->fst_group_id);
 	os_free(config);
 }
 
@@ -3515,9 +3517,12 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->user_mpm = DEFAULT_USER_MPM;
 	config->max_peer_links = DEFAULT_MAX_PEER_LINKS;
 	config->mesh_max_inactivity = DEFAULT_MESH_MAX_INACTIVITY;
+	config->dot11RSNASAERetransPeriod =
+		DEFAULT_DOT11_RSNA_SAE_RETRANS_PERIOD;
 	config->fast_reauth = DEFAULT_FAST_REAUTH;
 	config->p2p_go_intent = DEFAULT_P2P_GO_INTENT;
 	config->p2p_intra_bss = DEFAULT_P2P_INTRA_BSS;
+	config->p2p_go_freq_change_policy = DEFAULT_P2P_GO_FREQ_MOVE;
 	config->p2p_go_max_inactivity = DEFAULT_P2P_GO_MAX_INACTIVITY;
 	config->p2p_optimize_listen_chan = DEFAULT_P2P_OPTIMIZE_LISTEN_CHAN;
 	config->p2p_go_ctwindow = DEFAULT_P2P_GO_CTWINDOW;
@@ -3535,6 +3540,7 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->rand_addr_lifetime = DEFAULT_RAND_ADDR_LIFETIME;
 	config->key_mgmt_offload = DEFAULT_KEY_MGMT_OFFLOAD;
 	config->cert_in_cb = DEFAULT_CERT_IN_CB;
+	config->wpa_rsc_relaxation = DEFAULT_WPA_RSC_RELAXATION;
 
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
@@ -4128,6 +4134,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(user_mpm), 0 },
 	{ INT_RANGE(max_peer_links, 0, 255), 0 },
 	{ INT(mesh_max_inactivity), 0 },
+	{ INT(dot11RSNASAERetransPeriod), 0 },
 #endif /* CONFIG_MESH */
 	{ INT(disable_scan_offload), 0 },
 	{ INT(fast_reauth), 0 },
@@ -4162,8 +4169,8 @@ static const struct global_parse_data global_fields[] = {
 #endif /* CONFIG_WPS */
 #ifdef CONFIG_P2P
 	{ FUNC(sec_device_type), CFG_CHANGED_SEC_DEVICE_TYPE },
-	{ INT(p2p_listen_reg_class), 0 },
-	{ INT(p2p_listen_channel), 0 },
+	{ INT(p2p_listen_reg_class), CFG_CHANGED_P2P_LISTEN_CHANNEL },
+	{ INT(p2p_listen_channel), CFG_CHANGED_P2P_LISTEN_CHANNEL },
 	{ INT(p2p_oper_reg_class), CFG_CHANGED_P2P_OPER_CHANNEL },
 	{ INT(p2p_oper_channel), CFG_CHANGED_P2P_OPER_CHANNEL },
 	{ INT_RANGE(p2p_go_intent, 0, 15), 0 },
@@ -4171,6 +4178,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT_RANGE(persistent_reconnect, 0, 1), 0 },
 	{ INT_RANGE(p2p_intra_bss, 0, 1), CFG_CHANGED_P2P_INTRA_BSS },
 	{ INT(p2p_group_idle), 0 },
+	{ INT_RANGE(p2p_go_freq_change_policy, 0, P2P_GO_FREQ_MOVE_MAX), 0 },
 	{ INT_RANGE(p2p_passphrase_len, 8, 63),
 	  CFG_CHANGED_P2P_PASSPHRASE_LEN },
 	{ FUNC(p2p_pref_chan), CFG_CHANGED_P2P_PREF_CHAN },
@@ -4234,6 +4242,12 @@ static const struct global_parse_data global_fields[] = {
 	{ INT(passive_scan), 0 },
 	{ INT(reassoc_same_bss_optim), 0 },
 	{ INT(wps_priority), 0},
+#ifdef CONFIG_FST
+	{ STR_RANGE(fst_group_id, 1, FST_MAX_GROUP_ID_LEN), 0 },
+	{ INT_RANGE(fst_priority, 1, FST_MAX_PRIO_VALUE), 0 },
+	{ INT_RANGE(fst_llt, 1, FST_MAX_LLT_MS), 0 },
+#endif /* CONFIG_FST */
+	{ INT_RANGE(wpa_rsc_relaxation, 0, 1), 0 },
 };
 
 #undef FUNC
@@ -4289,6 +4303,23 @@ int wpa_config_get_value(const char *name, struct wpa_config *config,
 	}
 
 	return -1;
+}
+
+
+int wpa_config_get_num_global_field_names(void)
+{
+	return NUM_GLOBAL_FIELDS;
+}
+
+
+const char * wpa_config_get_global_field_name(unsigned int i, int *no_var)
+{
+	if (i >= NUM_GLOBAL_FIELDS)
+		return NULL;
+
+	if (no_var)
+		*no_var = !global_fields[i].param1;
+	return global_fields[i].name;
 }
 
 

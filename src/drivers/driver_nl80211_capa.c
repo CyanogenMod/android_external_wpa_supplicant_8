@@ -580,6 +580,7 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				case QCA_NL80211_VENDOR_SUBCMD_TEST:
 					drv->vendor_cmd_test_avail = 1;
 					break;
+#ifdef CONFIG_DRIVER_NL80211_QCA
 				case QCA_NL80211_VENDOR_SUBCMD_ROAMING:
 					drv->roaming_vendor_cmd_avail = 1;
 					break;
@@ -589,6 +590,12 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				case QCA_NL80211_VENDOR_SUBCMD_GET_FEATURES:
 					drv->get_features_vendor_cmd_avail = 1;
 					break;
+				case QCA_NL80211_VENDOR_SUBCMD_GET_PREFERRED_FREQ_LIST:
+					drv->get_pref_freq_list = 1;
+					break;
+				case QCA_NL80211_VENDOR_SUBCMD_SET_PROBABLE_OPER_CHANNEL:
+					drv->set_prob_oper_freq = 1;
+					break;
 				case QCA_NL80211_VENDOR_SUBCMD_DO_ACS:
 					drv->capa.flags |=
 						WPA_DRIVER_FLAGS_ACS_OFFLOAD;
@@ -596,6 +603,10 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				case QCA_NL80211_VENDOR_SUBCMD_SETBAND:
 					drv->setband_vendor_cmd_avail = 1;
 					break;
+				case QCA_NL80211_VENDOR_SUBCMD_TRIGGER_SCAN:
+					drv->scan_vendor_cmd_avail = 1;
+					break;
+#endif /* CONFIG_DRIVER_NL80211_QCA */
 				}
 			}
 
@@ -626,6 +637,10 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 	if (tb[NL80211_ATTR_MAX_AP_ASSOC_STA])
 		capa->max_stations =
 			nla_get_u32(tb[NL80211_ATTR_MAX_AP_ASSOC_STA]);
+
+	if (tb[NL80211_ATTR_MAX_CSA_COUNTERS])
+		capa->max_csa_counters =
+			nla_get_u8(tb[NL80211_ATTR_MAX_CSA_COUNTERS]);
 
 	return NL_SKIP;
 }
@@ -683,8 +698,6 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 	if (!drv->capa.max_remain_on_chan)
 		drv->capa.max_remain_on_chan = 5000;
 
-	if (info->channel_switch_supported)
-		drv->capa.flags |= WPA_DRIVER_FLAGS_AP_CSA;
 	drv->capa.wmm_ac_supported = info->wmm_ac_supported;
 
 	drv->capa.mac_addr_rand_sched_scan_supported =
@@ -692,9 +705,17 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 	drv->capa.mac_addr_rand_scan_supported =
 		info->mac_addr_rand_scan_supported;
 
+	if (info->channel_switch_supported) {
+		drv->capa.flags |= WPA_DRIVER_FLAGS_AP_CSA;
+		if (!drv->capa.max_csa_counters)
+			drv->capa.max_csa_counters = 1;
+	}
+
 	return 0;
 }
 
+
+#ifdef CONFIG_DRIVER_NL80211_QCA
 
 static int dfs_info_handler(struct nl_msg *msg, void *arg)
 {
@@ -751,6 +772,7 @@ static void qca_nl80211_check_dfs_capa(struct wpa_driver_nl80211_data *drv)
 struct features_info {
 	u8 *flags;
 	size_t flags_len;
+	struct wpa_driver_capa *capa;
 };
 
 
@@ -776,6 +798,19 @@ static int features_info_handler(struct nl_msg *msg, void *arg)
 			info->flags = nla_data(attr);
 			info->flags_len = nla_len(attr);
 		}
+		attr = tb_vendor[QCA_WLAN_VENDOR_ATTR_CONCURRENCY_CAPA];
+		if (attr)
+			info->capa->conc_capab = nla_get_u32(attr);
+
+		attr = tb_vendor[
+			QCA_WLAN_VENDOR_ATTR_MAX_CONCURRENT_CHANNELS_2_4_BAND];
+		if (attr)
+			info->capa->max_conc_chan_2_4 = nla_get_u32(attr);
+
+		attr = tb_vendor[
+			QCA_WLAN_VENDOR_ATTR_MAX_CONCURRENT_CHANNELS_5_0_BAND];
+		if (attr)
+			info->capa->max_conc_chan_5_0 = nla_get_u32(attr);
 	}
 
 	return NL_SKIP;
@@ -810,6 +845,7 @@ static void qca_nl80211_get_features(struct wpa_driver_nl80211_data *drv)
 	}
 
 	os_memset(&info, 0, sizeof(info));
+	info.capa = &drv->capa;
 	ret = send_and_recv_msgs(drv, msg, features_info_handler, &info);
 	if (ret || !info.flags)
 		return;
@@ -819,7 +855,13 @@ static void qca_nl80211_get_features(struct wpa_driver_nl80211_data *drv)
 
 	if (check_feature(QCA_WLAN_VENDOR_FEATURE_SUPPORT_HW_MODE_ANY, &info))
 		drv->capa.flags |= WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY;
+
+	if (check_feature(QCA_WLAN_VENDOR_FEATURE_OFFCHANNEL_SIMULTANEOUS,
+			  &info))
+		drv->capa.flags |= WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS;
 }
+
+#endif /* CONFIG_DRIVER_NL80211_QCA */
 
 
 int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
@@ -901,8 +943,20 @@ int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 	if (!drv->use_monitor && !info.data_tx_status)
 		drv->capa.flags &= ~WPA_DRIVER_FLAGS_EAPOL_TX_STATUS;
 
+#ifdef CONFIG_DRIVER_NL80211_QCA
 	qca_nl80211_check_dfs_capa(drv);
 	qca_nl80211_get_features(drv);
+
+	/*
+	 * To enable offchannel simultaneous support in wpa_supplicant, the
+	 * underlying driver needs to support the same along with offchannel TX.
+	 * Offchannel TX support is needed since remain_on_channel and
+	 * action_tx use some common data structures and hence cannot be
+	 * scheduled simultaneously.
+	 */
+	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX))
+		drv->capa.flags &= ~WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS;
+#endif /* CONFIG_DRIVER_NL80211_QCA */
 
 	return 0;
 }

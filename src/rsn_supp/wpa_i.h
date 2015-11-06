@@ -19,11 +19,12 @@ struct wpa_eapol_key;
  * struct wpa_sm - Internal WPA state machine data
  */
 struct wpa_sm {
-	u8 pmk[PMK_LEN];
+	u8 pmk[PMK_LEN_MAX];
 	size_t pmk_len;
 	struct wpa_ptk ptk, tptk;
 	int ptk_set, tptk_set;
 	unsigned int msg_3_of_4_ok:1;
+	unsigned int tk_to_set:1;
 	u8 snonce[WPA_NONCE_LEN];
 	u8 anonce[WPA_NONCE_LEN]; /* ANonce from the last 1/4 msg */
 	int renew_snonce;
@@ -60,6 +61,7 @@ struct wpa_sm {
 	size_t ssid_len;
 	int wpa_ptk_rekey;
 	int p2p;
+	int wpa_rsc_relaxation;
 
 	u8 own_addr[ETH_ALEN];
 	const char *ifname;
@@ -349,9 +351,9 @@ static inline int wpa_sm_key_mgmt_set_pmk(struct wpa_sm *sm,
 	return sm->ctx->key_mgmt_set_pmk(sm->ctx->ctx, pmk, pmk_len);
 }
 
-void wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck, size_t kck_len,
-			int ver, const u8 *dest, u16 proto,
-			u8 *msg, size_t msg_len, u8 *key_mic);
+int wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck, size_t kck_len,
+		       int ver, const u8 *dest, u16 proto,
+		       u8 *msg, size_t msg_len, u8 *key_mic);
 int wpa_supplicant_send_2_of_4(struct wpa_sm *sm, const unsigned char *dst,
 			       const struct wpa_eapol_key *key,
 			       int ver, const u8 *nonce,

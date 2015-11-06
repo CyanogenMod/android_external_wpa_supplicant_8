@@ -39,7 +39,7 @@ endif
 
 # Use Android specific directory for control interface sockets
 L_CFLAGS += -DCONFIG_CTRL_IFACE_CLIENT_DIR=\"/data/misc/wifi/sockets\"
-L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/system/wpa_supplicant\"
+L_CFLAGS += -DCONFIG_CTRL_IFACE_DIR=\"/data/misc/wifi/sockets\"
 
 # Use Android specific directory for wpa_cli command completion history
 L_CFLAGS += -DCONFIG_WPA_CLI_HISTORY_DIR=\"/data/misc/wifi\"
@@ -315,6 +315,22 @@ L_CFLAGS += -DCONFIG_INTERWORKING
 NEED_GAS=y
 endif
 
+ifdef CONFIG_FST
+L_CFLAGS += -DCONFIG_FST
+OBJS += src/fst/fst.c
+OBJS += src/fst/fst_session.c
+OBJS += src/fst/fst_iface.c
+OBJS += src/fst/fst_group.c
+OBJS += src/fst/fst_ctrl_aux.c
+ifdef CONFIG_FST_TEST
+L_CFLAGS += -DCONFIG_FST_TEST
+endif
+ifdef CONFIG_CTRL_IFACE
+OBJS += src/fst/fst_ctrl_iface.c
+endif
+endif
+
+
 include $(LOCAL_PATH)/src/drivers/drivers.mk
 
 ifdef CONFIG_AP
@@ -411,9 +427,11 @@ L_CFLAGS += -DEAP_TTLS
 OBJS += src/eap_peer/eap_ttls.c
 OBJS_h += src/eap_server/eap_server_ttls.c
 endif
-MS_FUNCS=y
 TLS_FUNCS=y
+ifndef CONFIG_FIPS
+MS_FUNCS=y
 CHAP=y
+endif
 CONFIG_IEEE8021X_EAPOL=y
 endif
 
@@ -646,6 +664,7 @@ CONFIG_IEEE8021X_EAPOL=y
 NEED_DH_GROUPS=y
 NEED_DH_GROUPS_ALL=y
 NEED_SHA256=y
+NEED_AES_CBC=y
 endif
 
 ifdef CONFIG_WPS
@@ -973,6 +992,8 @@ OBJS_p += src/crypto/crypto_openssl.c
 ifdef NEED_FIPS186_2_PRF
 OBJS += src/crypto/fips_prf_openssl.c
 endif
+NEED_SHA256=y
+NEED_TLS_PRF_SHA256=y
 LIBS += -lcrypto
 LIBS_p += -lcrypto
 ifdef CONFIG_TLS_ADD_DL
@@ -1117,6 +1138,20 @@ AESOBJS += src/crypto/aes-internal.c src/crypto/aes-internal-dec.c
 endif
 
 ifneq ($(CONFIG_TLS), openssl)
+NEED_INTERNAL_AES_WRAP=y
+endif
+ifdef CONFIG_OPENSSL_INTERNAL_AES_WRAP
+# Seems to be needed at least with BoringSSL
+NEED_INTERNAL_AES_WRAP=y
+L_CFLAGS += -DCONFIG_OPENSSL_INTERNAL_AES_WRAP
+endif
+ifdef CONFIG_FIPS
+# Have to use internal AES key wrap routines to use OpenSSL EVP since the
+# OpenSSL AES_wrap_key()/AES_unwrap_key() API is not available in FIPS mode.
+NEED_INTERNAL_AES_WRAP=y
+endif
+
+ifdef NEED_INTERNAL_AES_WRAP
 AESOBJS += src/crypto/aes-unwrap.c
 endif
 ifdef NEED_AES_EAX
@@ -1139,7 +1174,7 @@ endif
 endif
 ifdef NEED_AES_WRAP
 NEED_AES_ENC=y
-ifneq ($(CONFIG_TLS), openssl)
+ifdef NEED_INTERNAL_AES_WRAP
 AESOBJS += src/crypto/aes-wrap.c
 endif
 endif
@@ -1215,9 +1250,15 @@ DESOBJS += src/crypto/des-internal.c
 endif
 endif
 
+ifdef CONFIG_NO_RC4
+L_CFLAGS += -DCONFIG_NO_RC4
+endif
+
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
+ifndef CONFIG_NO_RC4
 OBJS += src/crypto/rc4.c
+endif
 endif
 endif
 
@@ -1235,12 +1276,14 @@ ifdef NEED_TLS_PRF_SHA256
 SHA256OBJS += src/crypto/sha256-tlsprf.c
 endif
 ifdef NEED_HMAC_SHA256_KDF
+L_CFLAGS += -DCONFIG_HMAC_SHA256_KDF
 SHA256OBJS += src/crypto/sha256-kdf.c
 endif
 OBJS += $(SHA256OBJS)
 endif
 ifdef NEED_SHA384
 L_CFLAGS += -DCONFIG_SHA384
+OBJS += src/crypto/sha384-prf.c
 endif
 
 ifdef NEED_DH_GROUPS

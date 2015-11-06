@@ -225,7 +225,7 @@ struct wpa_params {
 	 * This can also be %NULL. In such a case, if a P2P Device dedicated
 	 * interfaces is created, the main configuration file will be used.
 	 */
-	const char *conf_p2p_dev;
+	char *conf_p2p_dev;
 #endif /* CONFIG_P2P */
 
 };
@@ -278,6 +278,7 @@ struct wpa_global {
 	unsigned int p2p_24ghz_social_channels:1;
 	unsigned int pending_p2ps_group:1;
 	unsigned int pending_group_iface_for_p2ps:1;
+	unsigned int pending_p2ps_group_freq;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	int wifi_display;
@@ -300,8 +301,17 @@ struct wpa_radio {
 	char name[16]; /* from driver_ops get_radio_name() or empty if not
 			* available */
 	unsigned int external_scan_running:1;
+	unsigned int num_active_works;
 	struct dl_list ifaces; /* struct wpa_supplicant::radio_list entries */
 	struct dl_list work; /* struct wpa_radio_work::list entries */
+};
+
+#define MAX_ACTIVE_WORKS 2
+
+enum wpa_radio_work_band {
+	BAND_2_4_GHZ = BIT(0),
+	BAND_5_GHZ = BIT(1),
+	BAND_60_GHZ = BIT(2),
 };
 
 /**
@@ -316,6 +326,7 @@ struct wpa_radio_work {
 	void *ctx;
 	unsigned int started:1;
 	struct os_reltime time;
+	unsigned int bands;
 };
 
 int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
@@ -593,6 +604,8 @@ struct wpa_supplicant {
 	} scan_req, last_scan_req;
 	enum wpa_states scan_prev_wpa_state;
 	struct os_reltime scan_trigger_time, scan_start_time;
+	/* Minimum freshness requirement for connection purposes */
+	struct os_reltime scan_min_time;
 	int scan_runs; /* number of scan runs since WPS was started */
 	int *next_scan_freqs;
 	int *manual_scan_freqs;
@@ -820,7 +833,7 @@ struct wpa_supplicant {
 	unsigned int p2p_nfc_tag_enabled:1;
 	unsigned int p2p_peer_oob_pk_hash_known:1;
 	unsigned int p2p_disable_ip_addr_req:1;
-	unsigned int p2ps_join_addr_valid:1;
+	unsigned int p2ps_method_config_any:1;
 	unsigned int p2p_cli_probe:1;
 	int p2p_persistent_go_freq;
 	int p2p_persistent_id;
@@ -977,6 +990,12 @@ struct wpa_supplicant {
 	u8 last_tspecs_count;
 
 	struct rrm_data rrm;
+
+#ifdef CONFIG_FST
+	struct fst_iface *fst;
+	const struct wpabuf *fst_ies;
+	struct wpabuf *received_mb_ies;
+#endif /* CONFIG_FST */
 };
 
 
@@ -1149,4 +1168,14 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 			   int *freq_array, unsigned int len);
 
 void wpas_network_reenabled(void *eloop_ctx, void *timeout_ctx);
+
+#ifdef CONFIG_FST
+
+struct fst_wpa_obj;
+
+void fst_wpa_supplicant_fill_iface_obj(struct wpa_supplicant *wpa_s,
+				       struct fst_wpa_obj *iface_obj);
+
+#endif /* CONFIG_FST */
+
 #endif /* WPA_SUPPLICANT_I_H */

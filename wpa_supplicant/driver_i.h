@@ -292,7 +292,7 @@ static inline int wpa_drv_send_mlme(struct wpa_supplicant *wpa_s,
 	if (wpa_s->driver->send_mlme)
 		return wpa_s->driver->send_mlme(wpa_s->drv_priv,
 						data, data_len, noack,
-						freq);
+						freq, NULL, 0);
 	return -1;
 }
 
@@ -891,6 +891,25 @@ static inline int wpa_drv_setband(struct wpa_supplicant *wpa_s,
 	if (!wpa_s->driver->set_band)
 		return -1;
 	return wpa_s->driver->set_band(wpa_s->drv_priv, band);
+}
+
+static inline int wpa_drv_get_pref_freq_list(struct wpa_supplicant *wpa_s,
+					     enum wpa_driver_if_type if_type,
+					     unsigned int *num,
+					     unsigned int *freq_list)
+{
+	if (!wpa_s->driver->get_pref_freq_list)
+		return -1;
+	return wpa_s->driver->get_pref_freq_list(wpa_s->drv_priv, if_type,
+						 num, freq_list);
+}
+
+static inline int wpa_drv_set_prob_oper_freq(struct wpa_supplicant *wpa_s,
+					     unsigned int freq)
+{
+	if (!wpa_s->driver->set_prob_oper_freq)
+		return 0;
+	return wpa_s->driver->set_prob_oper_freq(wpa_s->drv_priv, freq);
 }
 
 #endif /* DRIVER_I_H */

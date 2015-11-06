@@ -17,6 +17,16 @@ CFLAGS += -I$(abspath ../src/utils)
 
 -include .config
 
+ifndef CONFIG_NO_GITVER
+# Add VERSION_STR postfix for builds from a git repository
+ifeq ($(wildcard ../.git),../.git)
+GITVER := $(shell git describe --dirty=+)
+ifneq ($(GITVER),)
+CFLAGS += -DGIT_VERSION_STR_POSTFIX=\"-$(GITVER)\"
+endif
+endif
+endif
+
 ifdef CONFIG_TESTING_OPTIONS
 CFLAGS += -DCONFIG_TESTING_OPTIONS
 CONFIG_WPS_TESTING=y
@@ -131,11 +141,14 @@ endif
 OBJS += ../src/utils/$(CONFIG_ELOOP).o
 OBJS_c += ../src/utils/$(CONFIG_ELOOP).o
 
+ifndef CONFIG_OSX
 ifeq ($(CONFIG_ELOOP), eloop)
 # Using glibc < 2.17 requires -lrt for clock_gettime()
+# OS X has an alternate implementation
 LIBS += -lrt
 LIBS_c += -lrt
 LIBS_p += -lrt
+endif
 endif
 
 ifdef CONFIG_ELOOP_POLL
@@ -425,9 +438,11 @@ CFLAGS += -DEAP_TTLS
 OBJS += ../src/eap_peer/eap_ttls.o
 OBJS_h += ../src/eap_server/eap_server_ttls.o
 endif
-MS_FUNCS=y
 TLS_FUNCS=y
+ifndef CONFIG_FIPS
+MS_FUNCS=y
 CHAP=y
+endif
 CONFIG_IEEE8021X_EAPOL=y
 endif
 
@@ -660,6 +675,7 @@ CONFIG_IEEE8021X_EAPOL=y
 NEED_DH_GROUPS=y
 NEED_DH_GROUPS_ALL=y
 NEED_SHA256=y
+NEED_AES_CBC=y
 endif
 
 ifdef CONFIG_WPS
@@ -1001,6 +1017,8 @@ OBJS_priv += ../src/crypto/crypto_openssl.o
 ifdef NEED_FIPS186_2_PRF
 OBJS += ../src/crypto/fips_prf_openssl.o
 endif
+NEED_SHA256=y
+NEED_TLS_PRF_SHA256=y
 LIBS += -lcrypto
 LIBS_p += -lcrypto
 ifdef CONFIG_TLS_ADD_DL
@@ -1146,6 +1164,20 @@ AESOBJS += ../src/crypto/aes-internal.o ../src/crypto/aes-internal-dec.o
 endif
 
 ifneq ($(CONFIG_TLS), openssl)
+NEED_INTERNAL_AES_WRAP=y
+endif
+ifdef CONFIG_OPENSSL_INTERNAL_AES_WRAP
+# Seems to be needed at least with BoringSSL
+NEED_INTERNAL_AES_WRAP=y
+CFLAGS += -DCONFIG_OPENSSL_INTERNAL_AES_WRAP
+endif
+ifdef CONFIG_FIPS
+# Have to use internal AES key wrap routines to use OpenSSL EVP since the
+# OpenSSL AES_wrap_key()/AES_unwrap_key() API is not available in FIPS mode.
+NEED_INTERNAL_AES_WRAP=y
+endif
+
+ifdef NEED_INTERNAL_AES_WRAP
 AESOBJS += ../src/crypto/aes-unwrap.o
 endif
 ifdef NEED_AES_EAX
@@ -1171,7 +1203,7 @@ AESOBJS += ../src/crypto/aes-siv.o
 endif
 ifdef NEED_AES_WRAP
 NEED_AES_ENC=y
-ifneq ($(CONFIG_TLS), openssl)
+ifdef NEED_INTERNAL_AES_WRAP
 AESOBJS += ../src/crypto/aes-wrap.o
 endif
 endif
@@ -1243,9 +1275,15 @@ DESOBJS += ../src/crypto/des-internal.o
 endif
 endif
 
+ifdef CONFIG_NO_RC4
+CFLAGS += -DCONFIG_NO_RC4
+endif
+
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
+ifndef CONFIG_NO_RC4
 OBJS += ../src/crypto/rc4.o
+endif
 endif
 endif
 
@@ -1263,12 +1301,14 @@ ifdef NEED_TLS_PRF_SHA256
 SHA256OBJS += ../src/crypto/sha256-tlsprf.o
 endif
 ifdef NEED_HMAC_SHA256_KDF
+CFLAGS += -DCONFIG_HMAC_SHA256_KDF
 OBJS += ../src/crypto/sha256-kdf.o
 endif
 OBJS += $(SHA256OBJS)
 endif
 ifdef NEED_SHA384
 CFLAGS += -DCONFIG_SHA384
+OBJS += ../src/crypto/sha384-prf.o
 endif
 
 ifdef NEED_DH_GROUPS
@@ -1383,7 +1423,7 @@ LIBS += $(DBUS_LIBS)
 
 ifdef CONFIG_READLINE
 OBJS_c += ../src/utils/edit_readline.o
-LIBS_c += -lncurses -lreadline
+LIBS_c += -lreadline -lncurses
 else
 ifdef CONFIG_WPA_CLI_EDIT
 OBJS_c += ../src/utils/edit.o
@@ -1412,6 +1452,10 @@ endif
 ifdef CONFIG_IPV6
 # for eapol_test only
 CFLAGS += -DCONFIG_IPV6
+endif
+
+ifdef CONFIG_NO_LINUX_PACKET_SOCKET_WAR
+CFLAGS += -DCONFIG_NO_LINUX_PACKET_SOCKET_WAR
 endif
 
 ifdef NEED_BASE64
@@ -1591,6 +1635,24 @@ EXTRALIBS += WbemUuid.Lib
 endif
 endif
 
+ifdef CONFIG_FST
+CFLAGS += -DCONFIG_FST
+ifdef CONFIG_FST_TEST
+CFLAGS += -DCONFIG_FST_TEST
+endif
+FST_OBJS += ../src/fst/fst.o
+FST_OBJS += ../src/fst/fst_session.o
+FST_OBJS += ../src/fst/fst_iface.o
+FST_OBJS += ../src/fst/fst_group.o
+FST_OBJS += ../src/fst/fst_ctrl_aux.o
+ifdef CONFIG_CTRL_IFACE
+FST_OBJS += ../src/fst/fst_ctrl_iface.o
+endif
+OBJS += $(FST_OBJS)
+OBJS_t += $(FST_OBJS)
+OBJS_t2 += $(FST_OBJS)
+endif
+
 ifndef LDO
 LDO=$(CC)
 endif
@@ -1644,9 +1706,11 @@ wpa_cli: $(OBJS_c)
 
 LIBCTRL += ../src/common/wpa_ctrl.o
 LIBCTRL += ../src/utils/os_$(CONFIG_OS).o
+LIBCTRL += ../src/utils/common.o
 LIBCTRL += ../src/utils/wpa_debug.o
 LIBCTRLSO += ../src/common/wpa_ctrl.c
 LIBCTRLSO += ../src/utils/os_$(CONFIG_OS).c
+LIBCTRLSO += ../src/utils/common.c
 LIBCTRLSO += ../src/utils/wpa_debug.c
 
 libwpa_client.a: $(LIBCTRL)
@@ -1657,6 +1721,14 @@ libwpa_client.a: $(LIBCTRL)
 libwpa_client.so: $(LIBCTRLSO)
 	@$(E) "  CC  $@ ($^)"
 	$(Q)$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -fPIC $^
+
+libwpa_test1: tests/libwpa_test.o libwpa_client.a
+	$(Q)$(LDO) $(LDFLAGS) -o libwpa_test1 tests/libwpa_test.o libwpa_client.a $(LIBS_c)
+	@$(E) "  LD " $@
+
+libwpa_test2: tests/libwpa_test.o libwpa_client.so
+	$(Q)$(LDO) $(LDFLAGS) -o libwpa_test2 tests/libwpa_test.o -L. -lwpa_client $(LIBS_c)
+	@$(E) "  LD " $@
 
 link_test: $(OBJS) $(OBJS_h) tests/link_test.o
 	$(Q)$(LDO) $(LDFLAGS) -o link_test $(OBJS) $(OBJS_h) tests/link_test.o $(LIBS)
@@ -1779,5 +1851,6 @@ clean:
 	rm -rf lcov-html
 	rm -f libwpa_client.a
 	rm -f libwpa_client.so
+	rm -f libwpa_test1 libwpa_test2
 
 -include $(OBJS:%.o=%.d)

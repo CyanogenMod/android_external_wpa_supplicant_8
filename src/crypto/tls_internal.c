@@ -64,10 +64,12 @@ void tls_deinit(void *ssl_ctx)
 		tlsv1_client_global_deinit();
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
-		tlsv1_cred_free(global->server_cred);
 		tlsv1_server_global_deinit();
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
 	}
+#ifdef CONFIG_TLS_INTERNAL_SERVER
+	tlsv1_cred_free(global->server_cred);
+#endif /* CONFIG_TLS_INTERNAL_SERVER */
 	os_free(global);
 }
 
@@ -328,7 +330,8 @@ int tls_global_set_verify(void *tls_ctx, int check_crl)
 
 
 int tls_connection_set_verify(void *tls_ctx, struct tls_connection *conn,
-			      int verify_peer)
+			      int verify_peer, unsigned int flags,
+			      const u8 *session_ctx, size_t session_ctx_len)
 {
 #ifdef CONFIG_TLS_INTERNAL_SERVER
 	if (conn->server)
@@ -338,16 +341,16 @@ int tls_connection_set_verify(void *tls_ctx, struct tls_connection *conn,
 }
 
 
-int tls_connection_get_keys(void *tls_ctx, struct tls_connection *conn,
-			    struct tls_keys *keys)
+int tls_connection_get_random(void *tls_ctx, struct tls_connection *conn,
+			      struct tls_random *data)
 {
 #ifdef CONFIG_TLS_INTERNAL_CLIENT
 	if (conn->client)
-		return tlsv1_client_get_keys(conn->client, keys);
+		return tlsv1_client_get_random(conn->client, data);
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
 	if (conn->server)
-		return tlsv1_server_get_keys(conn->server, keys);
+		return tlsv1_server_get_random(conn->server, data);
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
 	return -1;
 }
@@ -617,6 +620,14 @@ int tls_connection_set_cipher_list(void *tls_ctx, struct tls_connection *conn,
 }
 
 
+int tls_get_version(void *ssl_ctx, struct tls_connection *conn,
+		    char *buf, size_t buflen)
+{
+	/* TODO */
+	return -1;
+}
+
+
 int tls_get_cipher(void *tls_ctx, struct tls_connection *conn,
 		   char *buf, size_t buflen)
 {
@@ -674,12 +685,6 @@ int tls_connection_get_write_alerts(void *tls_ctx,
 }
 
 
-unsigned int tls_capabilities(void *tls_ctx)
-{
-	return 0;
-}
-
-
 int tls_connection_set_session_ticket_cb(void *tls_ctx,
 					 struct tls_connection *conn,
 					 tls_session_ticket_cb cb,
@@ -704,4 +709,27 @@ int tls_connection_set_session_ticket_cb(void *tls_ctx,
 int tls_get_library_version(char *buf, size_t buf_len)
 {
 	return os_snprintf(buf, buf_len, "internal");
+}
+
+
+void tls_connection_set_success_data(struct tls_connection *conn,
+				     struct wpabuf *data)
+{
+}
+
+
+void tls_connection_set_success_data_resumed(struct tls_connection *conn)
+{
+}
+
+
+const struct wpabuf *
+tls_connection_get_success_data(struct tls_connection *conn)
+{
+	return NULL;
+}
+
+
+void tls_connection_remove_session(struct tls_connection *conn)
+{
 }

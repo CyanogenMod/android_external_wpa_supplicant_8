@@ -86,6 +86,7 @@ struct sta_info {
 	unsigned int hs20_deauth_requested:1;
 	unsigned int session_timeout_set:1;
 	unsigned int radius_das_match:1;
+	unsigned int ecsa_supported:1;
 
 	u16 auth_alg;
 
@@ -153,6 +154,9 @@ struct sta_info {
 	struct wpabuf *hs20_deauth_req;
 	char *hs20_session_info_url;
 	int hs20_disassoc_timer;
+#ifdef CONFIG_FST
+	struct wpabuf *mb_ies; /* MB IEs from (Re)Association Request */
+#endif /* CONFIG_FST */
 
 	struct os_reltime connected_time;
 
@@ -177,7 +181,7 @@ struct sta_info {
  * AP_DISASSOC_DELAY seconds. Similarly, the station will be deauthenticated
  * after AP_DEAUTH_DELAY seconds has passed after disassociation. */
 #define AP_MAX_INACTIVITY (5 * 60)
-#define AP_DISASSOC_DELAY (1)
+#define AP_DISASSOC_DELAY (3)
 #define AP_DEAUTH_DELAY (1)
 /* Number of seconds to keep STA entry with Authenticated flag after it has
  * been disassociated. */

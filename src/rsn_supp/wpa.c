@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant - WPA state machine and EAPOL-Key processing
  * Copyright (c) 2003-2015, Jouni Malinen <j@w1.fi>
+ * Copyright(c) 2015 Intel Deutschland GmbH
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -23,6 +24,9 @@
 #include "peerkey.h"
 
 
+static const u8 null_rsc[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+
 /**
  * wpa_eapol_key_send - Send WPA/RSN EAPOL-Key message
  * @sm: Pointer to WPA state machine data from wpa_sm_init()
@@ -34,11 +38,13 @@
  * @msg: EAPOL-Key message
  * @msg_len: Length of message
  * @key_mic: Pointer to the buffer to which the EAPOL-Key MIC is written
+ * Returns: >= 0 on success, < 0 on failure
  */
-void wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck, size_t kck_len,
-			int ver, const u8 *dest, u16 proto,
-			u8 *msg, size_t msg_len, u8 *key_mic)
+int wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck, size_t kck_len,
+		       int ver, const u8 *dest, u16 proto,
+		       u8 *msg, size_t msg_len, u8 *key_mic)
 {
+	int ret = -1;
 	size_t mic_len = wpa_mic_len(sm->key_mgmt);
 
 	if (is_zero_ether_addr(dest) && is_zero_ether_addr(sm->bssid)) {
@@ -69,10 +75,11 @@ void wpa_eapol_key_send(struct wpa_sm *sm, const u8 *kck, size_t kck_len,
 	wpa_hexdump_key(MSG_DEBUG, "WPA: KCK", kck, kck_len);
 	wpa_hexdump(MSG_DEBUG, "WPA: Derived Key MIC", key_mic, mic_len);
 	wpa_hexdump(MSG_MSGDUMP, "WPA: TX EAPOL-Key", msg, msg_len);
-	wpa_sm_ether_send(sm, dest, proto, msg, msg_len);
+	ret = wpa_sm_ether_send(sm, dest, proto, msg, msg_len);
 	eapol_sm_notify_tx_eapol_key(sm->eapol);
 out:
 	os_free(msg);
+	return ret;
 }
 
 
@@ -206,15 +213,21 @@ static int wpa_supplicant_get_pmk(struct wpa_sm *sm,
 #endif /* CONFIG_IEEE80211R */
 	} else if (wpa_key_mgmt_wpa_ieee8021x(sm->key_mgmt) && sm->eapol) {
 		int res, pmk_len;
-		pmk_len = PMK_LEN;
-		res = eapol_sm_get_key(sm->eapol, sm->pmk, PMK_LEN);
+
+		if (sm->key_mgmt & WPA_KEY_MGMT_IEEE8021X_SUITE_B_192)
+			pmk_len = PMK_LEN_SUITE_B_192;
+		else
+			pmk_len = PMK_LEN;
+		res = eapol_sm_get_key(sm->eapol, sm->pmk, pmk_len);
 		if (res) {
-			/*
-			 * EAP-LEAP is an exception from other EAP methods: it
-			 * uses only 16-byte PMK.
-			 */
-			res = eapol_sm_get_key(sm->eapol, sm->pmk, 16);
-			pmk_len = 16;
+			if (pmk_len == PMK_LEN) {
+				/*
+				 * EAP-LEAP is an exception from other EAP
+				 * methods: it uses only 16-byte PMK.
+				 */
+				res = eapol_sm_get_key(sm->eapol, sm->pmk, 16);
+				pmk_len = 16;
+			}
 		} else {
 #ifdef CONFIG_IEEE80211R
 			u8 buf[2 * PMK_LEN];
@@ -318,7 +331,7 @@ static int wpa_supplicant_get_pmk(struct wpa_sm *sm,
  * @wpa_ie: WPA/RSN IE
  * @wpa_ie_len: Length of the WPA/RSN IE
  * @ptk: PTK to use for keyed hash and encryption
- * Returns: 0 on success, -1 on failure
+ * Returns: >= 0 on success, < 0 on failure
  */
 int wpa_supplicant_send_2_of_4(struct wpa_sm *sm, const unsigned char *dst,
 			       const struct wpa_eapol_key *key,
@@ -409,10 +422,8 @@ int wpa_supplicant_send_2_of_4(struct wpa_sm *sm, const unsigned char *dst,
 	os_memcpy(reply->key_nonce, nonce, WPA_NONCE_LEN);
 
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "WPA: Sending EAPOL-Key 2/4");
-	wpa_eapol_key_send(sm, ptk->kck, ptk->kck_len, ver, dst, ETH_P_EAPOL,
-			   rbuf, rlen, key_mic);
-
-	return 0;
+	return wpa_eapol_key_send(sm, ptk->kck, ptk->kck_len, ver, dst,
+				  ETH_P_EAPOL, rbuf, rlen, key_mic);
 }
 
 
@@ -500,6 +511,7 @@ static void wpa_supplicant_process_1_of_4(struct wpa_sm *sm,
 		os_memset(buf, 0, sizeof(buf));
 	}
 	sm->tptk_set = 1;
+	sm->tk_to_set = 1;
 
 	kde = sm->assoc_wpa_ie;
 	kde_len = sm->assoc_wpa_ie_len;
@@ -525,7 +537,7 @@ static void wpa_supplicant_process_1_of_4(struct wpa_sm *sm,
 #endif /* CONFIG_P2P */
 
 	if (wpa_supplicant_send_2_of_4(sm, sm->bssid, key, ver, sm->snonce,
-				       kde, kde_len, ptk))
+				       kde, kde_len, ptk) < 0)
 		goto failed;
 
 	os_free(kde_buf);
@@ -603,7 +615,12 @@ static int wpa_supplicant_install_ptk(struct wpa_sm *sm,
 	int keylen, rsclen;
 	enum wpa_alg alg;
 	const u8 *key_rsc;
-	u8 null_rsc[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+	if (!sm->tk_to_set) {
+		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
+			"WPA: Do not re-install same PTK to the driver");
+		return 0;
+	}
 
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
 		"WPA: Installing PTK to the driver");
@@ -643,6 +660,7 @@ static int wpa_supplicant_install_ptk(struct wpa_sm *sm,
 
 	/* TK is not needed anymore in supplicant */
 	os_memset(sm->ptk.tk, 0, WPA_TK_MAX_LEN);
+	sm->tk_to_set = 0;
 
 	if (sm->wpa_ptk_rekey) {
 		eloop_cancel_timeout(wpa_sm_rekey_ptk, sm, NULL);
@@ -753,12 +771,43 @@ static int wpa_supplicant_gtk_tx_bit_workaround(const struct wpa_sm *sm,
 }
 
 
+static int wpa_supplicant_rsc_relaxation(const struct wpa_sm *sm,
+					 const u8 *rsc)
+{
+	int rsclen;
+
+	if (!sm->wpa_rsc_relaxation)
+		return 0;
+
+	rsclen = wpa_cipher_rsc_len(sm->group_cipher);
+
+	/*
+	 * Try to detect RSC (endian) corruption issue where the AP sends
+	 * the RSC bytes in EAPOL-Key message in the wrong order, both if
+	 * it's actually a 6-byte field (as it should be) and if it treats
+	 * it as an 8-byte field.
+	 * An AP model known to have this bug is the Sapido RB-1632.
+	 */
+	if (rsclen == 6 && ((rsc[5] && !rsc[0]) || rsc[6] || rsc[7])) {
+		wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
+			"RSC %02x%02x%02x%02x%02x%02x%02x%02x is likely bogus, using 0",
+			rsc[0], rsc[1], rsc[2], rsc[3],
+			rsc[4], rsc[5], rsc[6], rsc[7]);
+
+		return 1;
+	}
+
+	return 0;
+}
+
+
 static int wpa_supplicant_pairwise_gtk(struct wpa_sm *sm,
 				       const struct wpa_eapol_key *key,
 				       const u8 *gtk, size_t gtk_len,
 				       int key_info)
 {
 	struct wpa_gtk_data gd;
+	const u8 *key_rsc;
 
 	/*
 	 * IEEE Std 802.11i-2004 - 8.5.2 EAPOL-Key frames - Figure 43x
@@ -784,11 +833,15 @@ static int wpa_supplicant_pairwise_gtk(struct wpa_sm *sm,
 	os_memcpy(gd.gtk, gtk, gtk_len);
 	gd.gtk_len = gtk_len;
 
+	key_rsc = key->key_rsc;
+	if (wpa_supplicant_rsc_relaxation(sm, key->key_rsc))
+		key_rsc = null_rsc;
+
 	if (sm->group_cipher != WPA_CIPHER_GTK_NOT_USED &&
 	    (wpa_supplicant_check_group_cipher(sm, sm->group_cipher,
 					       gtk_len, gtk_len,
 					       &gd.key_rsc_len, &gd.alg) ||
-	     wpa_supplicant_install_gtk(sm, &gd, key->key_rsc))) {
+	     wpa_supplicant_install_gtk(sm, &gd, key_rsc))) {
 		wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG,
 			"RSN: Failed to install GTK");
 		os_memset(&gd, 0, sizeof(gd));
@@ -989,8 +1042,8 @@ static int wpa_supplicant_validate_ie_ft(struct wpa_sm *sm,
 	if (sm->assoc_resp_ies) {
 		pos = sm->assoc_resp_ies;
 		end = pos + sm->assoc_resp_ies_len;
-		while (pos + 2 < end) {
-			if (pos + 2 + pos[1] > end)
+		while (end - pos > 2) {
+			if (2 + pos[1] > end - pos)
 				break;
 			switch (*pos) {
 			case WLAN_EID_MOBILITY_DOMAIN:
@@ -1086,7 +1139,7 @@ static int wpa_supplicant_validate_ie(struct wpa_sm *sm,
  * @ver: Version bits from EAPOL-Key Key Info
  * @key_info: Key Info
  * @ptk: PTK to use for keyed hash and encryption
- * Returns: 0 on success, -1 on failure
+ * Returns: >= 0 on success, < 0 on failure
  */
 int wpa_supplicant_send_4_of_4(struct wpa_sm *sm, const unsigned char *dst,
 			       const struct wpa_eapol_key *key,
@@ -1126,10 +1179,8 @@ int wpa_supplicant_send_4_of_4(struct wpa_sm *sm, const unsigned char *dst,
 		WPA_PUT_BE16(reply->key_data_length, 0);
 
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "WPA: Sending EAPOL-Key 4/4");
-	wpa_eapol_key_send(sm, ptk->kck, ptk->kck_len, ver, dst, ETH_P_EAPOL,
-			   rbuf, rlen, key_mic);
-
-	return 0;
+	return wpa_eapol_key_send(sm, ptk->kck, ptk->kck_len, ver, dst,
+				  ETH_P_EAPOL, rbuf, rlen, key_mic);
 }
 
 
@@ -1202,7 +1253,7 @@ static void wpa_supplicant_process_3_of_4(struct wpa_sm *sm,
 #endif /* CONFIG_P2P */
 
 	if (wpa_supplicant_send_4_of_4(sm, sm->bssid, key, ver, key_info,
-				       &sm->ptk)) {
+				       &sm->ptk) < 0) {
 		goto failed;
 	}
 
@@ -1292,8 +1343,8 @@ static int wpa_supplicant_process_1_of_2_rsn(struct wpa_sm *sm,
 					      &gd->key_rsc_len, &gd->alg))
 		return -1;
 
-	wpa_hexdump(MSG_DEBUG, "RSN: received GTK in group key handshake",
-		    ie.gtk, ie.gtk_len);
+	wpa_hexdump_key(MSG_DEBUG, "RSN: received GTK in group key handshake",
+			ie.gtk, ie.gtk_len);
 	gd->keyidx = ie.gtk[0] & 0x3;
 	gd->tx = wpa_supplicant_gtk_tx_bit_workaround(sm,
 						      !!(ie.gtk[0] & BIT(2)));
@@ -1344,6 +1395,11 @@ static int wpa_supplicant_process_1_of_2_wpa(struct wpa_sm *sm,
 	gd->keyidx = (key_info & WPA_KEY_INFO_KEY_INDEX_MASK) >>
 		WPA_KEY_INFO_KEY_INDEX_SHIFT;
 	if (ver == WPA_KEY_INFO_TYPE_HMAC_MD5_RC4 && sm->ptk.kek_len == 16) {
+#ifdef CONFIG_NO_RC4
+		wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
+			"WPA: RC4 not supported in the build");
+		return -1;
+#else /* CONFIG_NO_RC4 */
 		u8 ek[32];
 		if (key_data_len > sizeof(gd->gtk)) {
 			wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
@@ -1361,6 +1417,7 @@ static int wpa_supplicant_process_1_of_2_wpa(struct wpa_sm *sm,
 			return -1;
 		}
 		os_memset(ek, 0, sizeof(ek));
+#endif /* CONFIG_NO_RC4 */
 	} else if (ver == WPA_KEY_INFO_TYPE_HMAC_SHA1_AES) {
 		if (maxkeylen % 8) {
 			wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
@@ -1431,10 +1488,8 @@ static int wpa_supplicant_send_2_of_2(struct wpa_sm *sm,
 		WPA_PUT_BE16(reply->key_data_length, 0);
 
 	wpa_dbg(sm->ctx->msg_ctx, MSG_DEBUG, "WPA: Sending EAPOL-Key 2/2");
-	wpa_eapol_key_send(sm, sm->ptk.kck, sm->ptk.kck_len, ver, sm->bssid,
-			   ETH_P_EAPOL, rbuf, rlen, key_mic);
-
-	return 0;
+	return wpa_eapol_key_send(sm, sm->ptk.kck, sm->ptk.kck_len, ver,
+				  sm->bssid, ETH_P_EAPOL, rbuf, rlen, key_mic);
 }
 
 
@@ -1447,6 +1502,7 @@ static void wpa_supplicant_process_1_of_2(struct wpa_sm *sm,
 	u16 key_info;
 	int rekey, ret;
 	struct wpa_gtk_data gd;
+	const u8 *key_rsc;
 
 	if (!sm->msg_3_of_4_ok) {
 		wpa_msg(sm->ctx->msg_ctx, MSG_INFO,
@@ -1477,8 +1533,12 @@ static void wpa_supplicant_process_1_of_2(struct wpa_sm *sm,
 	if (ret)
 		goto failed;
 
-	if (wpa_supplicant_install_gtk(sm, &gd, key->key_rsc) ||
-	    wpa_supplicant_send_2_of_2(sm, key, ver, key_info))
+	key_rsc = key->key_rsc;
+	if (wpa_supplicant_rsc_relaxation(sm, key->key_rsc))
+		key_rsc = null_rsc;
+
+	if (wpa_supplicant_install_gtk(sm, &gd, key_rsc) ||
+	    wpa_supplicant_send_2_of_2(sm, key, ver, key_info) < 0)
 		goto failed;
 	os_memset(&gd, 0, sizeof(gd));
 
@@ -1575,6 +1635,11 @@ static int wpa_supplicant_decrypt_key_data(struct wpa_sm *sm,
 	/* Decrypt key data here so that this operation does not need
 	 * to be implemented separately for each message type. */
 	if (ver == WPA_KEY_INFO_TYPE_HMAC_MD5_RC4 && sm->ptk.kek_len == 16) {
+#ifdef CONFIG_NO_RC4
+		wpa_msg(sm->ctx->msg_ctx, MSG_WARNING,
+			"WPA: RC4 not supported in the build");
+		return -1;
+#else /* CONFIG_NO_RC4 */
 		u8 ek[32];
 		os_memcpy(ek, key->key_iv, 16);
 		os_memcpy(ek + 16, sm->ptk.kek, sm->ptk.kek_len);
@@ -1585,6 +1650,7 @@ static int wpa_supplicant_decrypt_key_data(struct wpa_sm *sm,
 			return -1;
 		}
 		os_memset(ek, 0, sizeof(ek));
+#endif /* CONFIG_NO_RC4 */
 	} else if (ver == WPA_KEY_INFO_TYPE_HMAC_SHA1_AES ||
 		   ver == WPA_KEY_INFO_TYPE_AES_128_CMAC ||
 		   sm->key_mgmt == WPA_KEY_MGMT_OSEN ||
@@ -2427,6 +2493,7 @@ void wpa_sm_set_config(struct wpa_sm *sm, struct rsn_supp_config *config)
 			sm->ssid_len = 0;
 		sm->wpa_ptk_rekey = config->wpa_ptk_rekey;
 		sm->p2p = config->p2p;
+		sm->wpa_rsc_relaxation = config->wpa_rsc_relaxation;
 	} else {
 		sm->network_ctx = NULL;
 		sm->peerkey_enabled = 0;
@@ -2437,6 +2504,7 @@ void wpa_sm_set_config(struct wpa_sm *sm, struct rsn_supp_config *config)
 		sm->ssid_len = 0;
 		sm->wpa_ptk_rekey = 0;
 		sm->p2p = 0;
+		sm->wpa_rsc_relaxation = 0;
 	}
 }
 

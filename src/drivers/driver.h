@@ -1214,6 +1214,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_VHT_IBSS		0x0000002000000000ULL
 /** Driver supports automatic band selection */
 #define WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY	0x0000004000000000ULL
+/** Driver supports simultaneous off-channel operations */
+#define WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS	0x0000008000000000ULL
 	u64 flags;
 
 #define WPA_DRIVER_SMPS_MODE_STATIC			0x00000001
@@ -1297,6 +1299,16 @@ struct wpa_driver_capa {
  */
 #define WPA_DRIVER_FLAGS_TX_POWER_INSERTION		0x00000008
 	u32 rrm_flags;
+
+	/* Driver concurrency capabilities */
+	unsigned int conc_capab;
+	/* Maximum number of concurrent channels on 2.4 GHz */
+	unsigned int max_conc_chan_2_4;
+	/* Maximum number of concurrent channels on 5 GHz */
+	unsigned int max_conc_chan_5_0;
+
+	/* Maximum number of supported CSA counters */
+	u16 max_csa_counters;
 };
 
 
@@ -1397,6 +1409,16 @@ enum wpa_driver_if_type {
 	 * WPA_IF_MESH - Mesh interface
 	 */
 	WPA_IF_MESH,
+
+	/*
+	 * WPA_IF_TDLS - TDLS offchannel interface (used for pref freq only)
+	 */
+	WPA_IF_TDLS,
+
+	/*
+	 * WPA_IF_IBSS - IBSS interface (used for pref freq only)
+	 */
+	WPA_IF_IBSS,
 };
 
 struct wpa_init_params {
@@ -1537,8 +1559,8 @@ struct csa_settings {
 	struct beacon_data beacon_csa;
 	struct beacon_data beacon_after;
 
-	u16 counter_offset_beacon;
-	u16 counter_offset_presp;
+	u16 counter_offset_beacon[2];
+	u16 counter_offset_presp[2];
 };
 
 /* TDLS peer capabilities for send_tdls_mgmt() */
@@ -1602,6 +1624,7 @@ struct drv_acs_params {
 	/* ACS channel list info */
 	unsigned int ch_list_len;
 	const u8 *ch_list;
+	const int *freq_list;
 };
 
 
@@ -1942,10 +1965,13 @@ struct wpa_driver_ops {
 	 * @noack: Do not wait for this frame to be acked (disable retries)
 	 * @freq: Frequency (in MHz) to send the frame on, or 0 to let the
 	 * driver decide
+	 * @csa_offs: Array of CSA offsets or %NULL
+	 * @csa_offs_len: Number of elements in csa_offs
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*send_mlme)(void *priv, const u8 *data, size_t data_len,
-			 int noack, unsigned int freq);
+			 int noack, unsigned int freq, const u16 *csa_offs,
+			 size_t csa_offs_len);
 
 	/**
 	 * update_ft_ies - Update FT (IEEE 802.11r) IEs
@@ -2349,7 +2375,8 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*sta_set_flags)(void *priv, const u8 *addr,
-			     int total_flags, int flags_or, int flags_and);
+			     unsigned int total_flags, unsigned int flags_or,
+			     unsigned int flags_and);
 
 	/**
 	 * set_tx_queue_params - Set TX queue parameters
@@ -3394,6 +3421,32 @@ struct wpa_driver_ops {
 	 * Returns 0 on success, -1 on failure
 	 */
 	int (*set_band)(void *priv, enum set_band band);
+
+	/**
+	 * get_pref_freq_list - Get preferred frequency list for an interface
+	 * @priv: Private driver interface data
+	 * @if_type: Interface type
+	 * @num: Number of channels
+	 * @freq_list: Preferred channel frequency list encoded in MHz values
+	 * Returns 0 on success, -1 on failure
+	 *
+	 * This command can be used to query the preferred frequency list from
+	 * the driver specific to a particular interface type.
+	 */
+	int (*get_pref_freq_list)(void *priv, enum wpa_driver_if_type if_type,
+				  unsigned int *num, unsigned int *freq_list);
+
+	/**
+	 * set_prob_oper_freq - Indicate probable P2P operating channel
+	 * @priv: Private driver interface data
+	 * @freq: Channel frequency in MHz
+	 * Returns 0 on success, -1 on failure
+	 *
+	 * This command can be used to inform the driver of the operating
+	 * frequency that an ongoing P2P group formation is likely to come up
+	 * on. Local device is assuming P2P Client role.
+	 */
+	int (*set_prob_oper_freq)(void *priv, unsigned int freq);
 };
 
 
@@ -4336,6 +4389,9 @@ union wpa_event_data {
 	 * @ssids: Scanned SSIDs (%NULL or zero-length SSID indicates wildcard
 	 *	SSID)
 	 * @num_ssids: Number of entries in ssids array
+	 * @external_scan: Whether the scan info is for an external scan
+	 * @nl_scan_event: 1 if the source of this scan event is a normal scan,
+	 * 	0 if the source of the scan event is a vendor scan
 	 */
 	struct scan_info {
 		int aborted;
@@ -4343,6 +4399,8 @@ union wpa_event_data {
 		size_t num_freqs;
 		struct wpa_driver_scan_ssid ssids[WPAS_MAX_SCAN_SSIDS];
 		size_t num_ssids;
+		int external_scan;
+		int nl_scan_event;
 	} scan_info;
 
 	/**

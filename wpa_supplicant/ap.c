@@ -76,10 +76,19 @@ no_vht:
 #endif /* CONFIG_IEEE80211N */
 
 
-void wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
-			       struct wpa_ssid *ssid,
-			       struct hostapd_config *conf)
+int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
+			      struct wpa_ssid *ssid,
+			      struct hostapd_config *conf)
 {
+	conf->hw_mode = ieee80211_freq_to_chan(ssid->frequency,
+					       &conf->channel);
+
+	if (conf->hw_mode == NUM_HOSTAPD_MODES) {
+		wpa_printf(MSG_ERROR, "Unsupported AP mode frequency: %d MHz",
+			   ssid->frequency);
+		return -1;
+	}
+
 	/* TODO: enable HT40 if driver supports it;
 	 * drop to 11b if driver does not support 11g */
 
@@ -142,7 +151,32 @@ void wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
 			}
 		}
 	}
+
+	if (conf->secondary_channel) {
+		struct wpa_supplicant *iface;
+
+		for (iface = wpa_s->global->ifaces; iface; iface = iface->next)
+		{
+			if (iface == wpa_s ||
+			    iface->wpa_state < WPA_AUTHENTICATING ||
+			    (int) iface->assoc_freq != ssid->frequency)
+				continue;
+
+			/*
+			 * Do not allow 40 MHz co-ex PRI/SEC switch to force us
+			 * to change our PRI channel since we have an existing,
+			 * concurrent connection on that channel and doing
+			 * multi-channel concurrency is likely to cause more
+			 * harm than using different PRI/SEC selection in
+			 * environment with multiple BSSes on these two channels
+			 * with mixed 20 MHz or PRI channel selection.
+			 */
+			conf->no_pri_sec_switch = 1;
+		}
+	}
 #endif /* CONFIG_IEEE80211N */
+
+	return 0;
 }
 
 
@@ -156,15 +190,8 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 
 	os_strlcpy(bss->iface, wpa_s->ifname, sizeof(bss->iface));
 
-	conf->hw_mode = ieee80211_freq_to_chan(ssid->frequency,
-					       &conf->channel);
-	if (conf->hw_mode == NUM_HOSTAPD_MODES) {
-		wpa_printf(MSG_ERROR, "Unsupported AP mode frequency: %d MHz",
-			   ssid->frequency);
+	if (wpa_supplicant_conf_ap_ht(wpa_s, ssid, conf))
 		return -1;
-	}
-
-	wpa_supplicant_conf_ap_ht(wpa_s, ssid, conf);
 
 	if (ieee80211_is_dfs(ssid->frequency) && wpa_s->conf->country[0]) {
 		conf->ieee80211h = 1;
@@ -274,13 +301,17 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		conf->beacon_int = wpa_s->conf->beacon_int;
 
 #ifdef CONFIG_P2P
-	if (wpa_s->conf->p2p_go_ctwindow > conf->beacon_int) {
-		wpa_printf(MSG_INFO,
-			   "CTWindow (%d) is bigger than beacon interval (%d) - avoid configuring it",
-			   wpa_s->conf->p2p_go_ctwindow, conf->beacon_int);
-		conf->p2p_go_ctwindow = 0;
-	} else {
-		conf->p2p_go_ctwindow = wpa_s->conf->p2p_go_ctwindow;
+	if (ssid->mode == WPAS_MODE_P2P_GO ||
+	    ssid->mode == WPAS_MODE_P2P_GROUP_FORMATION) {
+		if (wpa_s->conf->p2p_go_ctwindow > conf->beacon_int) {
+			wpa_printf(MSG_INFO,
+				   "CTWindow (%d) is bigger than beacon interval (%d) - avoid configuring it",
+				   wpa_s->conf->p2p_go_ctwindow,
+				   conf->beacon_int);
+			conf->p2p_go_ctwindow = 0;
+		} else {
+			conf->p2p_go_ctwindow = wpa_s->conf->p2p_go_ctwindow;
+		}
 	}
 #endif /* CONFIG_P2P */
 
@@ -1182,7 +1213,10 @@ void wpas_ap_ch_switch(struct wpa_supplicant *wpa_s, int freq, int ht,
 		return;
 
 	wpa_s->assoc_freq = freq;
-	hostapd_event_ch_switch(wpa_s->ap_iface->bss[0], freq, ht, offset, width, cf1, cf1);
+	if (wpa_s->current_ssid)
+		wpa_s->current_ssid->frequency = freq;
+	hostapd_event_ch_switch(wpa_s->ap_iface->bss[0], freq, ht,
+				offset, width, cf1, cf2);
 }
 
 
@@ -1346,3 +1380,10 @@ void wpas_event_dfs_cac_nop_finished(struct wpa_supplicant *wpa_s,
 				 radar->chan_width, radar->cf1, radar->cf2);
 }
 #endif /* NEED_AP_MLME */
+
+
+void ap_periodic(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->ap_iface)
+		hostapd_periodic_iface(wpa_s->ap_iface);
+}

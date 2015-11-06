@@ -485,6 +485,12 @@ static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s)
 		wpas_hs20_add_indication(extra_ie, -1);
 #endif /* CONFIG_HS20 */
 
+#ifdef CONFIG_FST
+	if (wpa_s->fst_ies &&
+	    wpabuf_resize(&extra_ie, wpabuf_len(wpa_s->fst_ies)) == 0)
+		wpabuf_put_buf(extra_ie, wpa_s->fst_ies);
+#endif /* CONFIG_FST */
+
 	return extra_ie;
 }
 
@@ -802,6 +808,9 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 	if (wpa_s->last_scan_req != MANUAL_SCAN_REQ &&
+#ifdef CONFIG_AP
+	    !wpa_s->ap_iface &&
+#endif /* CONFIG_AP */
 	    wpa_s->conf->ap_scan == 2) {
 		wpa_s->connect_without_scan = NULL;
 		wpa_s->prev_scan_wildcard = 0;
@@ -1512,8 +1521,8 @@ const u8 * wpa_scan_get_ie(const struct wpa_scan_res *res, u8 ie)
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == ie)
 			return pos;
@@ -1541,8 +1550,8 @@ const u8 * wpa_scan_get_vendor_ie(const struct wpa_scan_res *res,
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1578,8 +1587,8 @@ const u8 * wpa_scan_get_vendor_ie_beacon(const struct wpa_scan_res *res,
 	pos += res->ie_len;
 	end = pos + res->beacon_ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1614,8 +1623,8 @@ struct wpabuf * wpa_scan_get_vendor_ie_multi(const struct wpa_scan_res *res,
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1679,7 +1688,7 @@ static int wpa_scan_result_compar(const void *a, const void *b)
 		snr_a_full = wa->snr;
 		snr_a = MIN(wa->snr, GREAT_SNR);
 		snr_b_full = wb->snr;
-		snr_b = MIN(wa->snr, GREAT_SNR);
+		snr_b = MIN(wb->snr, GREAT_SNR);
 	} else {
 		/* Level is not in dBm, so we can't calculate
 		 * SNR. Just use raw level (units unknown). */
@@ -2139,6 +2148,9 @@ void scan_only_handler(struct wpa_supplicant *wpa_s,
 		wpa_s->scan_work = NULL;
 		radio_work_done(work);
 	}
+
+	if (wpa_s->wpa_state == WPA_SCANNING)
+		wpa_supplicant_set_state(wpa_s, wpa_s->scan_prev_wpa_state);
 }
 
 

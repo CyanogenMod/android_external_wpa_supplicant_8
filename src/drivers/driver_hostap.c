@@ -140,7 +140,7 @@ static void handle_tx_callback(struct hostap_driver_data *drv, u8 *buf,
 static void handle_frame(struct hostap_driver_data *drv, u8 *buf, size_t len)
 {
 	struct ieee80211_hdr *hdr;
-	u16 fc, extra_len, type, stype;
+	u16 fc, type, stype;
 	size_t data_len = len;
 	int ver;
 	union wpa_event_data event;
@@ -165,19 +165,10 @@ static void handle_frame(struct hostap_driver_data *drv, u8 *buf, size_t len)
 
 	ver = fc & WLAN_FC_PVER;
 
-	/* protocol version 3 is reserved for indicating extra data after the
-	 * payload, version 2 for indicating ACKed frame (TX callbacks), and
-	 * version 1 for indicating failed frame (no ACK, TX callbacks) */
-	if (ver == 3) {
-		u8 *pos = buf + len - 2;
-		extra_len = WPA_GET_LE16(pos);
-		printf("extra data in frame (elen=%d)\n", extra_len);
-		if ((size_t) extra_len + 2 > len) {
-			printf("  extra data overflow\n");
-			return;
-		}
-		len -= extra_len + 2;
-	} else if (ver == 1 || ver == 2) {
+	/* protocol version 2 is reserved for indicating ACKed frame (TX
+	 * callbacks), and version 1 for indicating failed frame (no ACK, TX
+	 * callbacks) */
+	if (ver == 1 || ver == 2) {
 		handle_tx_callback(drv, buf, data_len, ver == 2 ? 1 : 0);
 		return;
 	} else if (ver != 0) {
@@ -267,7 +258,8 @@ static int hostap_init_sockets(struct hostap_driver_data *drv, u8 *own_addr)
 
 
 static int hostap_send_mlme(void *priv, const u8 *msg, size_t len, int noack,
-			    unsigned int freq)
+			    unsigned int freq,
+			    const u16 *csa_offs, size_t csa_offs_len)
 {
 	struct hostap_driver_data *drv = priv;
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) msg;
@@ -316,7 +308,7 @@ static int hostap_send_eapol(void *priv, const u8 *addr, const u8 *data,
 	pos += 2;
 	memcpy(pos, data, data_len);
 
-	res = hostap_send_mlme(drv, (u8 *) hdr, len, 0);
+	res = hostap_send_mlme(drv, (u8 *) hdr, len, 0, 0, NULL, 0);
 	if (res < 0) {
 		wpa_printf(MSG_ERROR, "hostap_send_eapol - packet len: %lu - "
 			   "failed: %d (%s)",
@@ -329,7 +321,8 @@ static int hostap_send_eapol(void *priv, const u8 *addr, const u8 *data,
 
 
 static int hostap_sta_set_flags(void *priv, const u8 *addr,
-				int total_flags, int flags_or, int flags_and)
+				unsigned int total_flags, unsigned int flags_or,
+				unsigned int flags_and)
 {
 	struct hostap_driver_data *drv = priv;
 	struct prism2_hostapd_param param;
@@ -821,7 +814,7 @@ hostapd_wireless_event_wireless_custom(struct hostap_driver_data *drv,
 
 
 static void hostapd_wireless_event_wireless(struct hostap_driver_data *drv,
-					    char *data, int len)
+					    char *data, unsigned int len)
 {
 	struct iw_event iwe_buf, *iwe = &iwe_buf;
 	char *pos, *end, *custom, *buf;
@@ -829,13 +822,13 @@ static void hostapd_wireless_event_wireless(struct hostap_driver_data *drv,
 	pos = data;
 	end = data + len;
 
-	while (pos + IW_EV_LCP_LEN <= end) {
+	while ((size_t) (end - pos) >= IW_EV_LCP_LEN) {
 		/* Event data may be unaligned, so make a local, aligned copy
 		 * before processing. */
 		memcpy(&iwe_buf, pos, IW_EV_LCP_LEN);
 		wpa_printf(MSG_DEBUG, "Wireless event: cmd=0x%x len=%d",
 			   iwe->cmd, iwe->len);
-		if (iwe->len <= IW_EV_LCP_LEN)
+		if (iwe->len <= IW_EV_LCP_LEN || iwe->len > end - pos)
 			return;
 
 		custom = pos + IW_EV_POINT_LEN;
@@ -854,7 +847,7 @@ static void hostapd_wireless_event_wireless(struct hostap_driver_data *drv,
 
 		switch (iwe->cmd) {
 		case IWEVCUSTOM:
-			if (custom + iwe->u.data.length > end)
+			if (iwe->u.data.length > end - custom)
 				return;
 			buf = malloc(iwe->u.data.length + 1);
 			if (buf == NULL)
@@ -1053,7 +1046,7 @@ static int hostap_sta_deauth(void *priv, const u8 *own_addr, const u8 *addr,
 	memcpy(mgmt.bssid, own_addr, ETH_ALEN);
 	mgmt.u.deauth.reason_code = host_to_le16(reason);
 	return hostap_send_mlme(drv, (u8 *) &mgmt, IEEE80211_HDRLEN +
-				sizeof(mgmt.u.deauth), 0);
+				sizeof(mgmt.u.deauth), 0, 0, NULL, 0);
 }
 
 
@@ -1091,7 +1084,7 @@ static int hostap_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr,
 	memcpy(mgmt.bssid, own_addr, ETH_ALEN);
 	mgmt.u.disassoc.reason_code = host_to_le16(reason);
 	return  hostap_send_mlme(drv, (u8 *) &mgmt, IEEE80211_HDRLEN +
-				 sizeof(mgmt.u.disassoc), 0);
+				 sizeof(mgmt.u.disassoc), 0, 0, NULL, 0);
 }
 
 
@@ -1169,7 +1162,7 @@ static void wpa_driver_hostap_poll_client(void *priv, const u8 *own_addr,
 	os_memcpy(hdr.IEEE80211_BSSID_FROMDS, own_addr, ETH_ALEN);
 	os_memcpy(hdr.IEEE80211_SA_FROMDS, own_addr, ETH_ALEN);
 
-	hostap_send_mlme(priv, (u8 *)&hdr, sizeof(hdr), 0);
+	hostap_send_mlme(priv, (u8 *)&hdr, sizeof(hdr), 0, 0, NULL, 0);
 }
 
 

@@ -69,6 +69,9 @@ static int openssl_digest_vector(const EVP_MD *type, size_t num_elem,
 	size_t i;
 	unsigned int mac_len;
 
+	if (TEST_FAIL())
+		return -1;
+
 	EVP_MD_CTX_init(&ctx);
 	if (!EVP_DigestInit_ex(&ctx, type, NULL)) {
 		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DigestInit_ex failed: %s",
@@ -93,10 +96,12 @@ static int openssl_digest_vector(const EVP_MD *type, size_t num_elem,
 }
 
 
+#ifndef CONFIG_FIPS
 int md4_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 {
 	return openssl_digest_vector(EVP_md4(), num_elem, addr, len, mac);
 }
+#endif /* CONFIG_FIPS */
 
 
 void des_encrypt(const u8 *clear, const u8 *key, u8 *cypher)
@@ -120,6 +125,7 @@ void des_encrypt(const u8 *clear, const u8 *key, u8 *cypher)
 }
 
 
+#ifndef CONFIG_NO_RC4
 int rc4_skip(const u8 *key, size_t keylen, size_t skip,
 	     u8 *data, size_t data_len)
 {
@@ -155,12 +161,15 @@ out:
 	return res;
 #endif /* OPENSSL_NO_RC4 */
 }
+#endif /* CONFIG_NO_RC4 */
 
 
+#ifndef CONFIG_FIPS
 int md5_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
 {
 	return openssl_digest_vector(EVP_md5(), num_elem, addr, len, mac);
 }
+#endif /* CONFIG_FIPS */
 
 
 int sha1_vector(size_t num_elem, const u8 *addr[], const size_t *len, u8 *mac)
@@ -297,6 +306,9 @@ void aes_decrypt_deinit(void *ctx)
 }
 
 
+#ifndef CONFIG_FIPS
+#ifndef CONFIG_OPENSSL_INTERNAL_AES_WRAP
+
 int aes_wrap(const u8 *kek, size_t kek_len, int n, const u8 *plain, u8 *cipher)
 {
 	AES_KEY actx;
@@ -322,6 +334,9 @@ int aes_unwrap(const u8 *kek, size_t kek_len, int n, const u8 *cipher,
 	OPENSSL_cleanse(&actx, sizeof(actx));
 	return res <= 0 ? -1 : 0;
 }
+
+#endif /* CONFIG_OPENSSL_INTERNAL_AES_WRAP */
+#endif /* CONFIG_FIPS */
 
 
 int aes_128_cbc_encrypt(const u8 *key, const u8 *iv, u8 *data, size_t data_len)
@@ -430,11 +445,13 @@ struct crypto_cipher * crypto_cipher_init(enum crypto_cipher_alg alg,
 		return NULL;
 
 	switch (alg) {
+#ifndef CONFIG_NO_RC4
 #ifndef OPENSSL_NO_RC4
 	case CRYPTO_CIPHER_ALG_RC4:
 		cipher = EVP_rc4();
 		break;
 #endif /* OPENSSL_NO_RC4 */
+#endif /* CONFIG_NO_RC4 */
 #ifndef OPENSSL_NO_AES
 	case CRYPTO_CIPHER_ALG_AES:
 		switch (key_len) {
@@ -757,6 +774,9 @@ static int openssl_hmac_vector(const EVP_MD *type, const u8 *key,
 	size_t i;
 	int res;
 
+	if (TEST_FAIL())
+		return -1;
+
 	HMAC_CTX_init(&ctx);
 #if OPENSSL_VERSION_NUMBER < 0x00909000
 	HMAC_Init_ex(&ctx, key, key_len, type, NULL);
@@ -877,6 +897,9 @@ int omac1_aes_vector(const u8 *key, size_t key_len, size_t num_elem,
 	CMAC_CTX *ctx;
 	int ret = -1;
 	size_t outlen, i;
+
+	if (TEST_FAIL())
+		return -1;
 
 	ctx = CMAC_CTX_new();
 	if (ctx == NULL)

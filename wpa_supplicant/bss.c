@@ -19,11 +19,6 @@
 #include "bss.h"
 
 
-/**
- * WPA_BSS_EXPIRATION_PERIOD - Period of expiration run in seconds
- */
-#define WPA_BSS_EXPIRATION_PERIOD 10
-
 #define WPA_BSS_FREQ_CHANGED_FLAG	BIT(0)
 #define WPA_BSS_SIGNAL_CHANGED_FLAG	BIT(1)
 #define WPA_BSS_PRIVACY_CHANGED_FLAG	BIT(2)
@@ -65,6 +60,9 @@ struct wpa_bss_anqp * wpa_bss_anqp_alloc(void)
 	anqp = os_zalloc(sizeof(*anqp));
 	if (anqp == NULL)
 		return NULL;
+#ifdef CONFIG_INTERWORKING
+	dl_list_init(&anqp->anqp_elems);
+#endif /* CONFIG_INTERWORKING */
 	anqp->users = 1;
 	return anqp;
 }
@@ -85,6 +83,7 @@ static struct wpa_bss_anqp * wpa_bss_anqp_clone(struct wpa_bss_anqp *anqp)
 
 #define ANQP_DUP(f) if (anqp->f) n->f = wpabuf_dup(anqp->f)
 #ifdef CONFIG_INTERWORKING
+	dl_list_init(&n->anqp_elems);
 	ANQP_DUP(capability_list);
 	ANQP_DUP(venue_name);
 	ANQP_DUP(network_auth_type);
@@ -146,6 +145,10 @@ int wpa_bss_anqp_unshare_alloc(struct wpa_bss *bss)
  */
 static void wpa_bss_anqp_free(struct wpa_bss_anqp *anqp)
 {
+#ifdef CONFIG_INTERWORKING
+	struct wpa_bss_anqp_elem *elem;
+#endif /* CONFIG_INTERWORKING */
+
 	if (anqp == NULL)
 		return;
 
@@ -164,6 +167,13 @@ static void wpa_bss_anqp_free(struct wpa_bss_anqp *anqp)
 	wpabuf_free(anqp->nai_realm);
 	wpabuf_free(anqp->anqp_3gpp);
 	wpabuf_free(anqp->domain_name);
+
+	while ((elem = dl_list_first(&anqp->anqp_elems,
+				     struct wpa_bss_anqp_elem, list))) {
+		dl_list_del(&elem->list);
+		wpabuf_free(elem->payload);
+		os_free(elem);
+	}
 #endif /* CONFIG_INTERWORKING */
 #ifdef CONFIG_HS20
 	wpabuf_free(anqp->hs20_capability_list);
@@ -311,10 +321,18 @@ static int wpa_bss_known(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 
 static int wpa_bss_in_use(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 {
-	return bss == wpa_s->current_bss ||
-		(!is_zero_ether_addr(bss->bssid) &&
-		 (os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) == 0 ||
-		  os_memcmp(bss->bssid, wpa_s->pending_bssid, ETH_ALEN) == 0));
+	if (bss == wpa_s->current_bss)
+		return 1;
+
+	if (wpa_s->current_bss &&
+	    (bss->ssid_len != wpa_s->current_bss->ssid_len ||
+	     os_memcmp(bss->ssid, wpa_s->current_bss->ssid,
+		       bss->ssid_len) != 0))
+		return 0; /* SSID has changed */
+
+	return !is_zero_ether_addr(bss->bssid) &&
+		(os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) == 0 ||
+		 os_memcmp(bss->bssid, wpa_s->pending_bssid, ETH_ALEN) == 0);
 }
 
 
@@ -390,8 +408,9 @@ static struct wpa_bss * wpa_bss_add(struct wpa_supplicant *wpa_s,
 	dl_list_add_tail(&wpa_s->bss_id, &bss->list_id);
 	wpa_s->num_bss++;
 	wpa_dbg(wpa_s, MSG_DEBUG, "BSS: Add new id %u BSSID " MACSTR
-		" SSID '%s'",
-		bss->id, MAC2STR(bss->bssid), wpa_ssid_txt(ssid, ssid_len));
+		" SSID '%s' freq %d",
+		bss->id, MAC2STR(bss->bssid), wpa_ssid_txt(ssid, ssid_len),
+		bss->freq);
 	wpas_notify_bss_added(wpa_s, bss->bssid, bss->id);
 	return bss;
 }
@@ -534,6 +553,9 @@ wpa_bss_update(struct wpa_supplicant *wpa_s, struct wpa_bss *bss,
 	u32 changes;
 
 	changes = wpa_bss_compare_res(bss, res);
+	if (changes & WPA_BSS_FREQ_CHANGED_FLAG)
+		wpa_printf(MSG_DEBUG, "BSS: " MACSTR " changed freq %d --> %d",
+			   MAC2STR(bss->bssid), bss->freq, res->freq);
 	bss->scan_miss_count = 0;
 	bss->last_update_idx = wpa_s->bss_update_idx;
 	wpa_bss_copy_res(bss, res, fetch_time);
@@ -777,7 +799,7 @@ void wpa_bss_update_end(struct wpa_supplicant *wpa_s, struct scan_info *info,
 	struct wpa_bss *bss, *n;
 
 	os_get_reltime(&wpa_s->last_scan);
-	if (!new_scan)
+	if ((info && info->aborted) || !new_scan)
 		return; /* do not expire entries without new scan */
 
 	dl_list_for_each_safe(bss, n, &wpa_s->bss, struct wpa_bss, list) {
@@ -828,16 +850,6 @@ void wpa_bss_flush_by_age(struct wpa_supplicant *wpa_s, int age)
 }
 
 
-static void wpa_bss_timeout(void *eloop_ctx, void *timeout_ctx)
-{
-	struct wpa_supplicant *wpa_s = eloop_ctx;
-
-	wpa_bss_flush_by_age(wpa_s, wpa_s->conf->bss_expiration_age);
-	eloop_register_timeout(WPA_BSS_EXPIRATION_PERIOD, 0,
-			       wpa_bss_timeout, wpa_s, NULL);
-}
-
-
 /**
  * wpa_bss_init - Initialize BSS table
  * @wpa_s: Pointer to wpa_supplicant data
@@ -850,8 +862,6 @@ int wpa_bss_init(struct wpa_supplicant *wpa_s)
 {
 	dl_list_init(&wpa_s->bss);
 	dl_list_init(&wpa_s->bss_id);
-	eloop_register_timeout(WPA_BSS_EXPIRATION_PERIOD, 0,
-			       wpa_bss_timeout, wpa_s, NULL);
 	return 0;
 }
 
@@ -883,7 +893,6 @@ void wpa_bss_flush(struct wpa_supplicant *wpa_s)
  */
 void wpa_bss_deinit(struct wpa_supplicant *wpa_s)
 {
-	eloop_cancel_timeout(wpa_bss_timeout, wpa_s, NULL);
 	wpa_bss_flush(wpa_s);
 }
 
@@ -1015,8 +1024,8 @@ const u8 * wpa_bss_get_ie(const struct wpa_bss *bss, u8 ie)
 	pos = (const u8 *) (bss + 1);
 	end = pos + bss->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == ie)
 			return pos;
@@ -1043,8 +1052,8 @@ const u8 * wpa_bss_get_vendor_ie(const struct wpa_bss *bss, u32 vendor_type)
 	pos = (const u8 *) (bss + 1);
 	end = pos + bss->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1080,8 +1089,8 @@ const u8 * wpa_bss_get_vendor_ie_beacon(const struct wpa_bss *bss,
 	pos += bss->ie_len;
 	end = pos + bss->beacon_ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1116,8 +1125,8 @@ struct wpabuf * wpa_bss_get_vendor_ie_multi(const struct wpa_bss *bss,
 	pos = (const u8 *) (bss + 1);
 	end = pos + bss->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1161,8 +1170,8 @@ struct wpabuf * wpa_bss_get_vendor_ie_multi_beacon(const struct wpa_bss *bss,
 	pos += bss->ie_len;
 	end = pos + bss->beacon_ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))

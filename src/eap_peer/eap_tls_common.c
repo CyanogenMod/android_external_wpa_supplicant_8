@@ -68,6 +68,10 @@ static void eap_tls_params_flags(struct tls_connection_params *params,
 		params->flags |= TLS_CONN_DISABLE_SESSION_TICKET;
 	if (os_strstr(txt, "tls_disable_session_ticket=0"))
 		params->flags &= ~TLS_CONN_DISABLE_SESSION_TICKET;
+	if (os_strstr(txt, "tls_disable_tlsv1_0=1"))
+		params->flags |= TLS_CONN_DISABLE_TLSv1_0;
+	if (os_strstr(txt, "tls_disable_tlsv1_0=0"))
+		params->flags &= ~TLS_CONN_DISABLE_TLSv1_0;
 	if (os_strstr(txt, "tls_disable_tlsv1_1=1"))
 		params->flags |= TLS_CONN_DISABLE_TLSv1_1;
 	if (os_strstr(txt, "tls_disable_tlsv1_1=0"))
@@ -343,10 +347,10 @@ u8 * eap_peer_tls_derive_session_id(struct eap_sm *sm,
 				    struct eap_ssl_data *data, u8 eap_type,
 				    size_t *len)
 {
-	struct tls_keys keys;
+	struct tls_random keys;
 	u8 *out;
 
-	if (tls_connection_get_keys(sm->ssl_ctx, data->conn, &keys))
+	if (tls_connection_get_random(sm->ssl_ctx, data->conn, &keys))
 		return NULL;
 
 	if (keys.client_random == NULL || keys.server_random == NULL)
@@ -678,12 +682,18 @@ int eap_peer_tls_process_helper(struct eap_sm *sm, struct eap_ssl_data *data,
 	if (tls_connection_get_failed(data->ssl_ctx, data->conn)) {
 		/* TLS processing has failed - return error */
 		wpa_printf(MSG_DEBUG, "SSL: Failed - tls_out available to "
-			   "report error");
+			   "report error (len=%u)",
+			   (unsigned int) wpabuf_len(data->tls_out));
 		ret = -1;
 		/* TODO: clean pin if engine used? */
+		if (wpabuf_len(data->tls_out) == 0) {
+			wpabuf_free(data->tls_out);
+			data->tls_out = NULL;
+			return -1;
+		}
 	}
 
-	if (data->tls_out == NULL || wpabuf_len(data->tls_out) == 0) {
+	if (wpabuf_len(data->tls_out) == 0) {
 		/*
 		 * TLS negotiation should now be complete since all other cases
 		 * needing more data should have been caught above based on
@@ -749,20 +759,24 @@ int eap_peer_tls_reauth_init(struct eap_sm *sm, struct eap_ssl_data *data)
 int eap_peer_tls_status(struct eap_sm *sm, struct eap_ssl_data *data,
 			char *buf, size_t buflen, int verbose)
 {
-	char name[128];
+	char version[20], name[128];
 	int len = 0, ret;
 
-	if (tls_get_cipher(data->ssl_ctx, data->conn, name, sizeof(name)) == 0)
-	{
-		ret = os_snprintf(buf + len, buflen - len,
-				  "EAP TLS cipher=%s\n"
-				  "tls_session_reused=%d\n",
-				  name, tls_connection_resumed(data->ssl_ctx,
-							       data->conn));
-		if (os_snprintf_error(buflen - len, ret))
-			return len;
-		len += ret;
-	}
+	if (tls_get_version(data->ssl_ctx, data->conn, version,
+			    sizeof(version)) < 0)
+		version[0] = '\0';
+	if (tls_get_cipher(data->ssl_ctx, data->conn, name, sizeof(name)) < 0)
+		name[0] = '\0';
+
+	ret = os_snprintf(buf + len, buflen - len,
+			  "eap_tls_version=%s\n"
+			  "EAP TLS cipher=%s\n"
+			  "tls_session_reused=%d\n",
+			  version, name,
+			  tls_connection_resumed(data->ssl_ctx, data->conn));
+	if (os_snprintf_error(buflen - len, ret))
+		return len;
+	len += ret;
 
 	return len;
 }

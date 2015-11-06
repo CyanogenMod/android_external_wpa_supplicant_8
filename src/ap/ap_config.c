@@ -38,6 +38,8 @@ static void hostapd_config_free_vlan(struct hostapd_bss_config *bss)
 
 void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 {
+	dl_list_init(&bss->anqp_elem);
+
 	bss->logger_syslog_level = HOSTAPD_LEVEL_INFO;
 	bss->logger_stdout_level = HOSTAPD_LEVEL_INFO;
 	bss->logger_syslog = (unsigned int) -1;
@@ -63,6 +65,7 @@ void hostapd_config_defaults_bss(struct hostapd_bss_config *bss)
 	bss->dtim_period = 2;
 
 	bss->radius_server_auth_port = 1812;
+	bss->eap_sim_db_timeout = 1;
 	bss->ap_max_inactivity = AP_MAX_INACTIVITY;
 	bss->eapol_version = EAPOL_VERSION;
 
@@ -172,6 +175,7 @@ struct hostapd_config * hostapd_config_defaults(void)
 
 	conf->ap_table_max_size = 255;
 	conf->ap_table_expiration_time = 60;
+	conf->track_sta_max_age = 180;
 
 #ifdef CONFIG_TESTING_OPTIONS
 	conf->ignore_probe_probability = 0.0;
@@ -179,6 +183,7 @@ struct hostapd_config * hostapd_config_defaults(void)
 	conf->ignore_assoc_probability = 0.0;
 	conf->ignore_reassoc_probability = 0.0;
 	conf->corrupt_gtk_rekey_mic_probability = 0.0;
+	conf->ecsa_ie_only = 0;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	conf->acs = 0;
@@ -409,6 +414,19 @@ void hostapd_config_clear_wpa_psk(struct hostapd_wpa_psk **l)
 }
 
 
+static void hostapd_config_free_anqp_elem(struct hostapd_bss_config *conf)
+{
+	struct anqp_element *elem;
+
+	while ((elem = dl_list_first(&conf->anqp_elem, struct anqp_element,
+				     list))) {
+		dl_list_del(&elem->list);
+		wpabuf_free(elem->payload);
+		os_free(elem);
+	}
+}
+
+
 void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 {
 	struct hostapd_eap_user *user, *prev_user;
@@ -522,6 +540,7 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->network_auth_type);
 	os_free(conf->anqp_3gpp_cell_net);
 	os_free(conf->domain_name);
+	hostapd_config_free_anqp_elem(conf);
 
 #ifdef CONFIG_RADIUS_TEST
 	os_free(conf->dump_msk_file);
@@ -560,6 +579,13 @@ void hostapd_config_free_bss(struct hostapd_bss_config *conf)
 	os_free(conf->wowlan_triggers);
 
 	os_free(conf->server_id);
+
+#ifdef CONFIG_TESTING_OPTIONS
+	wpabuf_free(conf->own_ie_override);
+#endif /* CONFIG_TESTING_OPTIONS */
+
+	os_free(conf->no_probe_resp_if_seen_on);
+	os_free(conf->no_auth_if_seen_on);
 
 	os_free(conf);
 }
@@ -967,10 +993,11 @@ void hostapd_set_security_params(struct hostapd_bss_config *bss,
 		bss->rsn_pairwise = WPA_CIPHER_CCMP;
 	} else {
 		bss->ssid.security_policy = SECURITY_PLAINTEXT;
-		bss->wpa_group = WPA_CIPHER_NONE;
-		bss->wpa_pairwise = WPA_CIPHER_NONE;
-		bss->rsn_pairwise = WPA_CIPHER_NONE;
-		if (full_config)
+		if (full_config) {
+			bss->wpa_group = WPA_CIPHER_NONE;
+			bss->wpa_pairwise = WPA_CIPHER_NONE;
+			bss->rsn_pairwise = WPA_CIPHER_NONE;
 			bss->wpa_key_mgmt = WPA_KEY_MGMT_NONE;
+		}
 	}
 }

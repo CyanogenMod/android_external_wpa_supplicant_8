@@ -18,6 +18,16 @@ export BINDIR ?= /usr/local/bin/
 
 -include .config
 
+ifndef CONFIG_NO_GITVER
+# Add VERSION_STR postfix for builds from a git repository
+ifeq ($(wildcard ../.git),../.git)
+GITVER := $(shell git describe --dirty=+)
+ifneq ($(GITVER),)
+CFLAGS += -DGIT_VERSION_STR_POSTFIX=\"-$(GITVER)\"
+endif
+endif
+endif
+
 ifdef CONFIG_TESTING_OPTIONS
 CFLAGS += -DCONFIG_TESTING_OPTIONS
 CONFIG_WPS_TESTING=y
@@ -105,6 +115,14 @@ LIBS += -lrt
 LIBS_c += -lrt
 LIBS_h += -lrt
 LIBS_n += -lrt
+endif
+
+ifdef CONFIG_ELOOP_POLL
+CFLAGS += -DCONFIG_ELOOP_POLL
+endif
+
+ifdef CONFIG_ELOOP_EPOLL
+CFLAGS += -DCONFIG_ELOOP_EPOLL
 endif
 
 OBJS += ../src/utils/common.o
@@ -533,8 +551,14 @@ HOBJS += ../src/crypto/crypto_openssl.o
 ifdef NEED_FIPS186_2_PRF
 OBJS += ../src/crypto/fips_prf_openssl.o
 endif
+NEED_SHA256=y
+NEED_TLS_PRF_SHA256=y
 LIBS += -lcrypto
 LIBS_h += -lcrypto
+ifdef CONFIG_TLS_ADD_DL
+LIBS += -ldl
+LIBS_h += -ldl
+endif
 endif
 
 ifeq ($(CONFIG_TLS), gnutls)
@@ -747,9 +771,15 @@ OBJS += ../src/crypto/des-internal.o
 endif
 endif
 
+ifdef CONFIG_NO_RC4
+CFLAGS += -DCONFIG_NO_RC4
+endif
+
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
+ifndef CONFIG_NO_RC4
 OBJS += ../src/crypto/rc4.o
+endif
 endif
 endif
 
@@ -771,6 +801,7 @@ endif
 endif
 ifdef NEED_SHA384
 CFLAGS += -DCONFIG_SHA384
+OBJS += ../src/crypto/sha384-prf.o
 endif
 
 ifdef NEED_DH_GROUPS
@@ -898,6 +929,21 @@ LIBS += -lsqlite3
 LIBS_h += -lsqlite3
 endif
 
+ifdef CONFIG_FST
+CFLAGS += -DCONFIG_FST
+OBJS += ../src/fst/fst.o
+OBJS += ../src/fst/fst_group.o
+OBJS += ../src/fst/fst_iface.o
+OBJS += ../src/fst/fst_session.o
+OBJS += ../src/fst/fst_ctrl_aux.o
+ifdef CONFIG_FST_TEST
+CFLAGS += -DCONFIG_FST_TEST
+endif
+ifndef CONFIG_NO_CTRL_IFACE
+OBJS += ../src/fst/fst_ctrl_iface.o
+endif
+endif
+
 ALL=hostapd hostapd_cli
 
 all: verify_config $(ALL)
@@ -960,7 +1006,9 @@ NOBJS = nt_password_hash.o ../src/crypto/ms_funcs.o $(SHA1OBJS)
 NOBJS += ../src/utils/common.o
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
+ifndef CONFIG_NO_RC4
 NOBJS += ../src/crypto/rc4.o
+endif
 endif
 endif
 ifdef CONFIG_INTERNAL_MD5

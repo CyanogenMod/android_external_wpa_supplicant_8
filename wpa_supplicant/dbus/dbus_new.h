@@ -191,6 +191,8 @@ void wpas_dbus_signal_p2p_go_neg_req(struct wpa_supplicant *wpa_s,
 void wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 					const struct wpa_ssid *ssid,
 					int client, int network_id);
+void wpas_dbus_signal_p2p_group_formation_failure(struct wpa_supplicant *wpa_s,
+						  const char *reason);
 void wpas_dbus_register_p2p_group(struct wpa_supplicant *wpa_s,
 				  struct wpa_ssid *ssid);
 void wpas_dbus_signal_p2p_go_neg_resp(struct wpa_supplicant *wpa_s,
@@ -231,6 +233,10 @@ void wpas_dbus_signal_sta_authorized(struct wpa_supplicant *wpa_s,
 				     const u8 *sta);
 void wpas_dbus_signal_sta_deauthorized(struct wpa_supplicant *wpa_s,
 				       const u8 *sta);
+void wpas_dbus_signal_p2p_invitation_received(struct wpa_supplicant *wpa_s,
+					      const u8 *sa, const u8 *dev_addr,
+					      const u8 *bssid, int id,
+					      int op_freq);
 
 #else /* CONFIG_CTRL_IFACE_DBUS_NEW */
 
@@ -400,6 +406,12 @@ wpas_dbus_signal_p2p_group_started(struct wpa_supplicant *wpa_s,
 }
 
 static inline void
+wpas_dbus_signal_p2p_group_formation_failure(struct wpa_supplicant *wpa_s,
+					     const char *reason)
+{
+}
+
+static inline void
 wpas_dbus_register_p2p_group(struct wpa_supplicant *wpa_s,
 			     struct wpa_ssid *ssid)
 {
@@ -529,6 +541,14 @@ void wpas_dbus_signal_sta_authorized(struct wpa_supplicant *wpa_s,
 static inline
 void wpas_dbus_signal_sta_deauthorized(struct wpa_supplicant *wpa_s,
 				       const u8 *sta)
+{
+}
+
+static inline
+void wpas_dbus_signal_p2p_invitation_received(struct wpa_supplicant *wpa_s,
+					      const u8 *sa, const u8 *dev_addr,
+					      const u8 *bssid, int id,
+					      int op_freq)
 {
 }
 

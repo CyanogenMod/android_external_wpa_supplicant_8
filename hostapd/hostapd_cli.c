@@ -97,6 +97,7 @@ static int hostapd_cli_attached = 0;
 #define CONFIG_CTRL_IFACE_DIR "/var/run/hostapd"
 #endif /* CONFIG_CTRL_IFACE_DIR */
 static const char *ctrl_iface_dir = CONFIG_CTRL_IFACE_DIR;
+static const char *client_socket_dir = NULL;
 
 static char *ctrl_ifname = NULL;
 static const char *pid_file = NULL;
@@ -112,13 +113,15 @@ static void usage(void)
 		"\n"
 		"usage: hostapd_cli [-p<path>] [-i<ifname>] [-hvB] "
 		"[-a<path>] \\\n"
-		"                   [-G<ping interval>] [command..]\n"
+		"                   [-P<pid file>] [-G<ping interval>] [command..]\n"
 		"\n"
 		"Options:\n"
 		"   -h           help (show this usage text)\n"
 		"   -v           shown version information\n"
 		"   -p<path>     path to find control sockets (default: "
 		"/var/run/hostapd)\n"
+		"   -s<dir_path> dir path to open client sockets (default: "
+		CONFIG_CTRL_IFACE_DIR ")\n"
 		"   -a<file>     run in daemon mode executing the action file "
 		"based on events\n"
 		"                from hostapd\n"
@@ -145,7 +148,14 @@ static struct wpa_ctrl * hostapd_cli_open_connection(const char *ifname)
 		return NULL;
 	snprintf(cfile, flen, "%s/%s", ctrl_iface_dir, ifname);
 
-	ctrl_conn = wpa_ctrl_open(cfile);
+	if (client_socket_dir && client_socket_dir[0] &&
+	    access(client_socket_dir, F_OK) < 0) {
+		perror(client_socket_dir);
+		free(cfile);
+		return NULL;
+	}
+
+	ctrl_conn = wpa_ctrl_open2(cfile, client_socket_dir);
 	free(cfile);
 	return ctrl_conn;
 }
@@ -922,6 +932,35 @@ static int hostapd_cli_cmd_get(struct wpa_ctrl *ctrl, int argc, char *argv[])
 }
 
 
+#ifdef CONFIG_FST
+static int hostapd_cli_cmd_fst(struct wpa_ctrl *ctrl, int argc, char *argv[])
+{
+	char cmd[256];
+	int res;
+	int i;
+	int total;
+
+	if (argc <= 0) {
+		printf("FST command: parameters are required.\n");
+		return -1;
+	}
+
+	total = os_snprintf(cmd, sizeof(cmd), "FST-MANAGER");
+
+	for (i = 0; i < argc; i++) {
+		res = os_snprintf(cmd + total, sizeof(cmd) - total, " %s",
+				  argv[i]);
+		if (os_snprintf_error(sizeof(cmd) - total, res)) {
+			printf("Too long fst command.\n");
+			return -1;
+		}
+		total += res;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+#endif /* CONFIG_FST */
+
+
 static int hostapd_cli_cmd_chan_switch(struct wpa_ctrl *ctrl,
 				       int argc, char *argv[])
 {
@@ -1010,6 +1049,25 @@ static int hostapd_cli_cmd_erp_flush(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int hostapd_cli_cmd_log_level(struct wpa_ctrl *ctrl, int argc,
+				     char *argv[])
+{
+	char cmd[256];
+	int res;
+
+	res = os_snprintf(cmd, sizeof(cmd), "LOG_LEVEL%s%s%s%s",
+			  argc >= 1 ? " " : "",
+			  argc >= 1 ? argv[0] : "",
+			  argc == 2 ? " " : "",
+			  argc == 2 ? argv[1] : "");
+	if (os_snprintf_error(sizeof(cmd), res)) {
+		printf("Too long option\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
+
 struct hostapd_cli_cmd {
 	const char *cmd;
 	int (*handler)(struct wpa_ctrl *ctrl, int argc, char *argv[]);
@@ -1049,6 +1107,9 @@ static const struct hostapd_cli_cmd hostapd_cli_commands[] = {
 	{ "get_config", hostapd_cli_cmd_get_config },
 	{ "help", hostapd_cli_cmd_help },
 	{ "interface", hostapd_cli_cmd_interface },
+#ifdef CONFIG_FST
+	{ "fst", hostapd_cli_cmd_fst },
+#endif /* CONFIG_FST */
 	{ "level", hostapd_cli_cmd_level },
 	{ "license", hostapd_cli_cmd_license },
 	{ "quit", hostapd_cli_cmd_quit },
@@ -1064,6 +1125,7 @@ static const struct hostapd_cli_cmd hostapd_cli_commands[] = {
 	{ "reload", hostapd_cli_cmd_reload },
 	{ "disable", hostapd_cli_cmd_disable },
 	{ "erp_flush", hostapd_cli_cmd_erp_flush },
+	{ "log_level", hostapd_cli_cmd_log_level },
 	{ NULL, NULL }
 };
 
@@ -1285,7 +1347,7 @@ int main(int argc, char *argv[])
 		return -1;
 
 	for (;;) {
-		c = getopt(argc, argv, "a:BhG:i:p:v");
+		c = getopt(argc, argv, "a:BhG:i:p:P:s:v");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -1310,6 +1372,12 @@ int main(int argc, char *argv[])
 			break;
 		case 'p':
 			ctrl_iface_dir = optarg;
+			break;
+		case 'P':
+			pid_file = optarg;
+			break;
+		case 's':
+			client_socket_dir = optarg;
 			break;
 		default:
 			usage();
