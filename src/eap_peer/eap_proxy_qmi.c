@@ -665,7 +665,7 @@ static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
 		wpa_printf(MSG_ERROR, "eap_proxy: flag = %d proxy init failed\n", flag);
 		os_free(eap_proxy);
 		eap_proxy = NULL;
-		return NULL;
+		return;
 	}
 
 	eap_proxy->proxy_state = EAP_PROXY_IDLE;
