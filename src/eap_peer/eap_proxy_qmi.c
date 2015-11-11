@@ -571,14 +571,14 @@ static void eap_proxy_post_init(struct eap_proxy_sm *eap_proxy)
 		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: No Modem support for this target"
 			   " number of modems is %d", mdm_detect_info.num_modems);
-		return NULL;
+		return;
 	}
 	wpa_printf(MSG_DEBUG, "eap_proxy: num_modems = %d", mdm_detect_info.num_modems);
 
 	if(eap_modem_compatible(&mdm_detect_info) == FALSE) {
 		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: build does not support EAP-SIM feature");
-		return NULL;
+		return;
 	}
 #endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
@@ -667,7 +667,7 @@ static void eap_proxy_post_init(struct eap_proxy_sm *eap_proxy)
 	if ( flag == FALSE ) {
 		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: flag = %d proxy init failed\n", flag);
-		return NULL;
+		return;
 	}
 
 	eap_proxy->proxy_state = EAP_PROXY_IDLE;
@@ -677,7 +677,7 @@ static void eap_proxy_post_init(struct eap_proxy_sm *eap_proxy)
 	eap_proxy_eapol_sm_set_bool(eap_proxy, EAPOL_eapResp, FALSE);
 	eap_proxy_eapol_sm_set_bool(eap_proxy, EAPOL_eapNoResp, FALSE);
 	wpa_printf (MSG_ERROR, "eap_proxy: Eap_proxy initialized successfully tid is %d \n", gettid());
-	return NULL;
+	return;
 
 }
 
