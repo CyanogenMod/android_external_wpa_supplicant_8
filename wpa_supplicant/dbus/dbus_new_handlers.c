@@ -435,7 +435,8 @@ dbus_bool_t wpas_dbus_simple_array_property_getter(DBusMessageIter *iter,
 
 	for (i = 0; i < array_len; i++) {
 		if (!dbus_message_iter_append_basic(&array_iter, type,
-						    (char *)array + i * element_size)) {
+						    (const char *) array +
+						    i * element_size)) {
 			dbus_set_error(error, DBUS_ERROR_FAILED,
 				       "%s: failed to construct message 2.5",
 				       __func__);
@@ -1877,7 +1878,7 @@ out:
 	os_free(iface);
 	return reply;
 #else /* IEEE8021X_EAPOL */
-	wpa_printf(MSG_DEBUG, "CTRL_IFACE: 802.1X not included");
+	wpa_printf(MSG_DEBUG, "dbus: 802.1X not included");
 	return wpas_dbus_error_unknown_error(message, "802.1X not included");
 #endif /* IEEE8021X_EAPOL */
 }
@@ -2292,6 +2293,35 @@ DBusMessage * wpas_dbus_handler_tdls_teardown(DBusMessage *message,
 }
 
 #endif /* CONFIG_TDLS */
+
+
+#ifndef CONFIG_NO_CONFIG_WRITE
+/**
+ * wpas_dbus_handler_save_config - Save configuration to configuration file
+ * @message: Pointer to incoming dbus message
+ * @wpa_s: wpa_supplicant structure for a network interface
+ * Returns: NULL on Success, Otherwise errror message
+ *
+ * Handler function for "SaveConfig" method call of network interface.
+ */
+DBusMessage * wpas_dbus_handler_save_config(DBusMessage *message,
+					    struct wpa_supplicant *wpa_s)
+{
+	int ret;
+
+	if (!wpa_s->conf->update_config) {
+		return wpas_dbus_error_unknown_error(
+			message,
+			"Not allowed to update configuration (update_config=0)");
+	}
+
+	ret = wpa_config_write(wpa_s->confname, wpa_s->conf);
+	if (ret)
+		return wpas_dbus_error_unknown_error(
+			message, "Failed to update configuration");
+	return NULL;
+}
+#endif /* CONFIG_NO_CONFIG_WRITE */
 
 
 /**
