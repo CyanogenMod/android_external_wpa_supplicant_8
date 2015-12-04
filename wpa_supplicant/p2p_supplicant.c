@@ -6901,6 +6901,7 @@ int wpas_p2p_cancel(struct wpa_supplicant *wpa_s)
 				   wpa_s->ifname);
 			found = 1;
 			wpas_p2p_group_formation_failed(wpa_s, 0);
+			break;
 		}
 	}
 
