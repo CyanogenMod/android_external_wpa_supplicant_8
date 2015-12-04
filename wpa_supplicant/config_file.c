@@ -751,6 +751,7 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(disabled);
 	INT(peerkey);
 	INT(mixed_cell);
+	INT(max_oper_chwidth);
 #ifdef CONFIG_IEEE80211W
 	write_int(f, "ieee80211w", ssid->ieee80211w,
 		  MGMT_FRAME_PROTECTION_DEFAULT);
@@ -1303,6 +1304,9 @@ static void wpa_config_write_global(FILE *f, struct wpa_config *config)
 	if (config->wpa_rsc_relaxation != DEFAULT_WPA_RSC_RELAXATION)
 		fprintf(f, "wpa_rsc_relaxation=%d\n",
 			config->wpa_rsc_relaxation);
+
+	if (config->sched_scan_plans)
+		fprintf(f, "sched_scan_plans=%s\n", config->sched_scan_plans);
 }
 
 #endif /* CONFIG_NO_CONFIG_WRITE */

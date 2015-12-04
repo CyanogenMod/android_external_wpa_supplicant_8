@@ -23,6 +23,11 @@ struct tls_global {
 	int server;
 	struct tlsv1_credentials *server_cred;
 	int check_crl;
+
+	void (*event_cb)(void *ctx, enum tls_event ev,
+			 union tls_event_data *data);
+	void *cb_ctx;
+	int cert_in_cb;
 };
 
 struct tls_connection {
@@ -51,6 +56,11 @@ void * tls_init(const struct tls_config *conf)
 	global = os_zalloc(sizeof(*global));
 	if (global == NULL)
 		return NULL;
+	if (conf) {
+		global->event_cb = conf->event_cb;
+		global->cb_ctx = conf->cb_ctx;
+		global->cert_in_cb = conf->cert_in_cb;
+	}
 
 	return global;
 }
@@ -97,6 +107,8 @@ struct tls_connection * tls_connection_init(void *tls_ctx)
 			os_free(conn);
 			return NULL;
 		}
+		tlsv1_client_set_cb(conn->client, global->event_cb,
+				    global->cb_ctx, global->cert_in_cb);
 	}
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
@@ -261,8 +273,7 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 		return -1;
 	}
 
-	tlsv1_client_set_time_checks(
-		conn->client, !(params->flags & TLS_CONN_DISABLE_TIME_CHECKS));
+	tlsv1_client_set_flags(conn->client, params->flags);
 
 	return 0;
 #else /* CONFIG_TLS_INTERNAL_CLIENT */
@@ -392,14 +403,14 @@ int tls_connection_prf(void *tls_ctx, struct tls_connection *conn,
 	if (conn->client) {
 		ret = tlsv1_client_prf(conn->client, label,
 				       server_random_first,
-				       _out, out_len);
+				       _out, skip + out_len);
 	}
 #endif /* CONFIG_TLS_INTERNAL_CLIENT */
 #ifdef CONFIG_TLS_INTERNAL_SERVER
 	if (conn->server) {
 		ret = tlsv1_server_prf(conn->server, label,
 				       server_random_first,
-				       _out, out_len);
+				       _out, skip + out_len);
 	}
 #endif /* CONFIG_TLS_INTERNAL_SERVER */
 	if (ret == 0 && skip_keyblock)
@@ -623,7 +634,12 @@ int tls_connection_set_cipher_list(void *tls_ctx, struct tls_connection *conn,
 int tls_get_version(void *ssl_ctx, struct tls_connection *conn,
 		    char *buf, size_t buflen)
 {
-	/* TODO */
+	if (conn == NULL)
+		return -1;
+#ifdef CONFIG_TLS_INTERNAL_CLIENT
+	if (conn->client)
+		return tlsv1_client_get_version(conn->client, buf, buflen);
+#endif /* CONFIG_TLS_INTERNAL_CLIENT */
 	return -1;
 }
 

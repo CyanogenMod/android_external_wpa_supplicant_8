@@ -268,7 +268,8 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 			       struct nlattr *authorized,
 			       struct nlattr *key_replay_ctr,
 			       struct nlattr *ptk_kck,
-			       struct nlattr *ptk_kek)
+			       struct nlattr *ptk_kek,
+			       struct nlattr *subnet_status)
 {
 	union wpa_event_data event;
 	const u8 *ssid;
@@ -365,6 +366,17 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 	if (ptk_kek) {
 		event.assoc_info.ptk_kek = nla_data(ptk_kek);
 		event.assoc_info.ptk_kek_len = nla_len(ptk_kek);
+	}
+
+	if (subnet_status) {
+		/*
+		 * At least for now, this is only available from
+		 * QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_SUBNET_STATUS and that
+		 * attribute has the same values 0, 1, 2 as are used in the
+		 * variable here, so no mapping between different values are
+		 * needed.
+		 */
+		event.assoc_info.subnet_status = nla_get_u8(subnet_status);
 	}
 
 	wpa_supplicant_event(drv->ctx, EVENT_ASSOC, &event);
@@ -639,10 +651,21 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 			 * Avoid issues with some roaming cases where
 			 * disconnection event for the old AP may show up after
 			 * we have started connection with the new AP.
+			 * In case of locally generated event clear
+			 * ignore_next_local_deauth as well, to avoid next local
+			 * deauth event be wrongly ignored.
 			 */
-			wpa_printf(MSG_DEBUG, "nl80211: Ignore deauth/disassoc event from old AP " MACSTR " when already authenticating with " MACSTR,
-				   MAC2STR(bssid),
-				   MAC2STR(drv->auth_attempt_bssid));
+			if (!os_memcmp(mgmt->sa, drv->first_bss->addr,
+				       ETH_ALEN)) {
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Received a locally generated deauth event. Clear ignore_next_local_deauth flag");
+				drv->ignore_next_local_deauth = 0;
+			} else {
+				wpa_printf(MSG_DEBUG,
+					   "nl80211: Ignore deauth/disassoc event from old AP " MACSTR " when already authenticating with " MACSTR,
+					   MAC2STR(bssid),
+					   MAC2STR(drv->auth_attempt_bssid));
+			}
 			return;
 		}
 
@@ -679,13 +702,15 @@ static void mlme_event_deauth_disassoc(struct wpa_driver_nl80211_data *drv,
 				mgmt->u.disassoc.variable;
 		}
 	} else {
+		event.deauth_info.locally_generated =
+			!os_memcmp(mgmt->sa, drv->first_bss->addr, ETH_ALEN);
 		if (drv->ignore_deauth_event) {
 			wpa_printf(MSG_DEBUG, "nl80211: Ignore deauth event due to previous forced deauth-during-auth");
 			drv->ignore_deauth_event = 0;
+			if (event.deauth_info.locally_generated)
+				drv->ignore_next_local_deauth = 0;
 			return;
 		}
-		event.deauth_info.locally_generated =
-			!os_memcmp(mgmt->sa, drv->first_bss->addr, ETH_ALEN);
 		if (drv->ignore_next_local_deauth) {
 			drv->ignore_next_local_deauth = 0;
 			if (event.deauth_info.locally_generated) {
@@ -1600,7 +1625,8 @@ static void qca_nl80211_key_mgmt_auth(struct wpa_driver_nl80211_data *drv,
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AUTHORIZED],
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_KEY_REPLAY_CTR],
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KCK],
-			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK]);
+			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK],
+			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_SUBNET_STATUS]);
 }
 
 
@@ -2084,7 +2110,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 				   tb[NL80211_ATTR_MAC],
 				   tb[NL80211_ATTR_REQ_IE],
 				   tb[NL80211_ATTR_RESP_IE],
-				   NULL, NULL, NULL, NULL);
+				   NULL, NULL, NULL, NULL, NULL);
 		break;
 	case NL80211_CMD_CH_SWITCH_NOTIFY:
 		mlme_event_ch_switch(drv,

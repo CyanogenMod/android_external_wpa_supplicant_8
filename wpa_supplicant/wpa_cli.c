@@ -1554,7 +1554,7 @@ static const char *network_fields[] = {
 	"ssid", "scan_ssid", "bssid", "bssid_blacklist",
 	"bssid_whitelist", "psk", "proto", "key_mgmt",
 	"bg_scan_period", "pairwise", "group", "auth_alg", "scan_freq",
-	"freq_list",
+	"freq_list", "max_oper_chwidth",
 #ifdef IEEE8021X_EAPOL
 	"eap", "identity", "anonymous_identity", "password", "ca_cert",
 	"ca_path", "client_cert", "private_key", "private_key_passwd",
@@ -1770,6 +1770,13 @@ static int wpa_cli_cmd_scan_results(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_abort_scan(struct wpa_ctrl *ctrl, int argc,
+				  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "ABORT_SCAN");
+}
+
+
 static int wpa_cli_cmd_bss(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	return wpa_cli_cmd(ctrl, "BSS", 1, argc, argv);
@@ -1872,14 +1879,15 @@ static int wpa_cli_cmd_interface_add(struct wpa_ctrl *ctrl, int argc,
 
 	/*
 	 * INTERFACE_ADD <ifname>TAB<confname>TAB<driver>TAB<ctrl_interface>TAB
-	 * <driver_param>TAB<bridge_name>[TAB<create>]
+	 * <driver_param>TAB<bridge_name>[TAB<create>[TAB<type>]]
 	 */
 	res = os_snprintf(cmd, sizeof(cmd),
-			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s\t%s",
+			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			  argv[0],
 			  argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "",
 			  argc > 3 ? argv[3] : "", argc > 4 ? argv[4] : "",
-			  argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "");
+			  argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "",
+			  argc > 7 ? argv[7] : "");
 	if (os_snprintf_error(sizeof(cmd), res))
 		return -1;
 	cmd[sizeof(cmd) - 1] = '\0';
@@ -3028,6 +3036,9 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "scan_results", wpa_cli_cmd_scan_results, NULL,
 	  cli_cmd_flag_none,
 	  "= get latest scan results" },
+	{ "abort_scan", wpa_cli_cmd_abort_scan, NULL,
+	  cli_cmd_flag_none,
+	  "= request ongoing scan to be aborted" },
 	{ "bss", wpa_cli_cmd_bss, wpa_cli_complete_bss,
 	  cli_cmd_flag_none,
 	  "<<idx> | <bssid>> = get detailed scan result info" },
@@ -3044,8 +3055,10 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "interface_add", wpa_cli_cmd_interface_add, NULL,
 	  cli_cmd_flag_none,
 	  "<ifname> <confname> <driver> <ctrl_interface> <driver_param>\n"
-	  "  <bridge_name> = adds new interface, all parameters but <ifname>\n"
-	  "  are optional" },
+	  "  <bridge_name> <create> <type> = adds new interface, all "
+	  "parameters but\n"
+	  "  <ifname> are optional. Supported types are station ('sta') and "
+	  "AP ('ap')" },
 	{ "interface_remove", wpa_cli_cmd_interface_remove, NULL,
 	  cli_cmd_flag_none,
 	  "<ifname> = removes the interface" },

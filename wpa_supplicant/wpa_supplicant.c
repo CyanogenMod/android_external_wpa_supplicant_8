@@ -545,6 +545,10 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	}
 
 	wmm_ac_notify_disassoc(wpa_s);
+
+	wpa_s->sched_scan_plans_num = 0;
+	os_free(wpa_s->sched_scan_plans);
+	wpa_s->sched_scan_plans = NULL;
 }
 
 
@@ -1155,6 +1159,10 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 			return -1;
 	}
 
+#ifdef CONFIG_NO_WPA
+	wpa_s->group_cipher = WPA_CIPHER_NONE;
+	wpa_s->pairwise_cipher = WPA_CIPHER_NONE;
+#else /* CONFIG_NO_WPA */
 	sel = ie.group_cipher & ssid->group_cipher;
 	wpa_s->group_cipher = wpa_pick_group_cipher(sel);
 	if (wpa_s->group_cipher < 0) {
@@ -1174,6 +1182,7 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	}
 	wpa_dbg(wpa_s, MSG_DEBUG, "WPA: using PTK %s",
 		wpa_cipher_txt(wpa_s->pairwise_cipher));
+#endif /* CONFIG_NO_WPA */
 
 	sel = ie.key_mgmt & ssid->key_mgmt;
 #ifdef CONFIG_SAE
@@ -1701,6 +1710,8 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
+	wpas_abort_ongoing_scan(wpa_s);
+
 	cwork = os_zalloc(sizeof(*cwork));
 	if (cwork == NULL)
 		return;
@@ -1722,6 +1733,36 @@ static int bss_is_ibss(struct wpa_bss *bss)
 }
 
 
+static int drv_supports_vht(struct wpa_supplicant *wpa_s,
+			    const struct wpa_ssid *ssid)
+{
+	enum hostapd_hw_mode hw_mode;
+	struct hostapd_hw_modes *mode = NULL;
+	u8 channel;
+	int i;
+
+#ifdef CONFIG_HT_OVERRIDES
+	if (ssid->disable_ht)
+		return 0;
+#endif /* CONFIG_HT_OVERRIDES */
+
+	hw_mode = ieee80211_freq_to_chan(ssid->frequency, &channel);
+	if (hw_mode == NUM_HOSTAPD_MODES)
+		return 0;
+	for (i = 0; wpa_s->hw.modes && i < wpa_s->hw.num_modes; i++) {
+		if (wpa_s->hw.modes[i].mode == hw_mode) {
+			mode = &wpa_s->hw.modes[i];
+			break;
+		}
+	}
+
+	if (!mode)
+		return 0;
+
+	return mode->vht_capab != 0;
+}
+
+
 void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			  const struct wpa_ssid *ssid,
 			  struct hostapd_freq_params *freq)
@@ -1734,8 +1775,10 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	struct hostapd_channel_data *pri_chan = NULL, *sec_chan = NULL;
 	u8 channel;
 	int i, chan_idx, ht40 = -1, res, obss_scan = 1;
-	unsigned int j;
+	unsigned int j, k;
 	struct hostapd_freq_params vht_freq;
+	int chwidth, seg0, seg1;
+	u32 vht_caps = 0;
 
 	freq->freq = ssid->frequency;
 
@@ -1885,12 +1928,12 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 		   "IBSS/mesh: setup freq channel %d, sec_channel_offset %d",
 		   freq->channel, freq->sec_channel_offset);
 
-	/* Not sure if mesh is ready for VHT */
-	if (ssid->mode != WPAS_MODE_IBSS)
+	if (!drv_supports_vht(wpa_s, ssid))
 		return;
 
 	/* For IBSS check VHT_IBSS flag */
-	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_VHT_IBSS))
+	if (ssid->mode == WPAS_MODE_IBSS &&
+	    !(wpa_s->drv_flags & WPA_DRIVER_FLAGS_VHT_IBSS))
 		return;
 
 	vht_freq = *freq;
@@ -1921,12 +1964,45 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			return;
 	}
 
+	chwidth = VHT_CHANWIDTH_80MHZ;
+	seg0 = vht80[j] + 6;
+	seg1 = 0;
+
+	if (ssid->max_oper_chwidth == VHT_CHANWIDTH_80P80MHZ) {
+		/* setup center_freq2, bandwidth */
+		for (k = 0; k < ARRAY_SIZE(vht80); k++) {
+			/* Only accept 80 MHz segments separated by a gap */
+			if (j == k || abs(vht80[j] - vht80[k]) == 16)
+				continue;
+			for (i = vht80[k]; i < vht80[k] + 16; i += 4) {
+				struct hostapd_channel_data *chan;
+
+				chan = hw_get_channel_chan(mode, i, NULL);
+				if (!chan)
+					continue;
+
+				if (chan->flag & (HOSTAPD_CHAN_DISABLED |
+						  HOSTAPD_CHAN_NO_IR |
+						  HOSTAPD_CHAN_RADAR))
+					continue;
+
+				/* Found a suitable second segment for 80+80 */
+				chwidth = VHT_CHANWIDTH_80P80MHZ;
+				vht_caps |=
+					VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ;
+				seg1 = vht80[k] + 6;
+			}
+
+			if (chwidth == VHT_CHANWIDTH_80P80MHZ)
+				break;
+		}
+	}
+
 	if (hostapd_set_freq_params(&vht_freq, mode->mode, freq->freq,
 				    freq->channel, freq->ht_enabled,
 				    vht_freq.vht_enabled,
 				    freq->sec_channel_offset,
-				    VHT_CHANWIDTH_80MHZ,
-				    vht80[j] + 6, 0, 0) != 0)
+				    chwidth, seg0, seg1, vht_caps) != 0)
 		return;
 
 	*freq = vht_freq;
@@ -2695,7 +2771,8 @@ void wpa_supplicant_select_network(struct wpa_supplicant *wpa_s,
 			wpas_notify_network_enabled_changed(wpa_s, other_ssid);
 	}
 
-	if (ssid && ssid == wpa_s->current_ssid && wpa_s->current_ssid) {
+	if (ssid && ssid == wpa_s->current_ssid && wpa_s->current_ssid &&
+	    wpa_s->wpa_state >= WPA_AUTHENTICATING) {
 		/* We are already associated with the selected network */
 		wpa_printf(MSG_DEBUG, "Already associated with the "
 			   "selected network - do nothing");
@@ -4527,6 +4604,11 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		wpa_s->probe_resp_offloads = capa.probe_resp_offloads;
 		wpa_s->max_scan_ssids = capa.max_scan_ssids;
 		wpa_s->max_sched_scan_ssids = capa.max_sched_scan_ssids;
+		wpa_s->max_sched_scan_plans = capa.max_sched_scan_plans;
+		wpa_s->max_sched_scan_plan_interval =
+			capa.max_sched_scan_plan_interval;
+		wpa_s->max_sched_scan_plan_iterations =
+			capa.max_sched_scan_plan_iterations;
 		wpa_s->sched_scan_supported = capa.sched_scan_supported;
 		wpa_s->max_match_sets = capa.max_match_sets;
 		wpa_s->max_remain_on_chan = capa.max_remain_on_chan;
@@ -4665,6 +4747,8 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		return -1;
 
 	wpas_rrm_reset(wpa_s);
+
+	wpas_sched_scan_plans_set(wpa_s, wpa_s->conf->sched_scan_plans);
 
 	return 0;
 }
@@ -5229,6 +5313,9 @@ void wpa_supplicant_update_config(struct wpa_supplicant *wpa_s)
 
 	if (wpa_s->conf->changed_parameters & CFG_CHANGED_EXT_PW_BACKEND)
 		wpas_init_ext_pw(wpa_s);
+
+	if (wpa_s->conf->changed_parameters & CFG_CHANGED_SCHED_SCAN_PLANS)
+		wpas_sched_scan_plans_set(wpa_s, wpa_s->conf->sched_scan_plans);
 
 #ifdef CONFIG_WPS
 	wpas_wps_update_config(wpa_s);

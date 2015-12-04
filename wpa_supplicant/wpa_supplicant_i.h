@@ -511,9 +511,10 @@ struct wpa_supplicant {
 
 	struct wpa_ssid *prev_sched_ssid; /* last SSID used in sched scan */
 	int sched_scan_timeout;
-	int sched_scan_interval;
 	int first_sched_scan;
 	int sched_scan_timed_out;
+	struct sched_scan_plan *sched_scan_plans;
+	size_t sched_scan_plans_num;
 
 	void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 				 struct wpa_scan_results *scan_res);
@@ -645,6 +646,9 @@ struct wpa_supplicant {
 
 	int max_scan_ssids;
 	int max_sched_scan_ssids;
+	unsigned int max_sched_scan_plans;
+	unsigned int max_sched_scan_plan_interval;
+	unsigned int max_sched_scan_plan_iterations;
 	int sched_scan_supported;
 	unsigned int max_match_sets;
 	unsigned int max_remain_on_chan;
@@ -734,6 +738,7 @@ struct wpa_supplicant {
 	int mesh_if_idx;
 	unsigned int mesh_if_created:1;
 	unsigned int mesh_ht_enabled:1;
+	unsigned int mesh_vht_enabled:1;
 	int mesh_auth_block_duration; /* sec */
 #endif /* CONFIG_MESH */
 
@@ -856,6 +861,9 @@ struct wpa_supplicant {
 	int *p2p_group_common_freqs;
 	unsigned int p2p_group_common_freqs_num;
 	u8 p2ps_join_addr[ETH_ALEN];
+
+	unsigned int p2p_go_max_oper_chwidth;
+	unsigned int p2p_go_vht_center_freq2;
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;
@@ -981,6 +989,7 @@ struct wpa_supplicant {
 	struct l2_packet_data *l2_test;
 	unsigned int extra_roc_dur;
 	enum wpa_supplicant_test_failure test_failure;
+	unsigned int p2p_go_csa_on_inv:1;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	struct wmm_ac_assoc_data *wmm_ac_assoc_info;
@@ -1178,5 +1187,7 @@ void fst_wpa_supplicant_fill_iface_obj(struct wpa_supplicant *wpa_s,
 				       struct fst_wpa_obj *iface_obj);
 
 #endif /* CONFIG_FST */
+
+int wpas_sched_scan_plans_set(struct wpa_supplicant *wpa_s, const char *cmd);
 
 #endif /* WPA_SUPPLICANT_I_H */

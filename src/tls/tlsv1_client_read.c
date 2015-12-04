@@ -27,6 +27,17 @@ static int tls_process_server_hello_done(struct tlsv1_client *conn, u8 ct,
 					 const u8 *in_data, size_t *in_len);
 
 
+static int tls_version_disabled(struct tlsv1_client *conn, u16 ver)
+{
+	return (((conn->flags & TLS_CONN_DISABLE_TLSv1_0) &&
+		 ver == TLS_VERSION_1) ||
+		((conn->flags & TLS_CONN_DISABLE_TLSv1_1) &&
+		 ver == TLS_VERSION_1_1) ||
+		((conn->flags & TLS_CONN_DISABLE_TLSv1_2) &&
+		 ver == TLS_VERSION_1_2));
+}
+
+
 static int tls_process_server_hello(struct tlsv1_client *conn, u8 ct,
 				    const u8 *in_data, size_t *in_len)
 {
@@ -76,7 +87,8 @@ static int tls_process_server_hello(struct tlsv1_client *conn, u8 ct,
 	if (end - pos < 2)
 		goto decode_error;
 	tls_version = WPA_GET_BE16(pos);
-	if (!tls_version_ok(tls_version)) {
+	if (!tls_version_ok(tls_version) ||
+	    tls_version_disabled(conn, tls_version)) {
 		wpa_printf(MSG_DEBUG, "TLSv1: Unexpected protocol version in "
 			   "ServerHello %u.%u", pos[0], pos[1]);
 		tls_alert(conn, TLS_ALERT_LEVEL_FATAL,
@@ -208,6 +220,73 @@ decode_error:
 	wpa_printf(MSG_DEBUG, "TLSv1: Failed to decode ServerHello");
 	tls_alert(conn, TLS_ALERT_LEVEL_FATAL, TLS_ALERT_DECODE_ERROR);
 	return -1;
+}
+
+
+static void tls_peer_cert_event(struct tlsv1_client *conn, int depth,
+				struct x509_certificate *cert)
+{
+	union tls_event_data ev;
+	struct wpabuf *cert_buf = NULL;
+#ifdef CONFIG_SHA256
+	u8 hash[32];
+#endif /* CONFIG_SHA256 */
+	char subject[128];
+
+	if (!conn->event_cb)
+		return;
+
+	os_memset(&ev, 0, sizeof(ev));
+	if (conn->cred->cert_probe || conn->cert_in_cb) {
+		cert_buf = wpabuf_alloc_copy(cert->cert_start,
+					     cert->cert_len);
+		ev.peer_cert.cert = cert_buf;
+	}
+#ifdef CONFIG_SHA256
+	if (cert_buf) {
+		const u8 *addr[1];
+		size_t len[1];
+		addr[0] = wpabuf_head(cert_buf);
+		len[0] = wpabuf_len(cert_buf);
+		if (sha256_vector(1, addr, len, hash) == 0) {
+			ev.peer_cert.hash = hash;
+			ev.peer_cert.hash_len = sizeof(hash);
+		}
+	}
+#endif /* CONFIG_SHA256 */
+
+	ev.peer_cert.depth = depth;
+	x509_name_string(&cert->subject, subject, sizeof(subject));
+	ev.peer_cert.subject = subject;
+
+	conn->event_cb(conn->cb_ctx, TLS_PEER_CERTIFICATE, &ev);
+	wpabuf_free(cert_buf);
+}
+
+
+static void tls_cert_chain_failure_event(struct tlsv1_client *conn, int depth,
+					 struct x509_certificate *cert,
+					 enum tls_fail_reason reason,
+					 const char *reason_txt)
+{
+	struct wpabuf *cert_buf = NULL;
+	union tls_event_data ev;
+	char subject[128];
+
+	if (!conn->event_cb)
+		return;
+
+	os_memset(&ev, 0, sizeof(ev));
+	ev.cert_fail.depth = depth;
+	x509_name_string(&cert->subject, subject, sizeof(subject));
+	ev.peer_cert.subject = subject;
+	ev.cert_fail.reason = reason;
+	ev.cert_fail.reason_txt = reason_txt;
+	cert_buf = wpabuf_alloc_copy(cert->cert_start,
+				     cert->cert_len);
+	ev.cert_fail.cert = cert_buf;
+	conn->event_cb(conn->cb_ctx, TLS_CERT_CHAIN_FAILURE, &ev);
+	wpabuf_free(cert_buf);
 }
 
 
@@ -354,6 +433,8 @@ static int tls_process_certificate(struct tlsv1_client *conn, u8 ct,
 			return -1;
 		}
 
+		tls_peer_cert_event(conn, idx, cert);
+
 		if (last == NULL)
 			chain = cert;
 		else
@@ -364,37 +445,118 @@ static int tls_process_certificate(struct tlsv1_client *conn, u8 ct,
 		pos += cert_len;
 	}
 
-	if (conn->cred &&
-	    x509_certificate_chain_validate(conn->cred->trusted_certs, chain,
-					    &reason, conn->disable_time_checks)
-	    < 0) {
+	if (conn->cred && conn->cred->server_cert_only && chain) {
+		u8 hash[SHA256_MAC_LEN];
+		char buf[128];
+
+		wpa_printf(MSG_DEBUG,
+			   "TLSv1: Validate server certificate hash");
+		x509_name_string(&chain->subject, buf, sizeof(buf));
+		wpa_printf(MSG_DEBUG, "TLSv1: 0: %s", buf);
+		if (sha256_vector(1, &chain->cert_start, &chain->cert_len,
+				  hash) < 0 ||
+		    os_memcmp(conn->cred->srv_cert_hash, hash,
+			      SHA256_MAC_LEN) != 0) {
+			wpa_printf(MSG_DEBUG,
+				   "TLSv1: Server certificate hash mismatch");
+			wpa_hexdump(MSG_MSGDUMP, "TLSv1: SHA256 hash",
+				    hash, SHA256_MAC_LEN);
+			if (conn->event_cb) {
+				union tls_event_data ev;
+
+				os_memset(&ev, 0, sizeof(ev));
+				ev.cert_fail.reason = TLS_FAIL_UNSPECIFIED;
+				ev.cert_fail.reason_txt =
+					"Server certificate mismatch";
+				ev.cert_fail.subject = buf;
+				conn->event_cb(conn->cb_ctx,
+					       TLS_CERT_CHAIN_FAILURE, &ev);
+			}
+			tls_alert(conn, TLS_ALERT_LEVEL_FATAL,
+				  TLS_ALERT_BAD_CERTIFICATE);
+			x509_certificate_chain_free(chain);
+			return -1;
+		}
+	} else if (conn->cred && conn->cred->cert_probe) {
+		wpa_printf(MSG_DEBUG,
+			   "TLSv1: Reject server certificate on probe-only rune");
+		if (conn->event_cb) {
+			union tls_event_data ev;
+			char buf[128];
+
+			os_memset(&ev, 0, sizeof(ev));
+			ev.cert_fail.reason = TLS_FAIL_SERVER_CHAIN_PROBE;
+			ev.cert_fail.reason_txt =
+				"Server certificate chain probe";
+			if (chain) {
+				x509_name_string(&chain->subject, buf,
+						 sizeof(buf));
+				ev.cert_fail.subject = buf;
+			}
+			conn->event_cb(conn->cb_ctx, TLS_CERT_CHAIN_FAILURE,
+				       &ev);
+		}
+		tls_alert(conn, TLS_ALERT_LEVEL_FATAL,
+			  TLS_ALERT_BAD_CERTIFICATE);
+		x509_certificate_chain_free(chain);
+		return -1;
+	} else if (conn->cred && conn->cred->ca_cert_verify &&
+		   x509_certificate_chain_validate(
+			   conn->cred->trusted_certs, chain, &reason,
+			   !!(conn->flags & TLS_CONN_DISABLE_TIME_CHECKS))
+		   < 0) {
 		int tls_reason;
 		wpa_printf(MSG_DEBUG, "TLSv1: Server certificate chain "
 			   "validation failed (reason=%d)", reason);
 		switch (reason) {
 		case X509_VALIDATE_BAD_CERTIFICATE:
 			tls_reason = TLS_ALERT_BAD_CERTIFICATE;
+			tls_cert_chain_failure_event(
+				conn, 0, chain, TLS_FAIL_BAD_CERTIFICATE,
+				"bad certificate");
 			break;
 		case X509_VALIDATE_UNSUPPORTED_CERTIFICATE:
 			tls_reason = TLS_ALERT_UNSUPPORTED_CERTIFICATE;
 			break;
 		case X509_VALIDATE_CERTIFICATE_REVOKED:
 			tls_reason = TLS_ALERT_CERTIFICATE_REVOKED;
+			tls_cert_chain_failure_event(
+				conn, 0, chain, TLS_FAIL_REVOKED,
+				"certificate revoked");
 			break;
 		case X509_VALIDATE_CERTIFICATE_EXPIRED:
 			tls_reason = TLS_ALERT_CERTIFICATE_EXPIRED;
+			tls_cert_chain_failure_event(
+				conn, 0, chain, TLS_FAIL_EXPIRED,
+				"certificate has expired or is not yet valid");
 			break;
 		case X509_VALIDATE_CERTIFICATE_UNKNOWN:
 			tls_reason = TLS_ALERT_CERTIFICATE_UNKNOWN;
 			break;
 		case X509_VALIDATE_UNKNOWN_CA:
 			tls_reason = TLS_ALERT_UNKNOWN_CA;
+			tls_cert_chain_failure_event(
+				conn, 0, chain, TLS_FAIL_UNTRUSTED,
+				"unknown CA");
 			break;
 		default:
 			tls_reason = TLS_ALERT_BAD_CERTIFICATE;
 			break;
 		}
 		tls_alert(conn, TLS_ALERT_LEVEL_FATAL, tls_reason);
+		x509_certificate_chain_free(chain);
+		return -1;
+	}
+
+	if (conn->cred && !conn->cred->server_cert_only && chain &&
+	    (chain->extensions_present & X509_EXT_EXT_KEY_USAGE) &&
+	    !(chain->ext_key_usage &
+	      (X509_EXT_KEY_USAGE_ANY | X509_EXT_KEY_USAGE_SERVER_AUTH))) {
+		tls_cert_chain_failure_event(
+			conn, 0, chain, TLS_FAIL_BAD_CERTIFICATE,
+			"certificate not allowed for server authentication");
+		tls_alert(conn, TLS_ALERT_LEVEL_FATAL,
+			  TLS_ALERT_BAD_CERTIFICATE);
 		x509_certificate_chain_free(chain);
 		return -1;
 	}
@@ -507,7 +669,7 @@ static int tlsv1_process_diffie_hellman(struct tlsv1_client *conn,
 	server_params_end = pos;
 
 	if (key_exchange == TLS_KEY_X_DHE_RSA) {
-		u8 hash[MD5_MAC_LEN + SHA1_MAC_LEN];
+		u8 hash[64];
 		int hlen;
 
 		if (conn->rl.tls_version == TLS_VERSION_1_2) {
@@ -524,18 +686,21 @@ static int tlsv1_process_diffie_hellman(struct tlsv1_client *conn,
 			 */
 			if (end - pos < 2)
 				goto fail;
-			if (pos[0] != TLS_HASH_ALG_SHA256 ||
+			if ((pos[0] != TLS_HASH_ALG_SHA256 &&
+			     pos[0] != TLS_HASH_ALG_SHA384 &&
+			     pos[0] != TLS_HASH_ALG_SHA512) ||
 			    pos[1] != TLS_SIGN_ALG_RSA) {
 				wpa_printf(MSG_DEBUG, "TLSv1.2: Unsupported hash(%u)/signature(%u) algorithm",
 					   pos[0], pos[1]);
 				goto fail;
 			}
-			pos += 2;
 
 			hlen = tlsv12_key_x_server_params_hash(
-				conn->rl.tls_version, conn->client_random,
+				conn->rl.tls_version, pos[0],
+				conn->client_random,
 				conn->server_random, server_params,
 				server_params_end - server_params, hash);
+			pos += 2;
 #else /* CONFIG_TLSV12 */
 			goto fail;
 #endif /* CONFIG_TLSV12 */

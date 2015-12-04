@@ -5903,7 +5903,8 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 				     const char *ifname, const u8 *addr,
 				     void *bss_ctx, void **drv_priv,
 				     char *force_ifname, u8 *if_addr,
-				     const char *bridge, int use_existing)
+				     const char *bridge, int use_existing,
+				     int setup_ap)
 {
 	enum nl80211_iftype nlmode;
 	struct i802_bss *bss = priv;
@@ -5987,7 +5988,7 @@ static int wpa_driver_nl80211_if_add(void *priv, enum wpa_driver_if_type type,
 		os_memcpy(if_addr, new_addr, ETH_ALEN);
 	}
 
-	if (type == WPA_IF_AP_BSS) {
+	if (type == WPA_IF_AP_BSS && setup_ap) {
 		struct i802_bss *new_bss = os_zalloc(sizeof(*new_bss));
 		if (new_bss == NULL) {
 			if (added)
@@ -6182,6 +6183,20 @@ static int nl80211_send_frame_cmd(struct i802_bss *bss,
 
 		if (cookie_out)
 			*cookie_out = no_ack ? (u64) -1 : cookie;
+
+		if (drv->num_send_action_cookies == MAX_SEND_ACTION_COOKIES) {
+			wpa_printf(MSG_DEBUG,
+				   "nl80211: Drop oldest pending send action cookie 0x%llx",
+				   (long long unsigned int)
+				   drv->send_action_cookies[0]);
+			os_memmove(&drv->send_action_cookies[0],
+				   &drv->send_action_cookies[1],
+				   (MAX_SEND_ACTION_COOKIES - 1) *
+				   sizeof(u64));
+			drv->num_send_action_cookies--;
+		}
+		drv->send_action_cookies[drv->num_send_action_cookies] = cookie;
+		drv->num_send_action_cookies++;
 	}
 
 fail:
@@ -6236,17 +6251,16 @@ static int wpa_driver_nl80211_send_action(struct i802_bss *bss,
 }
 
 
-static void wpa_driver_nl80211_send_action_cancel_wait(void *priv)
+static void nl80211_frame_wait_cancel(struct i802_bss *bss, u64 cookie)
 {
-	struct i802_bss *bss = priv;
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	struct nl_msg *msg;
 	int ret;
 
 	wpa_printf(MSG_DEBUG, "nl80211: Cancel TX frame wait: cookie=0x%llx",
-		   (long long unsigned int) drv->send_action_cookie);
+		   (long long unsigned int) cookie);
 	if (!(msg = nl80211_cmd_msg(bss, 0, NL80211_CMD_FRAME_WAIT_CANCEL)) ||
-	    nla_put_u64(msg, NL80211_ATTR_COOKIE, drv->send_action_cookie)) {
+	    nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie)) {
 		nlmsg_free(msg);
 		return;
 	}
@@ -6255,6 +6269,30 @@ static void wpa_driver_nl80211_send_action_cancel_wait(void *priv)
 	if (ret)
 		wpa_printf(MSG_DEBUG, "nl80211: wait cancel failed: ret=%d "
 			   "(%s)", ret, strerror(-ret));
+}
+
+
+static void wpa_driver_nl80211_send_action_cancel_wait(void *priv)
+{
+	struct i802_bss *bss = priv;
+	struct wpa_driver_nl80211_data *drv = bss->drv;
+	unsigned int i;
+	u64 cookie;
+
+	/* Cancel the last pending TX cookie */
+	nl80211_frame_wait_cancel(bss, drv->send_action_cookie);
+
+	/*
+	 * Cancel the other pending TX cookies, if any. This is needed since
+	 * the driver may keep a list of all pending offchannel TX operations
+	 * and free up the radio only once they have expired or cancelled.
+	 */
+	for (i = drv->num_send_action_cookies; i > 0; i--) {
+		cookie = drv->send_action_cookies[i - 1];
+		if (cookie != drv->send_action_cookie)
+			nl80211_frame_wait_cancel(bss, cookie);
+	}
+	drv->num_send_action_cookies = 0;
 }
 
 
@@ -6559,8 +6597,12 @@ static int nl80211_signal_poll(void *priv, struct wpa_signal_info *si)
 
 	os_memset(si, 0, sizeof(*si));
 	res = nl80211_get_link_signal(drv, si);
-	if (res != 0)
-		return res;
+	if (res) {
+		if (drv->nlmode != NL80211_IFTYPE_ADHOC &&
+		    drv->nlmode != NL80211_IFTYPE_MESH_POINT)
+			return res;
+		si->current_signal = 0;
+	}
 
 	res = nl80211_get_channel_width(drv, si);
 	if (res != 0)
@@ -7540,7 +7582,10 @@ static int wpa_driver_nl80211_status(void *priv, char *buf, size_t buflen)
 				  "capa.mac_addr_rand_scan_supported=%d\n"
 				  "capa.conc_capab=%u\n"
 				  "capa.max_conc_chan_2_4=%u\n"
-				  "capa.max_conc_chan_5_0=%u\n",
+				  "capa.max_conc_chan_5_0=%u\n"
+				  "capa.max_sched_scan_plans=%u\n"
+				  "capa.max_sched_scan_plan_interval=%u\n"
+				  "capa.max_sched_scan_plan_iterations=%u\n",
 				  drv->capa.key_mgmt,
 				  drv->capa.enc,
 				  drv->capa.auth,
@@ -7559,7 +7604,10 @@ static int wpa_driver_nl80211_status(void *priv, char *buf, size_t buflen)
 				  drv->capa.mac_addr_rand_scan_supported,
 				  drv->capa.conc_capab,
 				  drv->capa.max_conc_chan_2_4,
-				  drv->capa.max_conc_chan_5_0);
+				  drv->capa.max_conc_chan_5_0,
+				  drv->capa.max_sched_scan_plans,
+				  drv->capa.max_sched_scan_plan_interval,
+				  drv->capa.max_sched_scan_plan_iterations);
 		if (os_snprintf_error(end - pos, res))
 			return pos - buf;
 		pos += res;
@@ -8801,6 +8849,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.sched_scan = wpa_driver_nl80211_sched_scan,
 	.stop_sched_scan = wpa_driver_nl80211_stop_sched_scan,
 	.get_scan_results2 = wpa_driver_nl80211_get_scan_results,
+	.abort_scan = wpa_driver_nl80211_abort_scan,
 	.deauthenticate = driver_nl80211_deauthenticate,
 	.authenticate = driver_nl80211_authenticate,
 	.associate = wpa_driver_nl80211_associate,

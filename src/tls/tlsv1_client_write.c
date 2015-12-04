@@ -47,8 +47,28 @@ u8 * tls_send_client_hello(struct tlsv1_client *conn, size_t *out_len)
 	u8 *hello, *end, *pos, *hs_length, *hs_start, *rhdr;
 	struct os_time now;
 	size_t len, i;
+	u8 *ext_start;
+	u16 tls_version = TLS_VERSION;
 
-	wpa_printf(MSG_DEBUG, "TLSv1: Send ClientHello");
+	/* Pick the highest locally enabled TLS version */
+#ifdef CONFIG_TLSV12
+	if ((conn->flags & TLS_CONN_DISABLE_TLSv1_2) &&
+	    tls_version == TLS_VERSION_1_2)
+		tls_version = TLS_VERSION_1_1;
+#endif /* CONFIG_TLSV12 */
+#ifdef CONFIG_TLSV11
+	if ((conn->flags & TLS_CONN_DISABLE_TLSv1_1) &&
+	    tls_version == TLS_VERSION_1_1)
+		tls_version = TLS_VERSION_1;
+#endif /* CONFIG_TLSV11 */
+	if ((conn->flags & TLS_CONN_DISABLE_TLSv1_0) &&
+	    tls_version == TLS_VERSION_1) {
+		wpa_printf(MSG_INFO, "TLSv1: No TLS version allowed");
+		return NULL;
+	}
+
+	wpa_printf(MSG_DEBUG, "TLSv1: Send ClientHello (ver %s)",
+		   tls_version_str(tls_version));
 	*out_len = 0;
 
 	os_get_time(&now);
@@ -61,7 +81,7 @@ u8 * tls_send_client_hello(struct tlsv1_client *conn, size_t *out_len)
 	wpa_hexdump(MSG_MSGDUMP, "TLSv1: client_random",
 		    conn->client_random, TLS_RANDOM_LEN);
 
-	len = 100 + conn->num_cipher_suites * 2 + conn->client_hello_ext_len;
+	len = 150 + conn->num_cipher_suites * 2 + conn->client_hello_ext_len;
 	hello = os_malloc(len);
 	if (hello == NULL)
 		return NULL;
@@ -81,7 +101,7 @@ u8 * tls_send_client_hello(struct tlsv1_client *conn, size_t *out_len)
 	pos += 3;
 	/* body - ClientHello */
 	/* ProtocolVersion client_version */
-	WPA_PUT_BE16(pos, TLS_VERSION);
+	WPA_PUT_BE16(pos, tls_version);
 	pos += 2;
 	/* Random random: uint32 gmt_unix_time, opaque random_bytes */
 	os_memcpy(pos, conn->client_random, TLS_RANDOM_LEN);
@@ -101,11 +121,45 @@ u8 * tls_send_client_hello(struct tlsv1_client *conn, size_t *out_len)
 	*pos++ = 1;
 	*pos++ = TLS_COMPRESSION_NULL;
 
+	/* Extension */
+	ext_start = pos;
+	pos += 2;
+
+#ifdef CONFIG_TLSV12
+	if (conn->rl.tls_version >= TLS_VERSION_1_2) {
+		/*
+		 * Add signature_algorithms extension since we support only
+		 * SHA256 (and not the default SHA1) with TLSv1.2.
+		 */
+		/* ExtensionsType extension_type = signature_algorithms(13) */
+		WPA_PUT_BE16(pos, TLS_EXT_SIGNATURE_ALGORITHMS);
+		pos += 2;
+		/* opaque extension_data<0..2^16-1> length */
+		WPA_PUT_BE16(pos, 8);
+		pos += 2;
+		/* supported_signature_algorithms<2..2^16-2> length */
+		WPA_PUT_BE16(pos, 6);
+		pos += 2;
+		/* supported_signature_algorithms */
+		*pos++ = TLS_HASH_ALG_SHA512;
+		*pos++ = TLS_SIGN_ALG_RSA;
+		*pos++ = TLS_HASH_ALG_SHA384;
+		*pos++ = TLS_SIGN_ALG_RSA;
+		*pos++ = TLS_HASH_ALG_SHA256;
+		*pos++ = TLS_SIGN_ALG_RSA;
+	}
+#endif /* CONFIG_TLSV12 */
+
 	if (conn->client_hello_ext) {
 		os_memcpy(pos, conn->client_hello_ext,
 			  conn->client_hello_ext_len);
 		pos += conn->client_hello_ext_len;
 	}
+
+	if (pos == ext_start + 2)
+		pos -= 2; /* no extensions */
+	else
+		WPA_PUT_BE16(ext_start, pos - ext_start - 2);
 
 	WPA_PUT_BE24(hs_length, pos - hs_length - 3);
 	tls_verify_hash_add(&conn->verify, hs_start, pos - hs_start);
@@ -801,6 +855,8 @@ static u8 * tls_send_change_cipher_spec(struct tlsv1_client *conn,
 
 	wpa_printf(MSG_DEBUG, "TLSv1: Session resumption completed "
 		   "successfully");
+	if (!conn->session_resumed && conn->use_session_ticket)
+		conn->session_resumed = 1;
 	conn->state = ESTABLISHED;
 
 	return msg;

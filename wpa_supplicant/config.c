@@ -899,6 +899,9 @@ static char * wpa_config_write_key_mgmt(const struct parse_data *data,
 
 static int wpa_config_parse_cipher(int line, const char *value)
 {
+#ifdef CONFIG_NO_WPA
+	return -1;
+#else /* CONFIG_NO_WPA */
 	int val = wpa_parse_cipher(value);
 	if (val < 0) {
 		wpa_printf(MSG_ERROR, "Line %d: invalid cipher '%s'.",
@@ -911,12 +914,16 @@ static int wpa_config_parse_cipher(int line, const char *value)
 		return -1;
 	}
 	return val;
+#endif /* CONFIG_NO_WPA */
 }
 
 
 #ifndef NO_CONFIG_WRITE
 static char * wpa_config_write_cipher(int cipher)
 {
+#ifdef CONFIG_NO_WPA
+	return NULL;
+#else /* CONFIG_NO_WPA */
 	char *buf = os_zalloc(50);
 	if (buf == NULL)
 		return NULL;
@@ -927,6 +934,7 @@ static char * wpa_config_write_cipher(int cipher)
 	}
 
 	return buf;
+#endif /* CONFIG_NO_WPA */
 }
 #endif /* NO_CONFIG_WRITE */
 
@@ -1837,6 +1845,8 @@ static const struct parse_data ssid_fields[] = {
 	{ FUNC(auth_alg) },
 	{ FUNC(scan_freq) },
 	{ FUNC(freq_list) },
+	{ INT_RANGE(max_oper_chwidth, VHT_CHANWIDTH_USE_HT,
+		    VHT_CHANWIDTH_80P80MHZ) },
 #ifdef IEEE8021X_EAPOL
 	{ FUNC(eap) },
 	{ STR_LENe(identity) },
@@ -2271,6 +2281,8 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->bgscan);
 	os_free(config->wowlan_triggers);
 	os_free(config->fst_group_id);
+	os_free(config->sched_scan_plans);
+
 	os_free(config);
 }
 
@@ -4248,6 +4260,7 @@ static const struct global_parse_data global_fields[] = {
 	{ INT_RANGE(fst_llt, 1, FST_MAX_LLT_MS), 0 },
 #endif /* CONFIG_FST */
 	{ INT_RANGE(wpa_rsc_relaxation, 0, 1), 0 },
+	{ STR(sched_scan_plans), CFG_CHANGED_SCHED_SCAN_PLANS },
 };
 
 #undef FUNC

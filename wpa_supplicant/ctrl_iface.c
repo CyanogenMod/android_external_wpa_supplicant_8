@@ -467,6 +467,8 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 		wpa_s->extra_roc_dur = atoi(value);
 	} else if (os_strcasecmp(cmd, "test_failure") == 0) {
 		wpa_s->test_failure = atoi(value);
+	} else if (os_strcasecmp(cmd, "p2p_go_csa_on_inv") == 0) {
+		wpa_s->p2p_go_csa_on_inv = !!atoi(value);
 #endif /* CONFIG_TESTING_OPTIONS */
 #ifndef CONFIG_NO_CONFIG_BLOBS
 	} else if (os_strcmp(cmd, "blob") == 0) {
@@ -4859,6 +4861,30 @@ static int p2p_ctrl_asp_provision(struct wpa_supplicant *wpa_s, char *cmd)
 }
 
 
+static int parse_freq(int chwidth, int freq2)
+{
+	if (freq2 < 0)
+		return -1;
+	if (freq2)
+		return VHT_CHANWIDTH_80P80MHZ;
+
+	switch (chwidth) {
+	case 0:
+	case 20:
+	case 40:
+		return VHT_CHANWIDTH_USE_HT;
+	case 80:
+		return VHT_CHANWIDTH_80MHZ;
+	case 160:
+		return VHT_CHANWIDTH_160MHZ;
+	default:
+		wpa_printf(MSG_DEBUG, "Unknown max oper bandwidth: %d",
+			   chwidth);
+		return -1;
+	}
+}
+
+
 static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 			    char *buf, size_t buflen)
 {
@@ -4875,7 +4901,7 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	int go_intent = -1;
 	int freq = 0;
 	int pd;
-	int ht40, vht;
+	int ht40, vht, max_oper_chwidth, chwidth = 0, freq2 = 0;
 
 	if (!wpa_s->global->p2p_init_wpa_s)
 		return -1;
@@ -4936,6 +4962,18 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 			return -1;
 	}
 
+	pos2 = os_strstr(pos, " freq2=");
+	if (pos2)
+		freq2 = atoi(pos2 + 7);
+
+	pos2 = os_strstr(pos, " max_oper_chwidth=");
+	if (pos2)
+		chwidth = atoi(pos2 + 18);
+
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
 	if (os_strncmp(pos, "pin", 3) == 0) {
 		/* Request random PIN (to be displayed) and enable the PIN */
 		wps_method = WPS_PIN_DISPLAY;
@@ -4960,8 +4998,8 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 
 	new_pin = wpas_p2p_connect(wpa_s, addr, pin, wps_method,
 				   persistent_group, automatic, join,
-				   auth, go_intent, freq, persistent_id, pd,
-				   ht40, vht);
+				   auth, go_intent, freq, freq2, persistent_id,
+				   pd, ht40, vht, max_oper_chwidth);
 	if (new_pin == -2) {
 		os_memcpy(buf, "FAIL-CHANNEL-UNAVAILABLE\n", 25);
 		return 25;
@@ -5516,7 +5554,7 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	struct wpa_ssid *ssid;
 	u8 *_peer = NULL, peer[ETH_ALEN];
 	int freq = 0, pref_freq = 0;
-	int ht40, vht;
+	int ht40, vht, max_oper_chwidth, chwidth = 0, freq2 = 0;
 
 	id = atoi(cmd);
 	pos = os_strstr(cmd, " peer=");
@@ -5554,8 +5592,20 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40 ||
 		vht;
 
-	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, ht40, vht,
-			       pref_freq);
+	pos = os_strstr(cmd, "freq2=");
+	if (pos)
+		freq2 = atoi(pos + 6);
+
+	pos = os_strstr(cmd, " max_oper_chwidth=");
+	if (pos)
+		chwidth = atoi(pos + 18);
+
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
+	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, freq2, ht40, vht,
+			       max_oper_chwidth, pref_freq);
 }
 
 
@@ -5602,7 +5652,8 @@ static int p2p_ctrl_invite(struct wpa_supplicant *wpa_s, char *cmd)
 
 
 static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
-					 int id, int freq, int ht40, int vht)
+					 int id, int freq, int vht_center_freq2,
+					 int ht40, int vht, int vht_chwidth)
 {
 	struct wpa_ssid *ssid;
 
@@ -5614,8 +5665,9 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, 0, ht40, vht,
-					     NULL, 0, 0);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq,
+					     vht_center_freq2, 0, ht40, vht,
+					     vht_chwidth, NULL, 0, 0);
 }
 
 
@@ -5624,11 +5676,14 @@ static int p2p_ctrl_group_add(struct wpa_supplicant *wpa_s, char *cmd)
 	int freq = 0, persistent = 0, group_id = -1;
 	int vht = wpa_s->conf->p2p_go_vht;
 	int ht40 = wpa_s->conf->p2p_go_ht40 || vht;
+	int max_oper_chwidth, chwidth = 0, freq2 = 0;
 	char *token, *context = NULL;
 
 	while ((token = str_token(cmd, " ", &context))) {
 		if (sscanf(token, "freq=%d", &freq) == 1 ||
-		    sscanf(token, "persistent=%d", &group_id) == 1) {
+		    sscanf(token, "freq2=%d", &freq2) == 1 ||
+		    sscanf(token, "persistent=%d", &group_id) == 1 ||
+		    sscanf(token, "max_oper_chwidth=%d", &chwidth) == 1) {
 			continue;
 		} else if (os_strcmp(token, "ht40") == 0) {
 			ht40 = 1;
@@ -5645,11 +5700,17 @@ static int p2p_ctrl_group_add(struct wpa_supplicant *wpa_s, char *cmd)
 		}
 	}
 
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
 	if (group_id >= 0)
 		return p2p_ctrl_group_add_persistent(wpa_s, group_id,
-						     freq, ht40, vht);
+						     freq, freq2, ht40, vht,
+						     max_oper_chwidth);
 
-	return wpas_p2p_group_add(wpa_s, persistent, freq, ht40, vht);
+	return wpas_p2p_group_add(wpa_s, persistent, freq, freq2, ht40, vht,
+				  max_oper_chwidth);
 }
 
 
@@ -6801,6 +6862,8 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 
 	wpa_dbg(wpa_s, MSG_DEBUG, "Flush all wpa_supplicant state");
 
+	wpas_abort_ongoing_scan(wpa_s);
+
 #ifdef CONFIG_P2P
 	wpas_p2p_cancel(p2p_wpa_s);
 	p2p_ctrl_flush(p2p_wpa_s);
@@ -6888,6 +6951,7 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 #ifdef CONFIG_TESTING_OPTIONS
 	wpa_s->extra_roc_dur = 0;
 	wpa_s->test_failure = WPAS_TEST_FAILURE_NONE;
+	wpa_s->p2p_go_csa_on_inv = 0;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	wpa_s->disconnected = 0;
@@ -8608,6 +8672,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strcmp(buf, "SCAN_RESULTS") == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_scan_results(
 			wpa_s, reply, reply_size);
+	} else if (os_strcmp(buf, "ABORT_SCAN") == 0) {
+		if (wpas_abort_ongoing_scan(wpa_s) < 0)
+			reply_len = -1;
 	} else if (os_strncmp(buf, "SELECT_NETWORK ", 15) == 0) {
 		if (wpa_supplicant_ctrl_iface_select_network(wpa_s, buf + 15))
 			reply_len = -1;
@@ -8859,10 +8926,11 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 	struct wpa_supplicant *wpa_s;
 	unsigned int create_iface = 0;
 	u8 mac_addr[ETH_ALEN];
+	enum wpa_driver_if_type type = WPA_IF_STATION;
 
 	/*
 	 * <ifname>TAB<confname>TAB<driver>TAB<ctrl_interface>TAB<driver_param>
-	 * TAB<bridge_ifname>[TAB<create>]
+	 * TAB<bridge_ifname>[TAB<create>[TAB<interface_type>]]
 	 */
 	wpa_printf(MSG_DEBUG, "CTRL_IFACE GLOBAL INTERFACE_ADD '%s'", cmd);
 
@@ -8930,9 +8998,22 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 		if (!extra[0])
 			break;
 
-		if (os_strcmp(extra, "create") == 0)
+		if (os_strcmp(extra, "create") == 0) {
 			create_iface = 1;
-		else {
+			if (!pos)
+				break;
+
+			if (os_strcmp(pos, "sta") == 0) {
+				type = WPA_IF_STATION;
+			} else if (os_strcmp(pos, "ap") == 0) {
+				type = WPA_IF_AP_BSS;
+			} else {
+				wpa_printf(MSG_DEBUG,
+					   "INTERFACE_ADD unsupported interface type: '%s'",
+					   pos);
+				return -1;
+			}
+		} else {
 			wpa_printf(MSG_DEBUG,
 				   "INTERFACE_ADD unsupported extra parameter: '%s'",
 				   extra);
@@ -8945,7 +9026,7 @@ static int wpa_supplicant_global_iface_add(struct wpa_global *global,
 			   iface.ifname);
 		if (!global->ifaces)
 			return -1;
-		if (wpa_drv_if_add(global->ifaces, WPA_IF_STATION, iface.ifname,
+		if (wpa_drv_if_add(global->ifaces, type, iface.ifname,
 				   NULL, NULL, NULL, mac_addr, NULL) < 0) {
 			wpa_printf(MSG_ERROR,
 				   "CTRL_IFACE interface creation failed");

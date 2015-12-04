@@ -332,6 +332,7 @@ struct wpa_cred {
 #define CFG_CHANGED_EXT_PW_BACKEND BIT(14)
 #define CFG_CHANGED_NFC_PASSWORD_TOKEN BIT(15)
 #define CFG_CHANGED_P2P_PASSPHRASE_LEN BIT(16)
+#define CFG_CHANGED_SCHED_SCAN_PLANS BIT(17)
 
 /**
  * struct wpa_config - wpa_supplicant configuration data
@@ -1263,6 +1264,17 @@ struct wpa_config {
 	  * of 4-Way Handshake or message 1 of Group Key Handshake.
 	  */
 	 int wpa_rsc_relaxation;
+
+	/**
+	 * sched_scan_plans - Scan plans for scheduled scan
+	 *
+	 * Each scan plan specifies the interval between scans and the number of
+	 * iterations. The last scan plan only specifies the scan interval and
+	 * will be run infinitely.
+	 *
+	 * format: <interval:iterations> <interval2:iterations2> ... <interval>
+	 */
+	 char *sched_scan_plans;
 };
 
 

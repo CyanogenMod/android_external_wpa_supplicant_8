@@ -554,6 +554,7 @@ endif
 ifeq ($(CONFIG_TLS), openssl)
 ifdef TLS_FUNCS
 OBJS += src/crypto/tls_openssl.c
+OBJS += src/crypto/tls_openssl_ocsp.c
 LIBS += -lssl
 endif
 OBJS += src/crypto/crypto_openssl.c
@@ -650,6 +651,8 @@ CONFIG_INTERNAL_SHA1=y
 CONFIG_INTERNAL_MD4=y
 CONFIG_INTERNAL_MD5=y
 CONFIG_INTERNAL_SHA256=y
+CONFIG_INTERNAL_SHA384=y
+CONFIG_INTERNAL_SHA512=y
 CONFIG_INTERNAL_RC4=y
 CONFIG_INTERNAL_DH_GROUP5=y
 endif
@@ -806,6 +809,16 @@ endif
 ifdef NEED_SHA384
 L_CFLAGS += -DCONFIG_SHA384
 OBJS += src/crypto/sha384-prf.c
+endif
+
+ifdef CONFIG_INTERNAL_SHA384
+L_CFLAGS += -DCONFIG_INTERNAL_SHA384
+OBJS += src/crypto/sha384-internal.c
+endif
+
+ifdef CONFIG_INTERNAL_SHA512
+L_CFLAGS += -DCONFIG_INTERNAL_SHA512
+OBJS += src/crypto/sha512-internal.c
 endif
 
 ifdef NEED_DH_GROUPS

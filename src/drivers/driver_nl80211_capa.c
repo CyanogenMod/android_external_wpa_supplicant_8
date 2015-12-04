@@ -499,6 +499,19 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 		capa->max_sched_scan_ssids =
 			nla_get_u8(tb[NL80211_ATTR_MAX_NUM_SCHED_SCAN_SSIDS]);
 
+	if (tb[NL80211_ATTR_MAX_NUM_SCHED_SCAN_PLANS] &&
+	    tb[NL80211_ATTR_MAX_SCAN_PLAN_INTERVAL] &&
+	    tb[NL80211_ATTR_MAX_SCAN_PLAN_ITERATIONS]) {
+		capa->max_sched_scan_plans =
+			nla_get_u32(tb[NL80211_ATTR_MAX_NUM_SCHED_SCAN_PLANS]);
+
+		capa->max_sched_scan_plan_interval =
+			nla_get_u32(tb[NL80211_ATTR_MAX_SCAN_PLAN_INTERVAL]);
+
+		capa->max_sched_scan_plan_iterations =
+			nla_get_u32(tb[NL80211_ATTR_MAX_SCAN_PLAN_ITERATIONS]);
+	}
+
 	if (tb[NL80211_ATTR_MAX_MATCH_SETS])
 		capa->max_match_sets =
 			nla_get_u8(tb[NL80211_ATTR_MAX_MATCH_SETS]);
@@ -709,6 +722,12 @@ static int wpa_driver_nl80211_get_info(struct wpa_driver_nl80211_data *drv,
 		drv->capa.flags |= WPA_DRIVER_FLAGS_AP_CSA;
 		if (!drv->capa.max_csa_counters)
 			drv->capa.max_csa_counters = 1;
+	}
+
+	if (!drv->capa.max_sched_scan_plans) {
+		drv->capa.max_sched_scan_plans = 1;
+		drv->capa.max_sched_scan_plan_interval = UINT32_MAX;
+		drv->capa.max_sched_scan_plan_iterations = 0;
 	}
 
 	return 0;
@@ -966,6 +985,7 @@ struct phy_info_arg {
 	u16 *num_modes;
 	struct hostapd_hw_modes *modes;
 	int last_mode, last_chan_idx;
+	int failed;
 };
 
 static void phy_info_ht_capa(struct hostapd_hw_modes *mode, struct nlattr *capa,
@@ -1083,7 +1103,7 @@ static int phy_info_freqs(struct phy_info_arg *phy_info,
 				   mode->num_channels + new_channels,
 				   sizeof(struct hostapd_channel_data));
 	if (!channel)
-		return NL_SKIP;
+		return NL_STOP;
 
 	mode->channels = channel;
 	mode->num_channels += new_channels;
@@ -1129,7 +1149,7 @@ static int phy_info_rates(struct hostapd_hw_modes *mode, struct nlattr *tb)
 
 	mode->rates = os_calloc(mode->num_rates, sizeof(int));
 	if (!mode->rates)
-		return NL_SKIP;
+		return NL_STOP;
 
 	idx = 0;
 
@@ -1158,8 +1178,10 @@ static int phy_info_band(struct phy_info_arg *phy_info, struct nlattr *nl_band)
 		mode = os_realloc_array(phy_info->modes,
 					*phy_info->num_modes + 1,
 					sizeof(*mode));
-		if (!mode)
-			return NL_SKIP;
+		if (!mode) {
+			phy_info->failed = 1;
+			return NL_STOP;
+		}
 		phy_info->modes = mode;
 
 		mode = &phy_info->modes[*(phy_info->num_modes)];
@@ -1195,11 +1217,12 @@ static int phy_info_band(struct phy_info_arg *phy_info, struct nlattr *nl_band)
 	phy_info_vht_capa(mode, tb_band[NL80211_BAND_ATTR_VHT_CAPA],
 			  tb_band[NL80211_BAND_ATTR_VHT_MCS_SET]);
 	ret = phy_info_freqs(phy_info, mode, tb_band[NL80211_BAND_ATTR_FREQS]);
-	if (ret != NL_OK)
+	if (ret == NL_OK)
+		ret = phy_info_rates(mode, tb_band[NL80211_BAND_ATTR_RATES]);
+	if (ret != NL_OK) {
+		phy_info->failed = 1;
 		return ret;
-	ret = phy_info_rates(mode, tb_band[NL80211_BAND_ATTR_RATES]);
-	if (ret != NL_OK)
-		return ret;
+	}
 
 	return NL_OK;
 }
@@ -1414,7 +1437,7 @@ static void nl80211_reg_rule_sec(struct nlattr *tb[],
 
 
 static void nl80211_set_vht_mode(struct hostapd_hw_modes *mode, int start,
-				 int end)
+				 int end, int max_bw)
 {
 	int c;
 
@@ -1431,6 +1454,32 @@ static void nl80211_set_vht_mode(struct hostapd_hw_modes *mode, int start,
 
 		if (chan->freq - 70 >= start && chan->freq + 10 <= end)
 			chan->flag |= HOSTAPD_CHAN_VHT_70_10;
+
+		if (max_bw >= 160) {
+			if (chan->freq - 10 >= start && chan->freq + 150 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_10_150;
+
+			if (chan->freq - 30 >= start && chan->freq + 130 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_30_130;
+
+			if (chan->freq - 50 >= start && chan->freq + 110 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_50_110;
+
+			if (chan->freq - 70 >= start && chan->freq + 90 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_70_90;
+
+			if (chan->freq - 90 >= start && chan->freq + 70 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_90_70;
+
+			if (chan->freq - 110 >= start && chan->freq + 50 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_110_50;
+
+			if (chan->freq - 130 >= start && chan->freq + 30 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_130_30;
+
+			if (chan->freq - 150 >= start && chan->freq + 10 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_150_10;
+		}
 	}
 }
 
@@ -1461,7 +1510,7 @@ static void nl80211_reg_rule_vht(struct nlattr *tb[],
 		if (!results->modes[m].vht_capab)
 			continue;
 
-		nl80211_set_vht_mode(&results->modes[m], start, end);
+		nl80211_set_vht_mode(&results->modes[m], start, end, max_bw);
 	}
 }
 
@@ -1599,6 +1648,7 @@ nl80211_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 		.num_modes = num_modes,
 		.modes = NULL,
 		.last_mode = -1,
+		.failed = 0,
 	};
 
 	*num_modes = 0;
@@ -1615,6 +1665,16 @@ nl80211_get_hw_feature_data(void *priv, u16 *num_modes, u16 *flags)
 
 	if (send_and_recv_msgs(drv, msg, phy_info_handler, &result) == 0) {
 		nl80211_set_regulatory_flags(drv, &result);
+		if (result.failed) {
+			int i;
+
+			for (i = 0; result.modes && i < *num_modes; i++) {
+				os_free(result.modes[i].channels);
+				os_free(result.modes[i].rates);
+			}
+			os_free(result.modes);
+			return NULL;
+		}
 		return wpa_driver_nl80211_postprocess_modes(result.modes,
 							    num_modes);
 	}

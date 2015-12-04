@@ -29,11 +29,13 @@ struct tlsv1_client {
 	u8 alert_level;
 	u8 alert_description;
 
+	unsigned int flags; /* TLS_CONN_* bitfield */
+
 	unsigned int certificate_requested:1;
 	unsigned int session_resumed:1;
 	unsigned int session_ticket_included:1;
 	unsigned int use_session_ticket:1;
-	unsigned int disable_time_checks:1;
+	unsigned int cert_in_cb:1;
 
 	struct crypto_public_key *server_rsa_key;
 
@@ -64,6 +66,10 @@ struct tlsv1_client {
 	void *session_ticket_cb_ctx;
 
 	struct wpabuf *partial_input;
+
+	void (*event_cb)(void *ctx, enum tls_event ev,
+			 union tls_event_data *data);
+	void *cb_ctx;
 };
 
 
