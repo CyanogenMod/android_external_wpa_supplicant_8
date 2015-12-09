@@ -66,6 +66,12 @@ static const char *const wpa_cli_full_license =
 "OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n"
 "\n";
 
+#define VENDOR_ELEM_FRAME_ID \
+	"  0: Probe Req (P2P), 1: Probe Resp (P2P) , 2: Probe Resp (GO), " \
+	"3: Beacon (GO), 4: PD Req, 5: PD Resp, 6: GO Neg Req, " \
+	"7: GO Neg Resp, 8: GO Neg Conf, 9: Inv Req, 10: Inv Resp, " \
+	"11: Assoc Req (P2P), 12: Assoc Resp (P2P)"
+
 static struct wpa_ctrl *ctrl_conn;
 static struct wpa_ctrl *mon_conn;
 static int wpa_cli_quit = 0;
@@ -76,6 +82,7 @@ static int wpa_cli_last_id = 0;
 #define CONFIG_CTRL_IFACE_DIR "/var/run/wpa_supplicant"
 #endif /* CONFIG_CTRL_IFACE_DIR */
 static const char *ctrl_iface_dir = CONFIG_CTRL_IFACE_DIR;
+static const char *client_socket_dir = NULL;
 static char *ctrl_ifname = NULL;
 static const char *pid_file = NULL;
 static const char *action_file = NULL;
@@ -107,7 +114,9 @@ static void usage(void)
 {
 	printf("wpa_cli [-p<path to ctrl sockets>] [-i<ifname>] [-hvB] "
 	       "[-a<action file>] \\\n"
-	       "        [-P<pid file>] [-g<global ctrl>] [-G<ping interval>]  "
+	       "        [-P<pid file>] [-g<global ctrl>] [-G<ping interval>] "
+	       "\\\n"
+	       "        [-s<wpa_client_socket_file_path>] "
 	       "[command..]\n"
 	       "  -h = help (show this usage text)\n"
 	       "  -v = shown version information\n"
@@ -330,6 +339,13 @@ static int wpa_cli_open_connection(const char *ifname, int attach)
 	}
 #endif /* ANDROID */
 
+	if (client_socket_dir && client_socket_dir[0] &&
+	    access(client_socket_dir, F_OK) < 0) {
+		perror(client_socket_dir);
+		os_free(cfile);
+		return -1;
+	}
+
 	if (cfile == NULL) {
 		flen = os_strlen(ctrl_iface_dir) + os_strlen(ifname) + 2;
 		cfile = os_malloc(flen);
@@ -343,14 +359,14 @@ static int wpa_cli_open_connection(const char *ifname, int attach)
 		}
 	}
 
-	ctrl_conn = wpa_ctrl_open(cfile);
+	ctrl_conn = wpa_ctrl_open2(cfile, client_socket_dir);
 	if (ctrl_conn == NULL) {
 		os_free(cfile);
 		return -1;
 	}
 
 	if (attach && interactive)
-		mon_conn = wpa_ctrl_open(cfile);
+		mon_conn = wpa_ctrl_open2(cfile, client_socket_dir);
 	else
 		mon_conn = NULL;
 	os_free(cfile);
@@ -502,6 +518,10 @@ static int wpa_cli_cmd_status(struct wpa_ctrl *ctrl, int argc, char *argv[])
 		return wpa_ctrl_command(ctrl, "STATUS-WPS");
 	if (argc > 0 && os_strcmp(argv[0], "driver") == 0)
 		return wpa_ctrl_command(ctrl, "STATUS-DRIVER");
+#ifdef ANDROID
+	if (argc > 0 && os_strcmp(argv[0], "no_events") == 0)
+		return wpa_ctrl_command(ctrl, "STATUS-NO_EVENTS");
+#endif /* ANDROID */
 	return wpa_ctrl_command(ctrl, "STATUS");
 }
 
@@ -618,6 +638,7 @@ static char ** wpa_cli_complete_set(const char *str, int pos)
 		"eapol_version", "ap_scan", "bgscan",
 #ifdef CONFIG_MESH
 		"user_mpm", "max_peer_links", "mesh_max_inactivity",
+		"dot11RSNASAERetransPeriod",
 #endif /* CONFIG_MESH */
 		"disable_scan_offload", "fast_reauth", "opensc_engine_path",
 		"pkcs11_engine_path", "pkcs11_module_path", "openssl_ciphers",
@@ -1533,7 +1554,7 @@ static const char *network_fields[] = {
 	"ssid", "scan_ssid", "bssid", "bssid_blacklist",
 	"bssid_whitelist", "psk", "proto", "key_mgmt",
 	"bg_scan_period", "pairwise", "group", "auth_alg", "scan_freq",
-	"freq_list",
+	"freq_list", "max_oper_chwidth",
 #ifdef IEEE8021X_EAPOL
 	"eap", "identity", "anonymous_identity", "password", "ca_cert",
 	"ca_path", "client_cert", "private_key", "private_key_passwd",
@@ -1749,6 +1770,13 @@ static int wpa_cli_cmd_scan_results(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_abort_scan(struct wpa_ctrl *ctrl, int argc,
+				  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "ABORT_SCAN");
+}
+
+
 static int wpa_cli_cmd_bss(struct wpa_ctrl *ctrl, int argc, char *argv[])
 {
 	return wpa_cli_cmd(ctrl, "BSS", 1, argc, argv);
@@ -1851,14 +1879,15 @@ static int wpa_cli_cmd_interface_add(struct wpa_ctrl *ctrl, int argc,
 
 	/*
 	 * INTERFACE_ADD <ifname>TAB<confname>TAB<driver>TAB<ctrl_interface>TAB
-	 * <driver_param>TAB<bridge_name>[TAB<create>]
+	 * <driver_param>TAB<bridge_name>[TAB<create>[TAB<type>]]
 	 */
 	res = os_snprintf(cmd, sizeof(cmd),
-			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s\t%s",
+			  "INTERFACE_ADD %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
 			  argv[0],
 			  argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "",
 			  argc > 3 ? argv[3] : "", argc > 4 ? argv[4] : "",
-			  argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "");
+			  argc > 5 ? argv[5] : "", argc > 6 ? argv[6] : "",
+			  argc > 7 ? argv[7] : "");
 	if (os_snprintf_error(sizeof(cmd), res))
 		return -1;
 	cmd[sizeof(cmd) - 1] = '\0';
@@ -2462,6 +2491,27 @@ static int wpa_cli_cmd_p2p_remove_client(struct wpa_ctrl *ctrl, int argc,
 	return wpa_cli_cmd(ctrl, "P2P_REMOVE_CLIENT", 1, argc, argv);
 }
 
+
+static int wpa_cli_cmd_vendor_elem_add(struct wpa_ctrl *ctrl, int argc,
+				       char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "VENDOR_ELEM_ADD", 2, argc, argv);
+}
+
+
+static int wpa_cli_cmd_vendor_elem_get(struct wpa_ctrl *ctrl, int argc,
+				       char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "VENDOR_ELEM_GET", 1, argc, argv);
+}
+
+
+static int wpa_cli_cmd_vendor_elem_remove(struct wpa_ctrl *ctrl, int argc,
+					  char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "VENDOR_ELEM_REMOVE", 2, argc, argv);
+}
+
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_WIFI_DISPLAY
@@ -2801,6 +2851,13 @@ static int wpa_cli_cmd_mac_rand_scan(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_get_pref_freq_list(struct wpa_ctrl *ctrl, int argc,
+					  char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "GET_PREF_FREQ_LIST", 1, argc, argv);
+}
+
+
 enum wpa_cli_cmd_flags {
 	cli_cmd_flag_none		= 0x00,
 	cli_cmd_flag_sensitive		= 0x01
@@ -2979,6 +3036,9 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "scan_results", wpa_cli_cmd_scan_results, NULL,
 	  cli_cmd_flag_none,
 	  "= get latest scan results" },
+	{ "abort_scan", wpa_cli_cmd_abort_scan, NULL,
+	  cli_cmd_flag_none,
+	  "= request ongoing scan to be aborted" },
 	{ "bss", wpa_cli_cmd_bss, wpa_cli_complete_bss,
 	  cli_cmd_flag_none,
 	  "<<idx> | <bssid>> = get detailed scan result info" },
@@ -2995,8 +3055,10 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "interface_add", wpa_cli_cmd_interface_add, NULL,
 	  cli_cmd_flag_none,
 	  "<ifname> <confname> <driver> <ctrl_interface> <driver_param>\n"
-	  "  <bridge_name> = adds new interface, all parameters but <ifname>\n"
-	  "  are optional" },
+	  "  <bridge_name> <create> <type> = adds new interface, all "
+	  "parameters but\n"
+	  "  <ifname> are optional. Supported types are station ('sta') and "
+	  "AP ('ap')" },
 	{ "interface_remove", wpa_cli_cmd_interface_remove, NULL,
 	  cli_cmd_flag_none,
 	  "<ifname> = removes the interface" },
@@ -3226,6 +3288,18 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "p2p_remove_client", wpa_cli_cmd_p2p_remove_client,
 	  wpa_cli_complete_p2p_peer, cli_cmd_flag_none,
 	  "<address|iface=address> = remove a peer from all groups" },
+	{ "vendor_elem_add", wpa_cli_cmd_vendor_elem_add, NULL,
+	  cli_cmd_flag_none,
+	  "<frame id> <hexdump of elem(s)> = add vendor specific IEs to frame(s)\n"
+	  VENDOR_ELEM_FRAME_ID },
+	{ "vendor_elem_get", wpa_cli_cmd_vendor_elem_get, NULL,
+	  cli_cmd_flag_none,
+	  "<frame id> = get vendor specific IE(s) to frame(s)\n"
+	  VENDOR_ELEM_FRAME_ID },
+	{ "vendor_elem_remove", wpa_cli_cmd_vendor_elem_remove, NULL,
+	  cli_cmd_flag_none,
+	  "<frame id> <hexdump of elem(s)> = remove vendor specific IE(s) in frame(s)\n"
+	  VENDOR_ELEM_FRAME_ID },
 #endif /* CONFIG_P2P */
 #ifdef CONFIG_WIFI_DISPLAY
 	{ "wfd_subelem_set", wpa_cli_cmd_wfd_subelem_set, NULL,
@@ -3355,6 +3429,9 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	  "<scan|sched|pno|all> enable=<0/1> [addr=mac-address "
 	  "mask=mac-address-mask] = scan MAC randomization"
 	},
+	{ "get_pref_freq_list", wpa_cli_cmd_get_pref_freq_list, NULL,
+	  cli_cmd_flag_none,
+	  "<interface type> = retrieve preferred freq list for the specified interface type" },
 	{ NULL, NULL, NULL, cli_cmd_flag_none, NULL }
 };
 
@@ -3584,6 +3661,9 @@ static void wpa_cli_action_process(const char *msg)
 	char *copy = NULL, *id, *pos2;
 	const char *ifname = ctrl_ifname;
 	char ifname_buf[100];
+
+	if (eloop_terminated())
+		return;
 
 	pos = msg;
 	if (os_strncmp(pos, "IFNAME=", 7) == 0) {
@@ -4166,18 +4246,17 @@ static char * wpa_cli_get_default_ifname(void)
 {
 	char *ifname = NULL;
 
+#ifdef ANDROID
+	char ifprop[PROPERTY_VALUE_MAX];
+	if (property_get("wifi.interface", ifprop, NULL) != 0) {
+		ifname = os_strdup(ifprop);
+		printf("Using interface '%s'\n", ifname ? ifname : "N/A");
+	}
+#else /* ANDROID */
 #ifdef CONFIG_CTRL_IFACE_UNIX
 	struct dirent *dent;
 	DIR *dir = opendir(ctrl_iface_dir);
 	if (!dir) {
-#ifdef ANDROID
-		char ifprop[PROPERTY_VALUE_MAX];
-		if (property_get("wifi.interface", ifprop, NULL) != 0) {
-			ifname = os_strdup(ifprop);
-			printf("Using interface '%s'\n", ifname);
-			return ifname;
-		}
-#endif /* ANDROID */
 		return NULL;
 	}
 	while ((dent = readdir(dir))) {
@@ -4221,6 +4300,7 @@ static char * wpa_cli_get_default_ifname(void)
 	}
 	wpa_ctrl_close(ctrl);
 #endif /* CONFIG_CTRL_IFACE_NAMED_PIPE */
+#endif /* ANDROID */
 
 	return ifname;
 }
@@ -4237,7 +4317,7 @@ int main(int argc, char *argv[])
 		return -1;
 
 	for (;;) {
-		c = getopt(argc, argv, "a:Bg:G:hi:p:P:v");
+		c = getopt(argc, argv, "a:Bg:G:hi:p:P:s:v");
 		if (c < 0)
 			break;
 		switch (c) {
@@ -4268,6 +4348,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'P':
 			pid_file = optarg;
+			break;
+		case 's':
+			client_socket_dir = optarg;
 			break;
 		default:
 			usage();

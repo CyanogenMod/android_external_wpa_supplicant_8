@@ -212,9 +212,6 @@ static void mesh_mpm_send_plink_action(struct wpa_supplicant *wpa_s,
 	struct hostapd_data *bss = ifmsh->bss[0];
 	struct mesh_conf *conf = ifmsh->mconf;
 	u8 supp_rates[2 + 2 + 32];
-#ifdef CONFIG_IEEE80211N
-	u8 ht_capa_oper[2 + 26 + 2 + 22];
-#endif /* CONFIG_IEEE80211N */
 	u8 *pos, *cat;
 	u8 ie_len, add_plid = 0;
 	int ret;
@@ -239,6 +236,15 @@ static void mesh_mpm_send_plink_action(struct wpa_supplicant *wpa_s,
 			   2 + 22;  /* HT operation */
 	}
 #endif /* CONFIG_IEEE80211N */
+#ifdef CONFIG_IEEE80211AC
+	if (type != PLINK_CLOSE && wpa_s->mesh_vht_enabled) {
+		buf_len += 2 + 12 + /* VHT Capabilities */
+			   2 + 5;  /* VHT Operation */
+	}
+#endif /* CONFIG_IEEE80211AC */
+	if (type != PLINK_CLOSE)
+		buf_len += conf->rsn_ie_len; /* RSN IE */
+
 	buf = wpabuf_alloc(buf_len);
 	if (!buf)
 		return;
@@ -255,12 +261,15 @@ static void mesh_mpm_send_plink_action(struct wpa_supplicant *wpa_s,
 
 		/* aid */
 		if (type == PLINK_CONFIRM)
-			wpabuf_put_le16(buf, sta->peer_lid);
+			wpabuf_put_le16(buf, sta->aid);
 
 		/* IE: supp + ext. supp rates */
 		pos = hostapd_eid_supp_rates(bss, supp_rates);
 		pos = hostapd_eid_ext_supp_rates(bss, pos);
 		wpabuf_put_data(buf, supp_rates, pos - supp_rates);
+
+		/* IE: RSN IE */
+		wpabuf_put_data(buf, conf->rsn_ie, conf->rsn_ie_len);
 
 		/* IE: Mesh ID */
 		wpabuf_put_u8(buf, WLAN_EID_MESH_ID);
@@ -328,11 +337,22 @@ static void mesh_mpm_send_plink_action(struct wpa_supplicant *wpa_s,
 
 #ifdef CONFIG_IEEE80211N
 	if (type != PLINK_CLOSE && wpa_s->mesh_ht_enabled) {
+		u8 ht_capa_oper[2 + 26 + 2 + 22];
+
 		pos = hostapd_eid_ht_capabilities(bss, ht_capa_oper);
 		pos = hostapd_eid_ht_operation(bss, pos);
 		wpabuf_put_data(buf, ht_capa_oper, pos - ht_capa_oper);
 	}
 #endif /* CONFIG_IEEE80211N */
+#ifdef CONFIG_IEEE80211AC
+	if (type != PLINK_CLOSE && wpa_s->mesh_vht_enabled) {
+		u8 vht_capa_oper[2 + 12 + 2 + 5];
+
+		pos = hostapd_eid_vht_capabilities(bss, vht_capa_oper);
+		pos = hostapd_eid_vht_operation(bss, pos);
+		wpabuf_put_data(buf, vht_capa_oper, pos - vht_capa_oper);
+	}
+#endif /* CONFIG_IEEE80211AC */
 
 	if (ampe && mesh_rsn_protect_frame(wpa_s->mesh_rsn, sta, cat, buf)) {
 		wpa_msg(wpa_s, MSG_INFO,
@@ -542,6 +562,9 @@ static struct sta_info * mesh_mpm_add_peer(struct wpa_supplicant *wpa_s,
 			return NULL;
 	}
 
+	/* Set WMM by default since Mesh STAs are QoS STAs */
+	sta->flags |= WLAN_STA_WMM;
+
 	/* initialize sta */
 	if (copy_supp_rates(wpa_s, sta, elems)) {
 		ap_free_sta(data, sta);
@@ -555,15 +578,27 @@ static struct sta_info * mesh_mpm_add_peer(struct wpa_supplicant *wpa_s,
 	update_ht_state(data, sta);
 #endif /* CONFIG_IEEE80211N */
 
+#ifdef CONFIG_IEEE80211AC
+	copy_sta_vht_capab(data, sta, elems->vht_capabilities);
+	set_sta_vht_opmode(data, sta, elems->vht_opmode_notif);
+#endif /* CONFIG_IEEE80211AC */
+
+	if (hostapd_get_aid(data, sta) < 0) {
+		wpa_msg(wpa_s, MSG_ERROR, "No AIDs available");
+		ap_free_sta(data, sta);
+		return NULL;
+	}
+
 	/* insert into driver */
 	os_memset(&params, 0, sizeof(params));
 	params.supp_rates = sta->supported_rates;
 	params.supp_rates_len = sta->supported_rates_len;
 	params.addr = addr;
 	params.plink_state = sta->plink_state;
-	params.aid = sta->peer_lid;
+	params.aid = sta->aid;
 	params.listen_interval = 100;
 	params.ht_capabilities = sta->ht_capabilities;
+	params.vht_capabilities = sta->vht_capabilities;
 	params.flags |= WPA_STA_WMM;
 	params.flags_mask |= WPA_STA_AUTHENTICATED;
 	if (conf->security == MESH_CONF_SEC_NONE) {

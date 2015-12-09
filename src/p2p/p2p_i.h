@@ -53,6 +53,9 @@ struct p2p_device {
 	 * from Beacon/Probe Response), the interface address is stored here.
 	 * p2p_device_addr must still be set in such a case to the unique
 	 * identifier for the P2P Device.
+	 *
+	 * This field is also used during P2PS PD to store the intended GO
+	 * address of the peer.
 	 */
 	u8 interface_addr[ETH_ALEN];
 
@@ -535,6 +538,9 @@ struct p2p_data {
 	u16 authorized_oob_dev_pw_id;
 
 	struct wpabuf **vendor_elem;
+
+	unsigned int pref_freq_list[P2P_MAX_PREF_CHANNELS];
+	unsigned int num_pref_freq;
 };
 
 /**
@@ -637,6 +643,9 @@ struct p2p_message {
 	const u8 *persistent_dev;
 	const u8 *persistent_ssid;
 	size_t persistent_ssid_len;
+
+	const u8 *pref_freq_list;
+	size_t pref_freq_list_len;
 };
 
 
@@ -682,6 +691,8 @@ int p2p_channel_random_social(struct p2p_channels *chans, u8 *op_class,
 			      u8 *op_channel);
 
 /* p2p_parse.c */
+void p2p_copy_filter_devname(char *dst, size_t dst_len,
+			     const void *src, size_t src_len);
 int p2p_parse_p2p_ie(const struct wpabuf *buf, struct p2p_message *msg);
 int p2p_parse_ies(const u8 *data, size_t len, struct p2p_message *msg);
 int p2p_parse(const u8 *data, size_t len, struct p2p_message *msg);
@@ -763,6 +774,8 @@ void p2p_buf_add_persistent_group_info(struct wpabuf *buf, const u8 *dev_addr,
 				       const u8 *ssid, size_t ssid_len);
 int p2p_build_wps_ie(struct p2p_data *p2p, struct wpabuf *buf, int pw_id,
 		     int all_attr);
+void p2p_buf_add_pref_channel_list(struct wpabuf *buf,
+				   const u32 *preferred_freq_list, u32 size);
 
 /* p2p_sd.c */
 struct p2p_sd_query * p2p_pending_sd_req(struct p2p_data *p2p,
@@ -792,6 +805,8 @@ int p2p_connect_send(struct p2p_data *p2p, struct p2p_device *dev);
 u16 p2p_wps_method_pw_id(enum p2p_wps_method wps_method);
 void p2p_reselect_channel(struct p2p_data *p2p,
 			  struct p2p_channels *intersection);
+void p2p_check_pref_chan(struct p2p_data *p2p, int go,
+			 struct p2p_device *dev, struct p2p_message *msg);
 
 /* p2p_pd.c */
 void p2p_process_prov_disc_req(struct p2p_data *p2p, const u8 *sa,

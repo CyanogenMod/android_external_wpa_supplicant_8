@@ -92,6 +92,13 @@ static void hostapd_wpa_auth_conf(struct hostapd_bss_config *conf,
 #ifdef CONFIG_TESTING_OPTIONS
 	wconf->corrupt_gtk_rekey_mic_probability =
 		iconf->corrupt_gtk_rekey_mic_probability;
+	if (conf->own_ie_override &&
+	    wpabuf_len(conf->own_ie_override) <= MAX_OWN_IE_OVERRIDE) {
+		wconf->own_ie_override_len = wpabuf_len(conf->own_ie_override);
+		os_memcpy(wconf->own_ie_override,
+			  wpabuf_head(conf->own_ie_override),
+			  wconf->own_ie_override_len);
+	}
 #endif /* CONFIG_TESTING_OPTIONS */
 #ifdef CONFIG_P2P
 	os_memcpy(wconf->ip_addr_go, conf->ip_addr_go, 4);
@@ -630,7 +637,8 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
 	}
 
 #ifdef CONFIG_IEEE80211R
-	if (!hostapd_drv_none(hapd)) {
+	if (!hostapd_drv_none(hapd) && hapd->conf->ft_over_ds &&
+	    wpa_key_mgmt_ft(hapd->conf->wpa_key_mgmt)) {
 		hapd->l2 = l2_packet_init(hapd->conf->bridge[0] ?
 					  hapd->conf->bridge :
 					  hapd->conf->iface, NULL, ETH_P_RRB,
@@ -666,13 +674,14 @@ void hostapd_deinit_wpa(struct hostapd_data *hapd)
 		wpa_deinit(hapd->wpa_auth);
 		hapd->wpa_auth = NULL;
 
-		if (hostapd_set_privacy(hapd, 0)) {
+		if (hapd->drv_priv && hostapd_set_privacy(hapd, 0)) {
 			wpa_printf(MSG_DEBUG, "Could not disable "
 				   "PrivacyInvoked for interface %s",
 				   hapd->conf->iface);
 		}
 
-		if (hostapd_set_generic_elem(hapd, (u8 *) "", 0)) {
+		if (hapd->drv_priv &&
+		    hostapd_set_generic_elem(hapd, (u8 *) "", 0)) {
 			wpa_printf(MSG_DEBUG, "Could not remove generic "
 				   "information element from interface %s",
 				   hapd->conf->iface);

@@ -126,6 +126,15 @@ endif
 endif
 
 OBJS += src/utils/eloop.c
+
+ifdef CONFIG_ELOOP_POLL
+L_CFLAGS += -DCONFIG_ELOOP_POLL
+endif
+
+ifdef CONFIG_ELOOP_EPOLL
+L_CFLAGS += -DCONFIG_ELOOP_EPOLL
+endif
+
 OBJS += src/utils/common.c
 OBJS += src/utils/wpa_debug.c
 OBJS += src/utils/wpabuf.c
@@ -251,6 +260,22 @@ endif
 ifdef CONFIG_IEEE80211AC
 L_CFLAGS += -DCONFIG_IEEE80211AC
 endif
+
+ifdef CONFIG_FST
+L_CFLAGS += -DCONFIG_FST
+OBJS += src/fst/fst.c
+OBJS += src/fst/fst_group.c
+OBJS += src/fst/fst_iface.c
+OBJS += src/fst/fst_session.c
+OBJS += src/fst/fst_ctrl_aux.c
+ifdef CONFIG_FST_TEST
+L_CFLAGS += -DCONFIG_FST_TEST
+endif
+ifndef CONFIG_NO_CTRL_IFACE
+OBJS += src/fst/fst_ctrl_iface.c
+endif
+endif
+
 
 include $(LOCAL_PATH)/src/drivers/drivers.mk
 
@@ -529,6 +554,7 @@ endif
 ifeq ($(CONFIG_TLS), openssl)
 ifdef TLS_FUNCS
 OBJS += src/crypto/tls_openssl.c
+OBJS += src/crypto/tls_openssl_ocsp.c
 LIBS += -lssl
 endif
 OBJS += src/crypto/crypto_openssl.c
@@ -536,6 +562,8 @@ HOBJS += src/crypto/crypto_openssl.c
 ifdef NEED_FIPS186_2_PRF
 OBJS += src/crypto/fips_prf_openssl.c
 endif
+NEED_SHA256=y
+NEED_TLS_PRF_SHA256=y
 LIBS += -lcrypto
 LIBS_h += -lcrypto
 endif
@@ -623,6 +651,8 @@ CONFIG_INTERNAL_SHA1=y
 CONFIG_INTERNAL_MD4=y
 CONFIG_INTERNAL_MD5=y
 CONFIG_INTERNAL_SHA256=y
+CONFIG_INTERNAL_SHA384=y
+CONFIG_INTERNAL_SHA512=y
 CONFIG_INTERNAL_RC4=y
 CONFIG_INTERNAL_DH_GROUP5=y
 endif
@@ -751,9 +781,15 @@ OBJS += src/crypto/des-internal.c
 endif
 endif
 
+ifdef CONFIG_NO_RC4
+L_CFLAGS += -DCONFIG_NO_RC4
+endif
+
 ifdef NEED_RC4
 ifdef CONFIG_INTERNAL_RC4
+ifndef CONFIG_NO_RC4
 OBJS += src/crypto/rc4.c
+endif
 endif
 endif
 
@@ -772,6 +808,17 @@ endif
 endif
 ifdef NEED_SHA384
 L_CFLAGS += -DCONFIG_SHA384
+OBJS += src/crypto/sha384-prf.c
+endif
+
+ifdef CONFIG_INTERNAL_SHA384
+L_CFLAGS += -DCONFIG_INTERNAL_SHA384
+OBJS += src/crypto/sha384-internal.c
+endif
+
+ifdef CONFIG_INTERNAL_SHA512
+L_CFLAGS += -DCONFIG_INTERNAL_SHA512
+OBJS += src/crypto/sha512-internal.c
 endif
 
 ifdef NEED_DH_GROUPS

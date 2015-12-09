@@ -16,6 +16,7 @@
 #include "radius/radius.h"
 #include "radius/radius_client.h"
 #include "p2p/p2p.h"
+#include "fst/fst.h"
 #include "hostapd.h"
 #include "accounting.h"
 #include "ieee802_1x.h"
@@ -171,19 +172,6 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
 	    !(sta->flags & WLAN_STA_PREAUTH))
 		hostapd_drv_sta_remove(hapd, sta->addr);
 
-#ifndef CONFIG_NO_VLAN
-	if (sta->vlan_id_bound) {
-		/*
-		 * Need to remove the STA entry before potentially removing the
-		 * VLAN.
-		 */
-		if (hapd->iface->driver_ap_teardown &&
-		    !(sta->flags & WLAN_STA_PREAUTH))
-			hostapd_drv_sta_remove(hapd, sta->addr);
-		vlan_remove_dynamic(hapd, sta->vlan_id_bound);
-	}
-#endif /* CONFIG_NO_VLAN */
-
 	ap_sta_hash_del(hapd, sta);
 	ap_sta_list_del(hapd, sta);
 
@@ -273,6 +261,24 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
 		radius_client_flush_auth(hapd->radius, sta->addr);
 #endif /* CONFIG_NO_RADIUS */
 
+#ifndef CONFIG_NO_VLAN
+	/*
+	 * sta->wpa_sm->group needs to be released before so that
+	 * vlan_remove_dynamic() can check that no stations are left on the
+	 * AP_VLAN netdev.
+	 */
+	if (sta->vlan_id_bound) {
+		/*
+		 * Need to remove the STA entry before potentially removing the
+		 * VLAN.
+		 */
+		if (hapd->iface->driver_ap_teardown &&
+		    !(sta->flags & WLAN_STA_PREAUTH))
+			hostapd_drv_sta_remove(hapd, sta->addr);
+		vlan_remove_dynamic(hapd, sta->vlan_id_bound);
+	}
+#endif /* CONFIG_NO_VLAN */
+
 	os_free(sta->challenge);
 
 #ifdef CONFIG_IEEE80211W
@@ -296,6 +302,9 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
 	wpabuf_free(sta->wps_ie);
 	wpabuf_free(sta->p2p_ie);
 	wpabuf_free(sta->hs20_ie);
+#ifdef CONFIG_FST
+	wpabuf_free(sta->mb_ies);
+#endif /* CONFIG_FST */
 
 	os_free(sta->ht_capabilities);
 	os_free(sta->vht_capabilities);
@@ -838,41 +847,17 @@ int ap_sta_bind_vlan(struct hostapd_data *hapd, struct sta_info *sta)
 		}
 
 		iface = vlan->ifname;
-		if (vlan_setup_encryption_dyn(hapd, iface) != 0) {
-			hostapd_logger(hapd, sta->addr,
-				       HOSTAPD_MODULE_IEEE80211,
-				       HOSTAPD_LEVEL_DEBUG, "could not "
-				       "configure encryption for dynamic VLAN "
-				       "interface for vlan_id=%d",
-				       sta->vlan_id);
-		}
-
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_IEEE80211,
 			       HOSTAPD_LEVEL_DEBUG, "added new dynamic VLAN "
 			       "interface '%s'", iface);
-	} else if (vlan && vlan->vlan_id == sta->vlan_id) {
-		if (vlan->dynamic_vlan > 0) {
-			vlan->dynamic_vlan++;
-			hostapd_logger(hapd, sta->addr,
-				       HOSTAPD_MODULE_IEEE80211,
-				       HOSTAPD_LEVEL_DEBUG, "updated existing "
-				       "dynamic VLAN interface '%s'", iface);
-		}
-
-		/*
-		 * Update encryption configuration for statically generated
-		 * VLAN interface. This is only used for static WEP
-		 * configuration for the case where hostapd did not yet know
-		 * which keys are to be used when the interface was added.
-		 */
-		if (vlan_setup_encryption_dyn(hapd, iface) != 0) {
-			hostapd_logger(hapd, sta->addr,
-				       HOSTAPD_MODULE_IEEE80211,
-				       HOSTAPD_LEVEL_DEBUG, "could not "
-				       "configure encryption for VLAN "
-				       "interface for vlan_id=%d",
-				       sta->vlan_id);
-		}
+	} else if (vlan && vlan->vlan_id == sta->vlan_id &&
+		   vlan->dynamic_vlan > 0) {
+		vlan->dynamic_vlan++;
+		hostapd_logger(hapd, sta->addr,
+			       HOSTAPD_MODULE_IEEE80211,
+			       HOSTAPD_LEVEL_DEBUG,
+			       "updated existing dynamic VLAN interface '%s'",
+			       iface);
 	}
 
 	/* ref counters have been increased, so mark the station */
@@ -1060,6 +1045,16 @@ void ap_sta_set_authorized(struct hostapd_data *hapd, struct sta_info *sta,
 			wpa_msg_no_global(hapd->msg_ctx_parent, MSG_INFO,
 					  AP_STA_DISCONNECTED "%s", buf);
 	}
+
+#ifdef CONFIG_FST
+	if (hapd->iface->fst) {
+		if (authorized)
+			fst_notify_peer_connected(hapd->iface->fst, sta->addr);
+		else
+			fst_notify_peer_disconnected(hapd->iface->fst,
+						     sta->addr);
+	}
+#endif /* CONFIG_FST */
 }
 
 

@@ -438,6 +438,21 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_HS20 */
 
+#ifdef CONFIG_FST
+	if (wpa_s->fst_ies) {
+		int fst_ies_len = wpabuf_len(wpa_s->fst_ies);
+
+		if (wpa_s->sme.assoc_req_ie_len + fst_ies_len <=
+		    sizeof(wpa_s->sme.assoc_req_ie)) {
+			os_memcpy(wpa_s->sme.assoc_req_ie +
+				  wpa_s->sme.assoc_req_ie_len,
+				  wpabuf_head(wpa_s->fst_ies),
+				  fst_ies_len);
+			wpa_s->sme.assoc_req_ie_len += fst_ies_len;
+		}
+	}
+#endif /* CONFIG_FST */
+
 	ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab,
 					     sizeof(ext_capab));
 	if (ext_capab_len > 0) {
@@ -583,7 +598,8 @@ static void sme_auth_start_cb(struct wpa_radio_work *work, int deinit)
 	wpa_s->connect_work = work;
 
 	if (cwork->bss_removed ||
-	    !wpas_valid_bss_ssid(wpa_s, cwork->bss, cwork->ssid)) {
+	    !wpas_valid_bss_ssid(wpa_s, cwork->bss, cwork->ssid) ||
+	    wpas_network_disabled(wpa_s, cwork->ssid)) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "SME: BSS/SSID entry for authentication not valid anymore - drop connection attempt");
 		wpas_connect_work_done(wpa_s);
 		return;
@@ -615,6 +631,8 @@ void sme_authenticate(struct wpa_supplicant *wpa_s,
 			"SME: Remove previous pending sme-connect");
 		radio_remove_works(wpa_s, "sme-connect", 0);
 	}
+
+	wpas_abort_ongoing_scan(wpa_s);
 
 	cwork = os_zalloc(sizeof(*cwork));
 	if (cwork == NULL)
@@ -801,8 +819,22 @@ void sme_event_auth(struct wpa_supplicant *wpa_s, union wpa_event_data *data)
 #endif /* CONFIG_SAE */
 
 	if (data->auth.status_code != WLAN_STATUS_SUCCESS) {
-		wpa_dbg(wpa_s, MSG_DEBUG, "SME: Authentication failed (status "
-			"code %d)", data->auth.status_code);
+		char *ie_txt = NULL;
+
+		if (data->auth.ies && data->auth.ies_len) {
+			size_t buflen = 2 * data->auth.ies_len + 1;
+			ie_txt = os_malloc(buflen);
+			if (ie_txt) {
+				wpa_snprintf_hex(ie_txt, buflen, data->auth.ies,
+						 data->auth.ies_len);
+			}
+		}
+		wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_AUTH_REJECT MACSTR
+			" auth_type=%u auth_transaction=%u status_code=%u ie=%s",
+			MAC2STR(data->auth.peer), data->auth.auth_type,
+			data->auth.auth_transaction, data->auth.status_code,
+			ie_txt);
+		os_free(ie_txt);
 
 		if (data->auth.status_code !=
 		    WLAN_STATUS_NOT_SUPPORTED_AUTH_ALG ||

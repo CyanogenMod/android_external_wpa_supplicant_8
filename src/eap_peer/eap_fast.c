@@ -1096,7 +1096,7 @@ static int eap_fast_parse_decrypted(struct wpabuf *decrypted,
 	/* Parse TLVs from the decrypted Phase 2 data */
 	pos = wpabuf_mhead(decrypted);
 	end = pos + wpabuf_len(decrypted);
-	while (pos + 4 < end) {
+	while (end - pos > 4) {
 		mandatory = pos[0] & 0x80;
 		tlv_type = WPA_GET_BE16(pos) & 0x3fff;
 		pos += 2;
@@ -1572,6 +1572,13 @@ static struct wpabuf * eap_fast_process(struct eap_sm *sm, void *priv,
 						  EAP_TYPE_FAST,
 						  data->fast_version, id, &msg,
 						  &resp);
+		if (res < 0) {
+			wpa_printf(MSG_DEBUG,
+				   "EAP-FAST: TLS processing failed");
+			ret->methodState = METHOD_DONE;
+			ret->decision = DECISION_FAIL;
+			return resp;
+		}
 
 		if (tls_connection_established(sm->ssl_ctx, data->ssl.conn)) {
 			char cipher[80];

@@ -45,6 +45,15 @@
 #define HOSTAPD_CHAN_INDOOR_ONLY 0x00010000
 #define HOSTAPD_CHAN_GO_CONCURRENT 0x00020000
 
+#define HOSTAPD_CHAN_VHT_10_150 0x00100000
+#define HOSTAPD_CHAN_VHT_30_130 0x00200000
+#define HOSTAPD_CHAN_VHT_50_110 0x00400000
+#define HOSTAPD_CHAN_VHT_70_90  0x00800000
+#define HOSTAPD_CHAN_VHT_90_70  0x01000000
+#define HOSTAPD_CHAN_VHT_110_50 0x02000000
+#define HOSTAPD_CHAN_VHT_130_30 0x04000000
+#define HOSTAPD_CHAN_VHT_150_10 0x08000000
+
 /**
  * enum reg_change_initiator - Regulatory change initiator
  */
@@ -406,6 +415,28 @@ struct wpa_driver_scan_params {
 	 * must be set.
 	 */
 	const u8 *mac_addr_mask;
+
+	/**
+	 * sched_scan_plans - Scan plans for scheduled scan
+	 *
+	 * Each scan plan consists of the number of iterations to scan and the
+	 * interval between scans. When a scan plan finishes (i.e., it was run
+	 * for the specified number of iterations), the next scan plan is
+	 * executed. The scan plans are executed in the order they appear in
+	 * the array (lower index first). The last scan plan will run infinitely
+	 * (until requested to stop), thus must not specify the number of
+	 * iterations. All other scan plans must specify the number of
+	 * iterations.
+	 */
+	struct sched_scan_plan {
+		 u32 interval; /* In seconds */
+		 u32 iterations; /* Zero to run infinitely */
+	 } *sched_scan_plans;
+
+	/**
+	 * sched_scan_plans_num - Number of scan plans in sched_scan_plans array
+	 */
+	 unsigned int sched_scan_plans_num;
 
 	/*
 	 * NOTE: Whenever adding new parameters here, please make sure
@@ -1214,6 +1245,8 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_FLAGS_VHT_IBSS		0x0000002000000000ULL
 /** Driver supports automatic band selection */
 #define WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY	0x0000004000000000ULL
+/** Driver supports simultaneous off-channel operations */
+#define WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS	0x0000008000000000ULL
 	u64 flags;
 
 #define WPA_DRIVER_SMPS_MODE_STATIC			0x00000001
@@ -1230,6 +1263,15 @@ struct wpa_driver_capa {
 
 	/** Maximum number of supported active probe SSIDs for sched_scan */
 	int max_sched_scan_ssids;
+
+	/** Maximum number of supported scan plans for scheduled scan */
+	unsigned int max_sched_scan_plans;
+
+	/** Maximum interval in a scan plan. In seconds */
+	u32 max_sched_scan_plan_interval;
+
+	/** Maximum number of iterations in a single scan plan */
+	u32 max_sched_scan_plan_iterations;
 
 	/** Whether sched_scan (offloaded scanning) is supported */
 	int sched_scan_supported;
@@ -1297,6 +1339,16 @@ struct wpa_driver_capa {
  */
 #define WPA_DRIVER_FLAGS_TX_POWER_INSERTION		0x00000008
 	u32 rrm_flags;
+
+	/* Driver concurrency capabilities */
+	unsigned int conc_capab;
+	/* Maximum number of concurrent channels on 2.4 GHz */
+	unsigned int max_conc_chan_2_4;
+	/* Maximum number of concurrent channels on 5 GHz */
+	unsigned int max_conc_chan_5_0;
+
+	/* Maximum number of supported CSA counters */
+	u16 max_csa_counters;
 };
 
 
@@ -1397,6 +1449,16 @@ enum wpa_driver_if_type {
 	 * WPA_IF_MESH - Mesh interface
 	 */
 	WPA_IF_MESH,
+
+	/*
+	 * WPA_IF_TDLS - TDLS offchannel interface (used for pref freq only)
+	 */
+	WPA_IF_TDLS,
+
+	/*
+	 * WPA_IF_IBSS - IBSS interface (used for pref freq only)
+	 */
+	WPA_IF_IBSS,
 };
 
 struct wpa_init_params {
@@ -1537,8 +1599,8 @@ struct csa_settings {
 	struct beacon_data beacon_csa;
 	struct beacon_data beacon_after;
 
-	u16 counter_offset_beacon;
-	u16 counter_offset_presp;
+	u16 counter_offset_beacon[2];
+	u16 counter_offset_presp[2];
 };
 
 /* TDLS peer capabilities for send_tdls_mgmt() */
@@ -1602,6 +1664,7 @@ struct drv_acs_params {
 	/* ACS channel list info */
 	unsigned int ch_list_len;
 	const u8 *ch_list;
+	const int *freq_list;
 };
 
 
@@ -1942,10 +2005,13 @@ struct wpa_driver_ops {
 	 * @noack: Do not wait for this frame to be acked (disable retries)
 	 * @freq: Frequency (in MHz) to send the frame on, or 0 to let the
 	 * driver decide
+	 * @csa_offs: Array of CSA offsets or %NULL
+	 * @csa_offs_len: Number of elements in csa_offs
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*send_mlme)(void *priv, const u8 *data, size_t data_len,
-			 int noack, unsigned int freq);
+			 int noack, unsigned int freq, const u16 *csa_offs,
+			 size_t csa_offs_len);
 
 	/**
 	 * update_ft_ies - Update FT (IEEE 802.11r) IEs
@@ -2349,7 +2415,8 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*sta_set_flags)(void *priv, const u8 *addr,
-			     int total_flags, int flags_or, int flags_and);
+			     unsigned int total_flags, unsigned int flags_or,
+			     unsigned int flags_and);
 
 	/**
 	 * set_tx_queue_params - Set TX queue parameters
@@ -2380,12 +2447,13 @@ struct wpa_driver_ops {
 	 *	change interface address)
 	 * @bridge: Bridge interface to use or %NULL if no bridge configured
 	 * @use_existing: Whether to allow existing interface to be used
+	 * @setup_ap: Whether to setup AP for %WPA_IF_AP_BSS interfaces
 	 * Returns: 0 on success, -1 on failure
 	 */
 	int (*if_add)(void *priv, enum wpa_driver_if_type type,
 		      const char *ifname, const u8 *addr, void *bss_ctx,
 		      void **drv_priv, char *force_ifname, u8 *if_addr,
-		      const char *bridge, int use_existing);
+		      const char *bridge, int use_existing, int setup_ap);
 
 	/**
 	 * if_remove - Remove a virtual interface
@@ -2967,7 +3035,6 @@ struct wpa_driver_ops {
 	 * sched_scan - Request the driver to initiate scheduled scan
 	 * @priv: Private driver interface data
 	 * @params: Scan parameters
-	 * @interval: Interval between scan cycles in milliseconds
 	 * Returns: 0 on success, -1 on failure
 	 *
 	 * This operation should be used for scheduled scan offload to
@@ -2978,8 +3045,7 @@ struct wpa_driver_ops {
 	 * and if not provided or if it returns -1, we fall back to
 	 * normal host-scheduled scans.
 	 */
-	int (*sched_scan)(void *priv, struct wpa_driver_scan_params *params,
-			  u32 interval);
+	int (*sched_scan)(void *priv, struct wpa_driver_scan_params *params);
 
 	/**
 	 * stop_sched_scan - Request the driver to stop a scheduled scan
@@ -3394,6 +3460,39 @@ struct wpa_driver_ops {
 	 * Returns 0 on success, -1 on failure
 	 */
 	int (*set_band)(void *priv, enum set_band band);
+
+	/**
+	 * get_pref_freq_list - Get preferred frequency list for an interface
+	 * @priv: Private driver interface data
+	 * @if_type: Interface type
+	 * @num: Number of channels
+	 * @freq_list: Preferred channel frequency list encoded in MHz values
+	 * Returns 0 on success, -1 on failure
+	 *
+	 * This command can be used to query the preferred frequency list from
+	 * the driver specific to a particular interface type.
+	 */
+	int (*get_pref_freq_list)(void *priv, enum wpa_driver_if_type if_type,
+				  unsigned int *num, unsigned int *freq_list);
+
+	/**
+	 * set_prob_oper_freq - Indicate probable P2P operating channel
+	 * @priv: Private driver interface data
+	 * @freq: Channel frequency in MHz
+	 * Returns 0 on success, -1 on failure
+	 *
+	 * This command can be used to inform the driver of the operating
+	 * frequency that an ongoing P2P group formation is likely to come up
+	 * on. Local device is assuming P2P Client role.
+	 */
+	int (*set_prob_oper_freq)(void *priv, unsigned int freq);
+
+	/**
+	 * abort_scan - Request the driver to abort an ongoing scan
+	 * @priv: Private driver interface data
+	 * Returns 0 on success, -1 on failure
+	 */
+	int (*abort_scan)(void *priv);
 };
 
 
@@ -4053,6 +4152,12 @@ union wpa_event_data {
 		 * ptk_kek_len - The length of ptk_kek
 		 */
 		size_t ptk_kek_len;
+
+		/**
+		 * subnet_status - The subnet status:
+		 * 0 = unknown, 1 = unchanged, 2 = changed
+		 */
+		u8 subnet_status;
 	} assoc_info;
 
 	/**
@@ -4336,6 +4441,9 @@ union wpa_event_data {
 	 * @ssids: Scanned SSIDs (%NULL or zero-length SSID indicates wildcard
 	 *	SSID)
 	 * @num_ssids: Number of entries in ssids array
+	 * @external_scan: Whether the scan info is for an external scan
+	 * @nl_scan_event: 1 if the source of this scan event is a normal scan,
+	 * 	0 if the source of the scan event is a vendor scan
 	 */
 	struct scan_info {
 		int aborted;
@@ -4343,6 +4451,8 @@ union wpa_event_data {
 		size_t num_freqs;
 		struct wpa_driver_scan_ssid ssids[WPAS_MAX_SCAN_SSIDS];
 		size_t num_ssids;
+		int external_scan;
+		int nl_scan_event;
 	} scan_info;
 
 	/**

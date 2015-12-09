@@ -12,6 +12,7 @@
 #include "utils/eloop.h"
 #include "utils/os.h"
 #include "common/ieee802_11_defs.h"
+#include "common/ieee802_11_common.h"
 #include "crypto/sha256.h"
 #include "crypto/crypto.h"
 #include "crypto/aes_wrap.h"
@@ -626,9 +627,15 @@ static void wpa_tdls_tpk_timeout(void *eloop_ctx, void *timeout_ctx)
 	 */
 
 	if (peer->initiator) {
+		u8 addr[ETH_ALEN];
+
 		wpa_printf(MSG_DEBUG, "TDLS: TPK lifetime expired for " MACSTR
 			   " - try to renew", MAC2STR(peer->addr));
-		wpa_tdls_start(sm, peer->addr);
+		/* cache the peer address before do_teardown */
+		os_memcpy(addr, peer->addr, ETH_ALEN);
+		wpa_tdls_do_teardown(sm, peer,
+				     WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED);
+		wpa_tdls_start(sm, addr);
 	} else {
 		wpa_printf(MSG_DEBUG, "TDLS: TPK lifetime expired for " MACSTR
 			   " - tear down", MAC2STR(peer->addr));
@@ -2385,7 +2392,7 @@ skip_rsn:
 	wpa_printf(MSG_DEBUG, "TDLS: Sending TDLS Setup Confirm / "
 		   "TPK Handshake Message 3");
 	if (wpa_tdls_send_tpk_m3(sm, src_addr, dtoken, lnkid, peer) < 0)
-		goto error;
+		goto error_no_msg;
 
 	if (!peer->tpk_success) {
 		/*
@@ -2406,6 +2413,7 @@ skip_rsn:
 error:
 	wpa_tdls_send_error(sm, src_addr, WLAN_TDLS_SETUP_CONFIRM, dtoken, 1,
 			    status);
+error_no_msg:
 	wpa_tdls_disable_peer_link(sm, peer);
 	return -1;
 }
@@ -2859,14 +2867,14 @@ void wpa_tdls_disassoc(struct wpa_sm *sm)
 }
 
 
-static int wpa_tdls_prohibited(struct wpa_eapol_ie_parse *elems)
+static int wpa_tdls_prohibited(struct ieee802_11_elems *elems)
 {
 	/* bit 38 - TDLS Prohibited */
 	return !!(elems->ext_capab[2 + 4] & 0x40);
 }
 
 
-static int wpa_tdls_chan_switch_prohibited(struct wpa_eapol_ie_parse *elems)
+static int wpa_tdls_chan_switch_prohibited(struct ieee802_11_elems *elems)
 {
 	/* bit 39 - TDLS Channel Switch Prohibited */
 	return !!(elems->ext_capab[2 + 4] & 0x80);
@@ -2875,12 +2883,13 @@ static int wpa_tdls_chan_switch_prohibited(struct wpa_eapol_ie_parse *elems)
 
 void wpa_tdls_ap_ies(struct wpa_sm *sm, const u8 *ies, size_t len)
 {
-	struct wpa_eapol_ie_parse elems;
+	struct ieee802_11_elems elems;
 
 	sm->tdls_prohibited = 0;
 	sm->tdls_chan_switch_prohibited = 0;
 
-	if (ies == NULL || wpa_supplicant_parse_ies(ies, len, &elems) < 0 ||
+	if (ies == NULL ||
+	    ieee802_11_parse_elems(ies, len, &elems, 0) == ParseFailed ||
 	    elems.ext_capab == NULL || elems.ext_capab_len < 2 + 5)
 		return;
 
@@ -2896,9 +2905,10 @@ void wpa_tdls_ap_ies(struct wpa_sm *sm, const u8 *ies, size_t len)
 
 void wpa_tdls_assoc_resp_ies(struct wpa_sm *sm, const u8 *ies, size_t len)
 {
-	struct wpa_eapol_ie_parse elems;
+	struct ieee802_11_elems elems;
 
-	if (ies == NULL || wpa_supplicant_parse_ies(ies, len, &elems) < 0 ||
+	if (ies == NULL ||
+	    ieee802_11_parse_elems(ies, len, &elems, 0) == ParseFailed ||
 	    elems.ext_capab == NULL || elems.ext_capab_len < 2 + 5)
 		return;
 

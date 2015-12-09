@@ -517,16 +517,18 @@ int wpa_debug_reopen_file(void)
 {
 #ifdef CONFIG_DEBUG_FILE
 	int rv;
-	if (last_path) {
-		char *tmp = os_strdup(last_path);
-		wpa_debug_close_file();
-		rv = wpa_debug_open_file(tmp);
-		os_free(tmp);
-	} else {
-		wpa_printf(MSG_ERROR, "Last-path was not set, cannot "
-			   "re-open log file.");
-		rv = -1;
-	}
+	char *tmp;
+
+	if (!last_path)
+		return 0; /* logfile not used */
+
+	tmp = os_strdup(last_path);
+	if (!tmp)
+		return -1;
+
+	wpa_debug_close_file();
+	rv = wpa_debug_open_file(tmp);
+	os_free(tmp);
 	return rv;
 #else /* CONFIG_DEBUG_FILE */
 	return 0;
@@ -819,3 +821,42 @@ void hostapd_logger(void *ctx, const u8 *addr, unsigned int module, int level,
 	bin_clear_free(buf, buflen);
 }
 #endif /* CONFIG_NO_HOSTAPD_LOGGER */
+
+
+const char * debug_level_str(int level)
+{
+	switch (level) {
+	case MSG_EXCESSIVE:
+		return "EXCESSIVE";
+	case MSG_MSGDUMP:
+		return "MSGDUMP";
+	case MSG_DEBUG:
+		return "DEBUG";
+	case MSG_INFO:
+		return "INFO";
+	case MSG_WARNING:
+		return "WARNING";
+	case MSG_ERROR:
+		return "ERROR";
+	default:
+		return "?";
+	}
+}
+
+
+int str_to_debug_level(const char *s)
+{
+	if (os_strcasecmp(s, "EXCESSIVE") == 0)
+		return MSG_EXCESSIVE;
+	if (os_strcasecmp(s, "MSGDUMP") == 0)
+		return MSG_MSGDUMP;
+	if (os_strcasecmp(s, "DEBUG") == 0)
+		return MSG_DEBUG;
+	if (os_strcasecmp(s, "INFO") == 0)
+		return MSG_INFO;
+	if (os_strcasecmp(s, "WARNING") == 0)
+		return MSG_WARNING;
+	if (os_strcasecmp(s, "ERROR") == 0)
+		return MSG_ERROR;
+	return -1;
+}

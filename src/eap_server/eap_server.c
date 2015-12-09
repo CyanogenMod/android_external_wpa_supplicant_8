@@ -96,7 +96,8 @@ static struct wpabuf * eap_sm_buildInitiateReauthStart(struct eap_sm *sm,
 		plen += 2 + domain_len;
 	}
 
-	msg = eap_msg_alloc(EAP_VENDOR_IETF, EAP_ERP_TYPE_REAUTH_START, plen,
+	msg = eap_msg_alloc(EAP_VENDOR_IETF,
+			    (EapType) EAP_ERP_TYPE_REAUTH_START, plen,
 			    EAP_CODE_INITIATE, id);
 	if (msg == NULL)
 		return NULL;
@@ -714,8 +715,8 @@ static void erp_send_finish_reauth(struct eap_sm *sm,
 	plen = 1 + 2 + 2 + os_strlen(nai);
 	if (hash_len)
 		plen += 1 + hash_len;
-	msg = eap_msg_alloc(EAP_VENDOR_IETF, EAP_ERP_TYPE_REAUTH, plen,
-			    EAP_CODE_FINISH, id);
+	msg = eap_msg_alloc(EAP_VENDOR_IETF, (EapType) EAP_ERP_TYPE_REAUTH,
+			    plen, EAP_CODE_FINISH, id);
 	if (msg == NULL)
 		return;
 	wpabuf_put_u8(msg, flags);
@@ -799,7 +800,7 @@ SM_STATE(EAP, INITIATE_RECEIVED)
 
 	sm->rxInitiate = FALSE;
 
-	pos = eap_hdr_validate(EAP_VENDOR_IETF, EAP_ERP_TYPE_REAUTH,
+	pos = eap_hdr_validate(EAP_VENDOR_IETF, (EapType) EAP_ERP_TYPE_REAUTH,
 			       sm->eap_if.eapRespData, &len);
 	if (pos == NULL) {
 		wpa_printf(MSG_INFO, "EAP-Initiate: Invalid frame");
@@ -1246,6 +1247,17 @@ SM_STEP(EAP)
 			break;
 		}
 		SM_ENTER(EAP, SEND_REQUEST);
+		if (sm->eap_if.eapNoReq && !sm->eap_if.eapReq) {
+			/*
+			 * This transition is not mentioned in RFC 4137, but it
+			 * is needed to handle cleanly a case where EAP method
+			 * buildReq fails.
+			 */
+			wpa_printf(MSG_DEBUG,
+				   "EAP: Method did not return a request");
+			SM_ENTER(EAP, FAILURE);
+			break;
+		}
 		break;
 	case EAP_METHOD_RESPONSE:
 		/*
@@ -1853,6 +1865,7 @@ struct eap_sm * eap_server_sm_init(void *eapol_ctx,
 	sm->server_id = conf->server_id;
 	sm->server_id_len = conf->server_id_len;
 	sm->erp = conf->erp;
+	sm->tls_session_lifetime = conf->tls_session_lifetime;
 
 #ifdef CONFIG_TESTING_OPTIONS
 	sm->tls_test_flags = conf->tls_test_flags;

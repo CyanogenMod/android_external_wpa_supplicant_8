@@ -156,6 +156,12 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_GET_PREFERRED_FREQ_LIST = 103,
 	QCA_NL80211_VENDOR_SUBCMD_SET_PROBABLE_OPER_CHANNEL = 104,
 	QCA_NL80211_VENDOR_SUBCMD_SETBAND = 105,
+	QCA_NL80211_VENDOR_SUBCMD_TRIGGER_SCAN = 106,
+	QCA_NL80211_VENDOR_SUBCMD_SCAN_DONE = 107,
+	QCA_NL80211_VENDOR_SUBCMD_OTA_TEST = 108,
+	QCA_NL80211_VENDOR_SUBCMD_SET_TXPOWER_SCALE = 109,
+	/* 110..114 - reserved for QCA */
+	QCA_NL80211_VENDOR_SUBCMD_SET_TXPOWER_DECR_DB = 115,
 };
 
 
@@ -205,6 +211,7 @@ enum qca_wlan_vendor_attr_roam_auth {
 	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_KEY_REPLAY_CTR,
 	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KCK,
 	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK,
+	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_SUBNET_STATUS,
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_MAX =
@@ -223,6 +230,7 @@ enum qca_wlan_vendor_attr_acs_offload {
 	QCA_WLAN_VENDOR_ATTR_ACS_CH_LIST,
 	QCA_WLAN_VENDOR_ATTR_ACS_VHT_SEG0_CENTER_CHANNEL,
 	QCA_WLAN_VENDOR_ATTR_ACS_VHT_SEG1_CENTER_CHANNEL,
+	QCA_WLAN_VENDOR_ATTR_ACS_FREQ_LIST,
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_ACS_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_ACS_MAX =
@@ -246,11 +254,14 @@ enum qca_wlan_vendor_acs_hw_mode {
  *	after roaming, rather than having the user space wpa_supplicant do it.
  * @QCA_WLAN_VENDOR_FEATURE_SUPPORT_HW_MODE_ANY: Device supports automatic
  *	band selection based on channel selection results.
+ * @QCA_WLAN_VENDOR_FEATURE_OFFCHANNEL_SIMULTANEOUS: Device supports
+ * 	simultaneous off-channel operations.
  * @NUM_QCA_WLAN_VENDOR_FEATURES: Number of assigned feature bits
  */
 enum qca_wlan_vendor_features {
 	QCA_WLAN_VENDOR_FEATURE_KEY_MGMT_OFFLOAD	= 0,
 	QCA_WLAN_VENDOR_FEATURE_SUPPORT_HW_MODE_ANY     = 1,
+	QCA_WLAN_VENDOR_FEATURE_OFFCHANNEL_SIMULTANEOUS = 2,
 	NUM_QCA_WLAN_VENDOR_FEATURES /* keep last */
 };
 
@@ -321,6 +332,134 @@ enum qca_set_band {
 	QCA_SETBAND_AUTO,
 	QCA_SETBAND_5G,
 	QCA_SETBAND_2G,
+};
+
+/* IEEE 802.11 Vendor Specific elements */
+
+/**
+ * enum qca_vendor_element_id - QCA Vendor Specific element types
+ *
+ * These values are used to identify QCA Vendor Specific elements. The
+ * payload of the element starts with the three octet OUI (OUI_QCA) and
+ * is followed by a single octet type which is defined by this enum.
+ *
+ * @QCA_VENDOR_ELEM_P2P_PREF_CHAN_LIST: P2P preferred channel list.
+ *	This element can be used to specify preference order for supported
+ *	channels. The channels in this list are in preference order (the first
+ *	one has the highest preference) and are described as a pair of
+ *	(global) Operating Class and Channel Number (each one octet) fields.
+ *
+ *	This extends the standard P2P functionality by providing option to have
+ *	more than one preferred operating channel. When this element is present,
+ *	it replaces the preference indicated in the Operating Channel attribute.
+ *	For supporting other implementations, the Operating Channel attribute is
+ *	expected to be used with the highest preference channel. Similarly, all
+ *	the channels included in this Preferred channel list element are
+ *	expected to be included in the Channel List attribute.
+ *
+ *	This vendor element may be included in GO Negotiation Request, P2P
+ *	Invitation Request, and Provision Discovery Request frames.
+ */
+enum qca_vendor_element_id {
+	QCA_VENDOR_ELEM_P2P_PREF_CHAN_LIST = 0,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_scan - Specifies vendor scan attributes
+ *
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_IE: IEs that should be included as part of scan
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES: Nested unsigned 32-bit attributes
+ *	with frequencies to be scanned (in MHz)
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_SSIDS: Nested attribute with SSIDs to be scanned
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_SUPP_RATES: Nested array attribute of supported
+ *	rates to be included
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_TX_NO_CCK_RATE: flag used to send probe requests
+ * 	at non CCK rate in 2GHz band
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_FLAGS: Unsigned 32-bit scan flags
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE: Unsigned 64-bit cookie provided by the
+ * 	driver for the specific scan request
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_STATUS: Unsigned 8-bit status of the scan
+ * 	request decoded as in enum scan_status
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_MAC: 6-byte MAC address to use when randomisation
+ * 	scan flag is set
+ * @QCA_WLAN_VENDOR_ATTR_SCAN_MAC_MASK: 6-byte MAC address mask to be used with
+ * 	randomisation
+ */
+enum qca_wlan_vendor_attr_scan {
+	QCA_WLAN_VENDOR_ATTR_SCAN_INVALID_PARAM = 0,
+	QCA_WLAN_VENDOR_ATTR_SCAN_IE,
+	QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES,
+	QCA_WLAN_VENDOR_ATTR_SCAN_SSIDS,
+	QCA_WLAN_VENDOR_ATTR_SCAN_SUPP_RATES,
+	QCA_WLAN_VENDOR_ATTR_SCAN_TX_NO_CCK_RATE,
+	QCA_WLAN_VENDOR_ATTR_SCAN_FLAGS,
+	QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE,
+	QCA_WLAN_VENDOR_ATTR_SCAN_STATUS,
+	QCA_WLAN_VENDOR_ATTR_SCAN_MAC,
+	QCA_WLAN_VENDOR_ATTR_SCAN_MAC_MASK,
+	QCA_WLAN_VENDOR_ATTR_SCAN_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_SCAN_MAX =
+	QCA_WLAN_VENDOR_ATTR_SCAN_AFTER_LAST - 1
+};
+
+/**
+ * enum scan_status - Specifies the valid values the vendor scan attribute
+ * 	QCA_WLAN_VENDOR_ATTR_SCAN_STATUS can take
+ *
+ * @VENDOR_SCAN_STATUS_NEW_RESULTS: implies the vendor scan is successful with
+ * 	new scan results
+ * @VENDOR_SCAN_STATUS_ABORTED: implies the vendor scan was aborted in-between
+ */
+enum scan_status {
+	VENDOR_SCAN_STATUS_NEW_RESULTS,
+	VENDOR_SCAN_STATUS_ABORTED,
+	VENDOR_SCAN_STATUS_MAX,
+};
+
+/**
+ * enum qca_vendor_attr_ota_test - Specifies the values for vendor
+ *                       command QCA_NL80211_VENDOR_SUBCMD_OTA_TEST
+ * @QCA_WLAN_VENDOR_ATTR_OTA_TEST_ENABLE: enable ota test
+ */
+enum qca_vendor_attr_ota_test {
+	QCA_WLAN_VENDOR_ATTR_OTA_TEST_INVALID,
+	/* 8-bit unsigned value to indicate if OTA test is enabled */
+	QCA_WLAN_VENDOR_ATTR_OTA_TEST_ENABLE,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_OTA_TEST_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_OTA_TEST_MAX =
+	QCA_WLAN_VENDOR_ATTR_OTA_TEST_AFTER_LAST - 1
+};
+
+/**
+ * enum qca_vendor_attr_txpower_scale - vendor sub commands index
+ *
+ * @QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE: scaling value
+ */
+enum qca_vendor_attr_txpower_scale {
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE_INVALID,
+	/* 8-bit unsigned value to indicate the scaling of tx power */
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE_MAX =
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_SCALE_AFTER_LAST - 1
+};
+
+/**
+ * enum qca_vendor_attr_txpower_decr_db - Attributes for TX power decrease
+ *
+ * These attributes are used with QCA_NL80211_VENDOR_SUBCMD_SET_TXPOWER_DECR_DB.
+ */
+enum qca_vendor_attr_txpower_decr_db {
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_INVALID,
+	/* 8-bit unsigned value to indicate the reduction of TX power in dB for
+	 * a virtual interface. */
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_MAX =
+	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_AFTER_LAST - 1
 };
 
 #endif /* QCA_VENDOR_H */

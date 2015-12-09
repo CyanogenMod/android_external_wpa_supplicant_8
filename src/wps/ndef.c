@@ -45,9 +45,14 @@ static int ndef_parse_record(const u8 *data, u32 size,
 			return -1;
 		record->payload_length = *pos++;
 	} else {
+		u32 len;
+
 		if (size < 6)
 			return -1;
-		record->payload_length = ntohl(*(u32 *)pos);
+		len = WPA_GET_BE32(pos);
+		if (len > size - 6 || len > 20000)
+			return -1;
+		record->payload_length = len;
 		pos += sizeof(u32);
 	}
 
@@ -68,7 +73,8 @@ static int ndef_parse_record(const u8 *data, u32 size,
 	pos += record->payload_length;
 
 	record->total_length = pos - data;
-	if (record->total_length > size)
+	if (record->total_length > size ||
+	    record->total_length < record->payload_length)
 		return -1;
 	return 0;
 }

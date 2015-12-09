@@ -1,6 +1,6 @@
 /*
  * hostapd / Configuration definitions and helpers functions
- * Copyright (c) 2003-2012, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2003-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -10,11 +10,13 @@
 #define HOSTAPD_CONFIG_H
 
 #include "common/defs.h"
+#include "utils/list.h"
 #include "ip_addr.h"
 #include "common/wpa_common.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "wps/wps.h"
+#include "fst/fst.h"
 
 /**
  * mesh_conf - local MBSS state and settings
@@ -32,8 +34,8 @@ struct mesh_conf {
 	u8 mesh_sp_id;
 	/* Authentication Protocol Identifier */
 	u8 mesh_auth_id;
-	u8 *ies;
-	int ie_len;
+	u8 *rsn_ie;
+	int rsn_ie_len;
 #define MESH_CONF_SEC_NONE BIT(0)
 #define MESH_CONF_SEC_AUTH BIT(1)
 #define MESH_CONF_SEC_AMPE BIT(2)
@@ -204,6 +206,13 @@ struct hostapd_nai_realm_data {
 	} eap_method[MAX_NAI_EAP_METHODS];
 };
 
+struct anqp_element {
+	struct dl_list list;
+	u16 infoid;
+	struct wpabuf *payload;
+};
+
+
 /**
  * struct hostapd_bss_config - Per-BSS configuration
  */
@@ -230,6 +239,7 @@ struct hostapd_bss_config {
 	struct hostapd_eap_user *eap_user;
 	char *eap_user_sqlite;
 	char *eap_sim_db;
+	unsigned int eap_sim_db_timeout;
 	int eap_server_erp; /* Whether ERP is enabled on internal EAP server */
 	struct hostapd_ip_addr own_ip_addr;
 	char *nas_identifier;
@@ -329,6 +339,7 @@ struct hostapd_bss_config {
 	char *private_key;
 	char *private_key_passwd;
 	int check_crl;
+	unsigned int tls_session_lifetime;
 	char *ocsp_stapling_response;
 	char *dh_file;
 	char *openssl_ciphers;
@@ -356,6 +367,7 @@ struct hostapd_bss_config {
 
 	int ap_max_inactivity;
 	int ignore_broadcast_ssid;
+	int no_probe_resp_if_max_sta;
 
 	int wmm_enabled;
 	int wmm_uapsd;
@@ -479,6 +491,8 @@ struct hostapd_bss_config {
 	unsigned int nai_realm_count;
 	struct hostapd_nai_realm_data *nai_realm_data;
 
+	struct dl_list anqp_elem; /* list of struct anqp_element */
+
 	u16 gas_comeback_delay;
 	int gas_frag_limit;
 
@@ -543,6 +557,7 @@ struct hostapd_bss_config {
 #ifdef CONFIG_TESTING_OPTIONS
 	u8 bss_load_test[5];
 	u8 bss_load_test_set;
+	struct wpabuf *own_ie_override;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 #define MESH_ENABLED BIT(0)
@@ -551,6 +566,9 @@ struct hostapd_bss_config {
 	int radio_measurements;
 
 	int vendor_vht;
+
+	char *no_probe_resp_if_seen_on;
+	char *no_auth_if_seen_on;
 };
 
 
@@ -582,6 +600,9 @@ struct hostapd_config {
 
 	int ap_table_max_size;
 	int ap_table_expiration_time;
+
+	unsigned int track_sta_max_num;
+	unsigned int track_sta_max_age;
 
 	char country[3]; /* first two octets: country code as described in
 			  * ISO/IEC 3166-1. Third octet:
@@ -619,6 +640,7 @@ struct hostapd_config {
 	u16 ht_capab;
 	int ieee80211n;
 	int secondary_channel;
+	int no_pri_sec_switch;
 	int require_ht;
 	int obss_interval;
 	u32 vht_capab;
@@ -627,6 +649,10 @@ struct hostapd_config {
 	u8 vht_oper_chwidth;
 	u8 vht_oper_centr_freq_seg0_idx;
 	u8 vht_oper_centr_freq_seg1_idx;
+
+#ifdef CONFIG_FST
+	struct fst_iface_cfg fst_cfg;
+#endif /* CONFIG_FST */
 
 #ifdef CONFIG_P2P
 	u8 p2p_go_ctwindow;
@@ -638,6 +664,7 @@ struct hostapd_config {
 	double ignore_assoc_probability;
 	double ignore_reassoc_probability;
 	double corrupt_gtk_rekey_mic_probability;
+	int ecsa_ie_only;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 #ifdef CONFIG_ACS

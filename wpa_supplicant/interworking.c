@@ -362,13 +362,13 @@ static const u8 * nai_realm_parse_eap(struct nai_realm_eap *e, const u8 *pos,
 	u8 elen, auth_count, a;
 	const u8 *e_end;
 
-	if (pos + 3 > end) {
+	if (end - pos < 3) {
 		wpa_printf(MSG_DEBUG, "No room for EAP Method fixed fields");
 		return NULL;
 	}
 
 	elen = *pos++;
-	if (pos + elen > end || elen < 2) {
+	if (elen > end - pos || elen < 2) {
 		wpa_printf(MSG_DEBUG, "No room for EAP Method subfield");
 		return NULL;
 	}
@@ -381,14 +381,19 @@ static const u8 * nai_realm_parse_eap(struct nai_realm_eap *e, const u8 *pos,
 	for (a = 0; a < auth_count; a++) {
 		u8 id, len;
 
-		if (pos + 2 > end || pos + 2 + pos[1] > end) {
-			wpa_printf(MSG_DEBUG, "No room for Authentication "
-				   "Parameter subfield");
+		if (end - pos < 2) {
+			wpa_printf(MSG_DEBUG,
+				   "No room for Authentication Parameter subfield header");
 			return NULL;
 		}
 
 		id = *pos++;
 		len = *pos++;
+		if (len > end - pos) {
+			wpa_printf(MSG_DEBUG,
+				   "No room for Authentication Parameter subfield");
+			return NULL;
+		}
 
 		switch (id) {
 		case NAI_REALM_EAP_AUTH_NON_EAP_INNER_AUTH:
@@ -463,7 +468,7 @@ static const u8 * nai_realm_parse_realm(struct nai_realm *r, const u8 *pos,
 
 	len = WPA_GET_LE16(pos); /* NAI Realm Data field Length */
 	pos += 2;
-	if (pos + len > end || len < 3) {
+	if (len > end - pos || len < 3) {
 		wpa_printf(MSG_DEBUG, "No room for NAI Realm Data "
 			   "(len=%u; left=%u)",
 			   len, (unsigned int) (end - pos));
@@ -473,7 +478,7 @@ static const u8 * nai_realm_parse_realm(struct nai_realm *r, const u8 *pos,
 
 	r->encoding = *pos++;
 	realm_len = *pos++;
-	if (pos + realm_len > f_end) {
+	if (realm_len > f_end - pos) {
 		wpa_printf(MSG_DEBUG, "No room for NAI Realm "
 			   "(len=%u; left=%u)",
 			   realm_len, (unsigned int) (f_end - pos));
@@ -485,13 +490,13 @@ static const u8 * nai_realm_parse_realm(struct nai_realm *r, const u8 *pos,
 		return NULL;
 	pos += realm_len;
 
-	if (pos + 1 > f_end) {
+	if (f_end - pos < 1) {
 		wpa_printf(MSG_DEBUG, "No room for EAP Method Count");
 		return NULL;
 	}
 	r->eap_count = *pos++;
 	wpa_printf(MSG_DEBUG, "EAP Count: %u", r->eap_count);
-	if (pos + r->eap_count * 3 > f_end) {
+	if (r->eap_count * 3 > f_end - pos) {
 		wpa_printf(MSG_DEBUG, "No room for EAP Methods");
 		return NULL;
 	}
@@ -746,7 +751,7 @@ static int plmn_id_match(struct wpabuf *anqp, const char *imsi, int mnc_len)
 		return 0;
 	pos = wpabuf_head_u8(anqp);
 	end = pos + wpabuf_len(anqp);
-	if (pos + 2 > end)
+	if (end - pos < 2)
 		return 0;
 	if (*pos != 0) {
 		wpa_printf(MSG_DEBUG, "Unsupported GUD version 0x%x", *pos);
@@ -754,7 +759,7 @@ static int plmn_id_match(struct wpabuf *anqp, const char *imsi, int mnc_len)
 	}
 	pos++;
 	udhl = *pos++;
-	if (pos + udhl > end) {
+	if (udhl > end - pos) {
 		wpa_printf(MSG_DEBUG, "Invalid UDHL");
 		return 0;
 	}
@@ -764,12 +769,12 @@ static int plmn_id_match(struct wpabuf *anqp, const char *imsi, int mnc_len)
 		   plmn[0], plmn[1], plmn[2], plmn2[0], plmn2[1], plmn2[2],
 		   imsi, mnc_len);
 
-	while (pos + 2 <= end) {
+	while (end - pos >= 2) {
 		u8 iei, len;
 		const u8 *l_end;
 		iei = *pos++;
 		len = *pos++ & 0x7f;
-		if (pos + len > end)
+		if (len > end - pos)
 			break;
 		l_end = pos + len;
 
@@ -780,7 +785,7 @@ static int plmn_id_match(struct wpabuf *anqp, const char *imsi, int mnc_len)
 				    pos, len);
 			num = *pos++;
 			for (i = 0; i < num; i++) {
-				if (pos + 3 > l_end)
+				if (l_end - pos < 3)
 					break;
 				if (os_memcmp(pos, plmn, 3) == 0 ||
 				    os_memcmp(pos, plmn2, 3) == 0)
@@ -1082,12 +1087,12 @@ static int roaming_consortium_element_match(const u8 *ie, const u8 *rc_id,
 	 * OI #1, [OI #2], [OI #3]
 	 */
 
-	if (pos + 2 > end)
+	if (end - pos < 2)
 		return 0;
 
 	pos++; /* skip Number of ANQP OIs */
 	lens = *pos++;
-	if (pos + (lens & 0x0f) + (lens >> 4) > end)
+	if ((lens & 0x0f) + (lens >> 4) > end - pos)
 		return 0;
 
 	if ((lens & 0x0f) == rc_len && os_memcmp(pos, rc_id, rc_len) == 0)
@@ -1121,7 +1126,7 @@ static int roaming_consortium_anqp_match(const struct wpabuf *anqp,
 	/* Set of <OI Length, OI> duples */
 	while (pos < end) {
 		len = *pos++;
-		if (pos + len > end)
+		if (len > end - pos)
 			break;
 		if (len == rc_len && os_memcmp(pos, rc_id, rc_len) == 0)
 			return 1;
@@ -1182,6 +1187,7 @@ static int cred_excluded_ssid(struct wpa_cred *cred, struct wpa_bss *bss)
 static int cred_below_min_backhaul(struct wpa_supplicant *wpa_s,
 				   struct wpa_cred *cred, struct wpa_bss *bss)
 {
+#ifdef CONFIG_HS20
 	int res;
 	unsigned int dl_bandwidth, ul_bandwidth;
 	const u8 *wan;
@@ -1233,6 +1239,7 @@ static int cred_below_min_backhaul(struct wpa_supplicant *wpa_s,
 		if (cred->min_ul_bandwidth_roaming > ul_bandwidth)
 			return 1;
 	}
+#endif /* CONFIG_HS20 */
 
 	return 0;
 }
@@ -1260,9 +1267,11 @@ static int cred_over_max_bss_load(struct wpa_supplicant *wpa_s,
 }
 
 
+#ifdef CONFIG_HS20
+
 static int has_proto_match(const u8 *pos, const u8 *end, u8 proto)
 {
-	while (pos + 4 <= end) {
+	while (end - pos >= 4) {
 		if (pos[0] == proto && pos[3] == 1 /* Open */)
 			return 1;
 		pos += 4;
@@ -1275,7 +1284,7 @@ static int has_proto_match(const u8 *pos, const u8 *end, u8 proto)
 static int has_proto_port_match(const u8 *pos, const u8 *end, u8 proto,
 				u16 port)
 {
-	while (pos + 4 <= end) {
+	while (end - pos >= 4) {
 		if (pos[0] == proto && WPA_GET_LE16(&pos[1]) == port &&
 		    pos[3] == 1 /* Open */)
 			return 1;
@@ -1285,10 +1294,13 @@ static int has_proto_port_match(const u8 *pos, const u8 *end, u8 proto,
 	return 0;
 }
 
+#endif /* CONFIG_HS20 */
+
 
 static int cred_conn_capab_missing(struct wpa_supplicant *wpa_s,
 				   struct wpa_cred *cred, struct wpa_bss *bss)
 {
+#ifdef CONFIG_HS20
 	int res;
 	const u8 *capab, *end;
 	unsigned int i, j;
@@ -1325,6 +1337,7 @@ static int cred_conn_capab_missing(struct wpa_supplicant *wpa_s,
 			}
 		}
 	}
+#endif /* CONFIG_HS20 */
 
 	return 0;
 }
@@ -2125,23 +2138,27 @@ int domain_name_list_contains(struct wpabuf *domain_names,
 	pos = wpabuf_head(domain_names);
 	end = pos + wpabuf_len(domain_names);
 
-	while (pos + 1 < end) {
-		if (pos + 1 + pos[0] > end)
+	while (end - pos > 1) {
+		u8 elen;
+
+		elen = *pos++;
+		if (elen > end - pos)
 			break;
 
 		wpa_hexdump_ascii(MSG_DEBUG, "Interworking: AP domain name",
-				  pos + 1, pos[0]);
-		if (pos[0] == len &&
-		    os_strncasecmp(domain, (const char *) (pos + 1), len) == 0)
+				  pos, elen);
+		if (elen == len &&
+		    os_strncasecmp(domain, (const char *) pos, len) == 0)
 			return 1;
-		if (!exact_match && pos[0] > len && pos[pos[0] - len] == '.') {
-			const char *ap = (const char *) (pos + 1);
-			int offset = pos[0] - len;
+		if (!exact_match && elen > len && pos[elen - len - 1] == '.') {
+			const char *ap = (const char *) pos;
+			int offset = elen - len;
+
 			if (os_strncasecmp(domain, ap + offset, len) == 0)
 				return 1;
 		}
 
-		pos += 1 + pos[0];
+		pos += elen;
 	}
 
 	return 0;
@@ -2564,11 +2581,13 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 		return;
 	}
 
+#ifdef CONFIG_HS20
 	if (wpa_s->fetch_osu_icon_in_progress) {
 		wpa_printf(MSG_DEBUG, "Interworking: Next icon (in progress)");
 		hs20_next_osu_icon(wpa_s);
 		return;
 	}
+#endif /* CONFIG_HS20 */
 
 	dl_list_for_each(bss, &wpa_s->bss, struct wpa_bss, list) {
 		if (!(bss->caps & IEEE80211_CAP_ESS))
@@ -2602,6 +2621,7 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 	}
 
 	if (found == 0) {
+#ifdef CONFIG_HS20
 		if (wpa_s->fetch_osu_info) {
 			if (wpa_s->num_prov_found == 0 &&
 			    wpa_s->fetch_osu_waiting_scan &&
@@ -2614,6 +2634,7 @@ static void interworking_next_anqp_fetch(struct wpa_supplicant *wpa_s)
 			hs20_osu_icon_fetch(wpa_s);
 			return;
 		}
+#endif /* CONFIG_HS20 */
 		wpa_msg(wpa_s, MSG_INFO, "ANQP fetch completed");
 		wpa_s->fetch_anqp_in_progress = 0;
 		if (wpa_s->network_select)
@@ -2713,6 +2734,41 @@ int anqp_send_req(struct wpa_supplicant *wpa_s, const u8 *dst,
 	}
 
 	return ret;
+}
+
+
+static void anqp_add_extra(struct wpa_supplicant *wpa_s,
+			   struct wpa_bss_anqp *anqp, u16 info_id,
+			   const u8 *data, size_t slen)
+{
+	struct wpa_bss_anqp_elem *tmp, *elem = NULL;
+
+	if (!anqp)
+		return;
+
+	dl_list_for_each(tmp, &anqp->anqp_elems, struct wpa_bss_anqp_elem,
+			 list) {
+		if (tmp->infoid == info_id) {
+			elem = tmp;
+			break;
+		}
+	}
+
+	if (!elem) {
+		elem = os_zalloc(sizeof(*elem));
+		if (!elem)
+			return;
+		elem->infoid = info_id;
+		dl_list_add(&anqp->anqp_elems, &elem->list);
+	} else {
+		wpabuf_free(elem->payload);
+	}
+
+	elem->payload = wpabuf_alloc_copy(data, slen);
+	if (!elem->payload) {
+		dl_list_del(&elem->list);
+		os_free(elem);
+	}
 }
 
 
@@ -2849,6 +2905,7 @@ static void interworking_parse_rx_anqp_resp(struct wpa_supplicant *wpa_s,
 	default:
 		wpa_msg(wpa_s, MSG_DEBUG,
 			"Interworking: Unsupported ANQP Info ID %u", info_id);
+		anqp_add_extra(wpa_s, anqp, info_id, data, slen);
 		break;
 	}
 }
@@ -2871,8 +2928,10 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 		   " dialog_token=%u result=%d status_code=%u",
 		   MAC2STR(dst), dialog_token, result, status_code);
 	if (result != GAS_QUERY_SUCCESS) {
+#ifdef CONFIG_HS20
 		if (wpa_s->fetch_osu_icon_in_progress)
 			hs20_icon_fetch_failed(wpa_s);
+#endif /* CONFIG_HS20 */
 		anqp_result = "FAILURE";
 		goto out;
 	}
@@ -2882,8 +2941,10 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	    pos[1] < 2 || pos[3] != ACCESS_NETWORK_QUERY_PROTOCOL) {
 		wpa_msg(wpa_s, MSG_DEBUG,
 			"ANQP: Unexpected Advertisement Protocol in response");
+#ifdef CONFIG_HS20
 		if (wpa_s->fetch_osu_icon_in_progress)
 			hs20_icon_fetch_failed(wpa_s);
+#endif /* CONFIG_HS20 */
 		anqp_result = "INVALID_FRAME";
 		goto out;
 	}
@@ -2932,7 +2993,9 @@ void anqp_resp_cb(void *ctx, const u8 *dst, u8 dialog_token,
 	}
 
 out_parse_done:
+#ifdef CONFIG_HS20
 	hs20_notify_parse_done(wpa_s);
+#endif /* CONFIG_HS20 */
 out:
 	wpa_msg(wpa_s, MSG_INFO, ANQP_QUERY_DONE "addr=" MACSTR " result=%s",
 		MAC2STR(dst), anqp_result);

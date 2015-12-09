@@ -1,6 +1,6 @@
 /*
  * hostapd - IEEE 802.11i-2004 / WPA Authenticator
- * Copyright (c) 2004-2007, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2015, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -13,6 +13,8 @@
 #include "common/eapol_common.h"
 #include "common/wpa_common.h"
 #include "common/ieee802_11_defs.h"
+
+#define MAX_OWN_IE_OVERRIDE 256
 
 #ifdef _MSC_VER
 #pragma pack(push, 1)
@@ -164,6 +166,8 @@ struct wpa_auth_config {
 	int ap_mlme;
 #ifdef CONFIG_TESTING_OPTIONS
 	double corrupt_gtk_rekey_mic_probability;
+	u8 own_ie_override[MAX_OWN_IE_OVERRIDE];
+	size_t own_ie_override_len;
 #endif /* CONFIG_TESTING_OPTIONS */
 #ifdef CONFIG_P2P
 	u8 ip_addr_go[4];
@@ -252,12 +256,12 @@ void wpa_auth_sta_deinit(struct wpa_state_machine *sm);
 void wpa_receive(struct wpa_authenticator *wpa_auth,
 		 struct wpa_state_machine *sm,
 		 u8 *data, size_t data_len);
-typedef enum {
+enum wpa_event {
 	WPA_AUTH, WPA_ASSOC, WPA_DISASSOC, WPA_DEAUTH, WPA_REAUTH,
 	WPA_REAUTH_EAPOL, WPA_ASSOC_FT
-} wpa_event;
+};
 void wpa_remove_ptk(struct wpa_state_machine *sm);
-int wpa_auth_sm_event(struct wpa_state_machine *sm, wpa_event event);
+int wpa_auth_sm_event(struct wpa_state_machine *sm, enum wpa_event event);
 void wpa_auth_sm_notify(struct wpa_state_machine *sm);
 void wpa_gtk_rekey(struct wpa_authenticator *wpa_auth);
 int wpa_get_mib(struct wpa_authenticator *wpa_auth, char *buf, size_t buflen);
@@ -275,6 +279,7 @@ void wpa_auth_sta_local_mic_failure_report(struct wpa_state_machine *sm);
 const u8 * wpa_auth_get_wpa_ie(struct wpa_authenticator *wpa_auth,
 			       size_t *len);
 int wpa_auth_pmksa_add(struct wpa_state_machine *sm, const u8 *pmk,
+		       unsigned int pmk_len,
 		       int session_timeout, struct eapol_state_machine *eapol);
 int wpa_auth_pmksa_add_preauth(struct wpa_authenticator *wpa_auth,
 			       const u8 *pmk, size_t len, const u8 *sta_addr,
@@ -320,5 +325,8 @@ struct radius_das_attrs;
 int wpa_auth_radius_das_disconnect_pmksa(struct wpa_authenticator *wpa_auth,
 					 struct radius_das_attrs *attr);
 void wpa_auth_reconfig_group_keys(struct wpa_authenticator *wpa_auth);
+
+int wpa_auth_ensure_group(struct wpa_authenticator *wpa_auth, int vlan_id);
+int wpa_auth_release_group(struct wpa_authenticator *wpa_auth, int vlan_id);
 
 #endif /* WPA_AUTH_H */

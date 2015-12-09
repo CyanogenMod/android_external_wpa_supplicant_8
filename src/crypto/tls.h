@@ -11,7 +11,7 @@
 
 struct tls_connection;
 
-struct tls_keys {
+struct tls_random {
 	const u8 *client_random;
 	size_t client_random_len;
 	const u8 *server_random;
@@ -79,6 +79,7 @@ struct tls_config {
 	int fips_mode;
 	int cert_in_cb;
 	const char *openssl_ciphers;
+	unsigned int tls_session_lifetime;
 
 	void (*event_cb)(void *ctx, enum tls_event ev,
 			 union tls_event_data *data);
@@ -93,6 +94,7 @@ struct tls_config {
 #define TLS_CONN_DISABLE_TLSv1_1 BIT(5)
 #define TLS_CONN_DISABLE_TLSv1_2 BIT(6)
 #define TLS_CONN_EAP_FAST BIT(7)
+#define TLS_CONN_DISABLE_TLSv1_0 BIT(8)
 
 /**
  * struct tls_connection_params - Parameters for TLS connection
@@ -304,22 +306,28 @@ int __must_check tls_global_set_verify(void *tls_ctx, int check_crl);
  * @tls_ctx: TLS context data from tls_init()
  * @conn: Connection context data from tls_connection_init()
  * @verify_peer: 1 = verify peer certificate
+ * @flags: Connection flags (TLS_CONN_*)
+ * @session_ctx: Session caching context or %NULL to use default
+ * @session_ctx_len: Length of @session_ctx in bytes.
  * Returns: 0 on success, -1 on failure
  */
 int __must_check tls_connection_set_verify(void *tls_ctx,
 					   struct tls_connection *conn,
-					   int verify_peer);
+					   int verify_peer,
+					   unsigned int flags,
+					   const u8 *session_ctx,
+					   size_t session_ctx_len);
 
 /**
- * tls_connection_get_keys - Get random data from TLS connection
+ * tls_connection_get_random - Get random data from TLS connection
  * @tls_ctx: TLS context data from tls_init()
  * @conn: Connection context data from tls_connection_init()
- * @keys: Structure of client/server random data (filled on success)
+ * @data: Structure of client/server random data (filled on success)
  * Returns: 0 on success, -1 on failure
  */
-int __must_check tls_connection_get_keys(void *tls_ctx,
+int __must_check tls_connection_get_random(void *tls_ctx,
 					 struct tls_connection *conn,
-					 struct tls_keys *keys);
+					 struct tls_random *data);
 
 /**
  * tls_connection_prf - Use TLS-PRF to derive keying material
@@ -333,14 +341,11 @@ int __must_check tls_connection_get_keys(void *tls_ctx,
  * @out_len: Length of the output buffer
  * Returns: 0 on success, -1 on failure
  *
- * This function is optional to implement if tls_connection_get_keys() provides
- * access to master secret and server/client random values. If these values are
- * not exported from the TLS library, tls_connection_prf() is required so that
- * further keying material can be derived from the master secret. If not
- * implemented, the function will still need to be defined, but it can just
- * return -1. Example implementation of this function is in tls_prf_sha1_md5()
- * when it is called with seed set to client_random|server_random (or
- * server_random|client_random).
+ * tls_connection_prf() is required so that further keying material can be
+ * derived from the master secret. Example implementation of this function is in
+ * tls_prf_sha1_md5() when it is called with seed set to
+ * client_random|server_random (or server_random|client_random). For TLSv1.2 and
+ * newer, a different PRF is needed, though.
  */
 int __must_check  tls_connection_prf(void *tls_ctx,
 				     struct tls_connection *conn,
@@ -466,6 +471,19 @@ int __must_check tls_connection_set_cipher_list(void *tls_ctx,
 						u8 *ciphers);
 
 /**
+ * tls_get_version - Get the current TLS version number
+ * @tls_ctx: TLS context data from tls_init()
+ * @conn: Connection context data from tls_connection_init()
+ * @buf: Buffer for returning the TLS version number
+ * @buflen: buf size
+ * Returns: 0 on success, -1 on failure
+ *
+ * Get the currently used TLS version number.
+ */
+int __must_check tls_get_version(void *tls_ctx, struct tls_connection *conn,
+				 char *buf, size_t buflen);
+
+/**
  * tls_get_cipher - Get current cipher name
  * @tls_ctx: TLS context data from tls_init()
  * @conn: Connection context data from tls_connection_init()
@@ -532,13 +550,6 @@ int tls_connection_get_read_alerts(void *tls_ctx, struct tls_connection *conn);
 int tls_connection_get_write_alerts(void *tls_ctx,
 				    struct tls_connection *conn);
 
-/**
- * tls_capabilities - Get supported TLS capabilities
- * @tls_ctx: TLS context data from tls_init()
- * Returns: Bit field of supported TLS capabilities (TLS_CAPABILITY_*)
- */
-unsigned int tls_capabilities(void *tls_ctx);
-
 typedef int (*tls_session_ticket_cb)
 (void *ctx, const u8 *ticket, size_t len, const u8 *client_random,
  const u8 *server_random, u8 *master_secret);
@@ -563,5 +574,15 @@ void tls_connection_set_log_cb(struct tls_connection *conn,
 void tls_connection_set_test_flags(struct tls_connection *conn, u32 flags);
 
 int tls_get_library_version(char *buf, size_t buf_len);
+
+void tls_connection_set_success_data(struct tls_connection *conn,
+				     struct wpabuf *data);
+
+void tls_connection_set_success_data_resumed(struct tls_connection *conn);
+
+const struct wpabuf *
+tls_connection_get_success_data(struct tls_connection *conn);
+
+void tls_connection_remove_session(struct tls_connection *conn);
 
 #endif /* TLS_H */

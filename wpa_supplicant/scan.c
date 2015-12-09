@@ -267,13 +267,12 @@ wpa_supplicant_sched_scan_timeout(void *eloop_ctx, void *timeout_ctx)
 
 
 int wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
-				    struct wpa_driver_scan_params *params,
-				    int interval)
+				    struct wpa_driver_scan_params *params)
 {
 	int ret;
 
 	wpa_supplicant_notify_scanning(wpa_s, 1);
-	ret = wpa_drv_sched_scan(wpa_s, params, interval * 1000);
+	ret = wpa_drv_sched_scan(wpa_s, params);
 	if (ret)
 		wpa_supplicant_notify_scanning(wpa_s, 0);
 	else
@@ -484,6 +483,12 @@ static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s)
 	if (wpa_s->conf->hs20 && wpabuf_resize(&extra_ie, 7) == 0)
 		wpas_hs20_add_indication(extra_ie, -1);
 #endif /* CONFIG_HS20 */
+
+#ifdef CONFIG_FST
+	if (wpa_s->fst_ies &&
+	    wpabuf_resize(&extra_ie, wpabuf_len(wpa_s->fst_ies)) == 0)
+		wpabuf_put_buf(extra_ie, wpa_s->fst_ies);
+#endif /* CONFIG_FST */
 
 	return extra_ie;
 }
@@ -802,6 +807,9 @@ static void wpa_supplicant_scan(void *eloop_ctx, void *timeout_ctx)
 	}
 
 	if (wpa_s->last_scan_req != MANUAL_SCAN_REQ &&
+#ifdef CONFIG_AP
+	    !wpa_s->ap_iface &&
+#endif /* CONFIG_AP */
 	    wpa_s->conf->ap_scan == 2) {
 		wpa_s->connect_without_scan = NULL;
 		wpa_s->prev_scan_wildcard = 0;
@@ -1173,6 +1181,7 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 	unsigned int max_sched_scan_ssids;
 	int wildcard = 0;
 	int need_ssids;
+	struct sched_scan_plan scan_plan;
 
 	if (!wpa_s->sched_scan_supported)
 		return -1;
@@ -1262,11 +1271,6 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 
 	if (!ssid || !wpa_s->prev_sched_ssid) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Beginning of SSID list");
-		if (wpa_s->conf->sched_scan_interval)
-			wpa_s->sched_scan_interval =
-				wpa_s->conf->sched_scan_interval;
-		if (wpa_s->sched_scan_interval == 0)
-			wpa_s->sched_scan_interval = 10;
 		wpa_s->sched_scan_timeout = max_sched_scan_ssids * 2;
 		wpa_s->first_sched_scan = 1;
 		ssid = wpa_s->conf->ssid;
@@ -1351,14 +1355,51 @@ int wpa_supplicant_req_sched_scan(struct wpa_supplicant *wpa_s)
 	scan_params = &params;
 
 scan:
+	wpa_s->sched_scan_timed_out = 0;
+
+	/*
+	 * We cannot support multiple scan plans if the scan request includes
+	 * too many SSID's, so in this case use only the last scan plan and make
+	 * it run infinitely. It will be stopped by the timeout.
+	 */
+	if (wpa_s->sched_scan_plans_num == 1 ||
+	    (wpa_s->sched_scan_plans_num && !ssid && wpa_s->first_sched_scan)) {
+		params.sched_scan_plans = wpa_s->sched_scan_plans;
+		params.sched_scan_plans_num = wpa_s->sched_scan_plans_num;
+	} else if (wpa_s->sched_scan_plans_num > 1) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Too many SSIDs. Default to using single scheduled_scan plan");
+		params.sched_scan_plans =
+			&wpa_s->sched_scan_plans[wpa_s->sched_scan_plans_num -
+						 1];
+		params.sched_scan_plans_num = 1;
+	} else {
+		if (wpa_s->conf->sched_scan_interval)
+			scan_plan.interval = wpa_s->conf->sched_scan_interval;
+		else
+			scan_plan.interval = 10;
+
+		if (scan_plan.interval > wpa_s->max_sched_scan_plan_interval) {
+			wpa_printf(MSG_WARNING,
+				   "Scan interval too long(%u), use the maximum allowed(%u)",
+				   scan_plan.interval,
+				   wpa_s->max_sched_scan_plan_interval);
+			scan_plan.interval =
+				wpa_s->max_sched_scan_plan_interval;
+		}
+
+		scan_plan.iterations = 0;
+		params.sched_scan_plans = &scan_plan;
+		params.sched_scan_plans_num = 1;
+	}
+
 	if (ssid || !wpa_s->first_sched_scan) {
 		wpa_dbg(wpa_s, MSG_DEBUG,
-			"Starting sched scan: interval %d timeout %d",
-			wpa_s->sched_scan_interval, wpa_s->sched_scan_timeout);
+			"Starting sched scan: interval %u timeout %d",
+			params.sched_scan_plans[0].interval,
+			wpa_s->sched_scan_timeout);
 	} else {
-		wpa_dbg(wpa_s, MSG_DEBUG,
-			"Starting sched scan: interval %d (no timeout)",
-			wpa_s->sched_scan_interval);
+		wpa_dbg(wpa_s, MSG_DEBUG, "Starting sched scan (no timeout)");
 	}
 
 	wpa_setband_scan_freqs(wpa_s, scan_params);
@@ -1372,8 +1413,7 @@ scan:
 		}
 	}
 
-	ret = wpa_supplicant_start_sched_scan(wpa_s, scan_params,
-					      wpa_s->sched_scan_interval);
+	ret = wpa_supplicant_start_sched_scan(wpa_s, scan_params);
 	wpabuf_free(extra_ie);
 	os_free(params.filter_ssids);
 	if (ret) {
@@ -1391,9 +1431,12 @@ scan:
 				       wpa_s, NULL);
 		wpa_s->first_sched_scan = 0;
 		wpa_s->sched_scan_timeout /= 2;
-		wpa_s->sched_scan_interval *= 2;
-		if (wpa_s->sched_scan_timeout < wpa_s->sched_scan_interval) {
-			wpa_s->sched_scan_interval = 10;
+		params.sched_scan_plans[0].interval *= 2;
+		if ((unsigned int) wpa_s->sched_scan_timeout <
+		    params.sched_scan_plans[0].interval ||
+		    params.sched_scan_plans[0].interval >
+		    wpa_s->max_sched_scan_plan_interval) {
+			params.sched_scan_plans[0].interval = 10;
 			wpa_s->sched_scan_timeout = max_sched_scan_ssids * 2;
 		}
 	}
@@ -1512,8 +1555,8 @@ const u8 * wpa_scan_get_ie(const struct wpa_scan_res *res, u8 ie)
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == ie)
 			return pos;
@@ -1541,8 +1584,8 @@ const u8 * wpa_scan_get_vendor_ie(const struct wpa_scan_res *res,
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1578,8 +1621,8 @@ const u8 * wpa_scan_get_vendor_ie_beacon(const struct wpa_scan_res *res,
 	pos += res->ie_len;
 	end = pos + res->beacon_ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1614,8 +1657,8 @@ struct wpabuf * wpa_scan_get_vendor_ie_multi(const struct wpa_scan_res *res,
 	pos = (const u8 *) (res + 1);
 	end = pos + res->ie_len;
 
-	while (pos + 1 < end) {
-		if (pos + 2 + pos[1] > end)
+	while (end - pos > 1) {
+		if (2 + pos[1] > end - pos)
 			break;
 		if (pos[0] == WLAN_EID_VENDOR_SPECIFIC && pos[1] >= 4 &&
 		    vendor_type == WPA_GET_BE32(&pos[2]))
@@ -1679,7 +1722,7 @@ static int wpa_scan_result_compar(const void *a, const void *b)
 		snr_a_full = wa->snr;
 		snr_a = MIN(wa->snr, GREAT_SNR);
 		snr_b_full = wb->snr;
-		snr_b = MIN(wa->snr, GREAT_SNR);
+		snr_b = MIN(wb->snr, GREAT_SNR);
 	} else {
 		/* Level is not in dBm, so we can't calculate
 		 * SNR. Just use raw level (units unknown). */
@@ -2139,6 +2182,9 @@ void scan_only_handler(struct wpa_supplicant *wpa_s,
 		wpa_s->scan_work = NULL;
 		radio_work_done(work);
 	}
+
+	if (wpa_s->wpa_state == WPA_SCANNING)
+		wpa_supplicant_set_state(wpa_s, wpa_s->scan_prev_wpa_state);
 }
 
 
@@ -2205,6 +2251,19 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->only_new_results = src->only_new_results;
 	params->low_priority = src->low_priority;
 
+	if (src->sched_scan_plans_num > 0) {
+		params->sched_scan_plans =
+			os_malloc(sizeof(*src->sched_scan_plans) *
+				  src->sched_scan_plans_num);
+		if (!params->sched_scan_plans)
+			goto failed;
+
+		os_memcpy(params->sched_scan_plans, src->sched_scan_plans,
+			  sizeof(*src->sched_scan_plans) *
+			  src->sched_scan_plans_num);
+		params->sched_scan_plans_num = src->sched_scan_plans_num;
+	}
+
 	if (src->mac_addr_rand) {
 		params->mac_addr_rand = src->mac_addr_rand;
 
@@ -2242,6 +2301,7 @@ void wpa_scan_free_params(struct wpa_driver_scan_params *params)
 	os_free((u8 *) params->extra_ies);
 	os_free(params->freqs);
 	os_free(params->filter_ssids);
+	os_free(params->sched_scan_plans);
 
 	/*
 	 * Note: params->mac_addr_mask points to same memory allocation and
@@ -2255,10 +2315,11 @@ void wpa_scan_free_params(struct wpa_driver_scan_params *params)
 
 int wpas_start_pno(struct wpa_supplicant *wpa_s)
 {
-	int ret, interval, prio;
+	int ret, prio;
 	size_t i, num_ssid, num_match_ssid;
 	struct wpa_ssid *ssid;
 	struct wpa_driver_scan_params params;
+	struct sched_scan_plan scan_plan;
 
 	if (!wpa_s->sched_scan_supported)
 		return -1;
@@ -2352,8 +2413,20 @@ int wpas_start_pno(struct wpa_supplicant *wpa_s)
 	if (wpa_s->conf->filter_rssi)
 		params.filter_rssi = wpa_s->conf->filter_rssi;
 
-	interval = wpa_s->conf->sched_scan_interval ?
-		wpa_s->conf->sched_scan_interval : 10;
+	if (wpa_s->sched_scan_plans_num) {
+		params.sched_scan_plans = wpa_s->sched_scan_plans;
+		params.sched_scan_plans_num = wpa_s->sched_scan_plans_num;
+	} else {
+		/* Set one scan plan that will run infinitely */
+		if (wpa_s->conf->sched_scan_interval)
+			scan_plan.interval = wpa_s->conf->sched_scan_interval;
+		else
+			scan_plan.interval = 10;
+
+		scan_plan.iterations = 0;
+		params.sched_scan_plans = &scan_plan;
+		params.sched_scan_plans_num = 1;
+	}
 
 	if (params.freqs == NULL && wpa_s->manual_sched_scan_freqs) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Limit sched scan to specified channels");
@@ -2368,7 +2441,7 @@ int wpas_start_pno(struct wpa_supplicant *wpa_s)
 		}
 	}
 
-	ret = wpa_supplicant_start_sched_scan(wpa_s, &params, interval);
+	ret = wpa_supplicant_start_sched_scan(wpa_s, &params);
 	os_free(params.filter_ssids);
 	if (ret == 0)
 		wpa_s->pno = 1;
@@ -2452,4 +2525,134 @@ int wpas_mac_addr_rand_scan_set(struct wpa_supplicant *wpa_s,
 
 	wpa_s->mac_addr_rand_enable |= type;
 	return 0;
+}
+
+
+int wpas_abort_ongoing_scan(struct wpa_supplicant *wpa_s)
+{
+	if (wpa_s->scan_work && wpa_s->own_scan_running) {
+		wpa_dbg(wpa_s, MSG_DEBUG, "Abort an ongoing scan");
+		return wpa_drv_abort_scan(wpa_s);
+	}
+
+	return 0;
+}
+
+
+int wpas_sched_scan_plans_set(struct wpa_supplicant *wpa_s, const char *cmd)
+{
+	struct sched_scan_plan *scan_plans = NULL;
+	const char *token, *context = NULL;
+	unsigned int num = 0;
+
+	if (!cmd)
+		return -1;
+
+	if (!cmd[0]) {
+		wpa_printf(MSG_DEBUG, "Clear sched scan plans");
+		os_free(wpa_s->sched_scan_plans);
+		wpa_s->sched_scan_plans = NULL;
+		wpa_s->sched_scan_plans_num = 0;
+		return 0;
+	}
+
+	while ((token = cstr_token(cmd, " ", &context))) {
+		int ret;
+		struct sched_scan_plan *scan_plan, *n;
+
+		n = os_realloc_array(scan_plans, num + 1, sizeof(*scan_plans));
+		if (!n)
+			goto fail;
+
+		scan_plans = n;
+		scan_plan = &scan_plans[num];
+		num++;
+
+		ret = sscanf(token, "%u:%u", &scan_plan->interval,
+			     &scan_plan->iterations);
+		if (ret <= 0 || ret > 2 || !scan_plan->interval) {
+			wpa_printf(MSG_ERROR,
+				   "Invalid sched scan plan input: %s", token);
+			goto fail;
+		}
+
+		if (!scan_plan->interval) {
+			wpa_printf(MSG_ERROR,
+				   "scan plan %u: Interval cannot be zero",
+				   num);
+			goto fail;
+		}
+
+		if (scan_plan->interval > wpa_s->max_sched_scan_plan_interval) {
+			wpa_printf(MSG_WARNING,
+				   "scan plan %u: Scan interval too long(%u), use the maximum allowed(%u)",
+				   num, scan_plan->interval,
+				   wpa_s->max_sched_scan_plan_interval);
+			scan_plan->interval =
+				wpa_s->max_sched_scan_plan_interval;
+		}
+
+		if (ret == 1) {
+			scan_plan->iterations = 0;
+			break;
+		}
+
+		if (!scan_plan->iterations) {
+			wpa_printf(MSG_ERROR,
+				   "scan plan %u: Number of iterations cannot be zero",
+				   num);
+			goto fail;
+		}
+
+		if (scan_plan->iterations >
+		    wpa_s->max_sched_scan_plan_iterations) {
+			wpa_printf(MSG_WARNING,
+				   "scan plan %u: Too many iterations(%u), use the maximum allowed(%u)",
+				   num, scan_plan->iterations,
+				   wpa_s->max_sched_scan_plan_iterations);
+			scan_plan->iterations =
+				wpa_s->max_sched_scan_plan_iterations;
+		}
+
+		wpa_printf(MSG_DEBUG,
+			   "scan plan %u: interval=%u iterations=%u",
+			   num, scan_plan->interval, scan_plan->iterations);
+	}
+
+	if (!scan_plans) {
+		wpa_printf(MSG_ERROR, "Invalid scan plans entry");
+		goto fail;
+	}
+
+	if (cstr_token(cmd, " ", &context) || scan_plans[num - 1].iterations) {
+		wpa_printf(MSG_ERROR,
+			   "All scan plans but the last must specify a number of iterations");
+		goto fail;
+	}
+
+	wpa_printf(MSG_DEBUG, "scan plan %u (last plan): interval=%u",
+		   num, scan_plans[num - 1].interval);
+
+	if (num > wpa_s->max_sched_scan_plans) {
+		wpa_printf(MSG_WARNING,
+			   "Too many scheduled scan plans (only %u supported)",
+			   wpa_s->max_sched_scan_plans);
+		wpa_printf(MSG_WARNING,
+			   "Use only the first %u scan plans, and the last one (in infinite loop)",
+			   wpa_s->max_sched_scan_plans - 1);
+		os_memcpy(&scan_plans[wpa_s->max_sched_scan_plans - 1],
+			  &scan_plans[num - 1], sizeof(*scan_plans));
+		num = wpa_s->max_sched_scan_plans;
+	}
+
+	os_free(wpa_s->sched_scan_plans);
+	wpa_s->sched_scan_plans = scan_plans;
+	wpa_s->sched_scan_plans_num = num;
+
+	return 0;
+
+fail:
+	os_free(scan_plans);
+	wpa_printf(MSG_ERROR, "invalid scan plans list");
+	return -1;
 }

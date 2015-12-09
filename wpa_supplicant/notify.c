@@ -17,6 +17,7 @@
 #include "dbus/dbus_old.h"
 #include "dbus/dbus_new.h"
 #include "rsn_supp/wpa.h"
+#include "fst/fst.h"
 #include "driver_i.h"
 #include "scan.h"
 #include "p2p_supplicant.h"
@@ -87,6 +88,16 @@ void wpas_notify_state_changed(struct wpa_supplicant *wpa_s,
 
 	/* notify the new DBus API */
 	wpas_dbus_signal_prop_changed(wpa_s, WPAS_DBUS_PROP_STATE);
+
+#ifdef CONFIG_FST
+	if (wpa_s->fst && !is_zero_ether_addr(wpa_s->bssid)) {
+		if (new_state == WPA_COMPLETED)
+			fst_notify_peer_connected(wpa_s->fst, wpa_s->bssid);
+		else if (old_state >= WPA_ASSOCIATED &&
+			 new_state < WPA_ASSOCIATED)
+			fst_notify_peer_disconnected(wpa_s->fst, wpa_s->bssid);
+	}
+#endif /* CONFIG_FST */
 
 	if (new_state == WPA_COMPLETED)
 		wpas_p2p_notif_connected(wpa_s);
@@ -646,10 +657,28 @@ void wpas_notify_p2p_group_started(struct wpa_supplicant *wpa_s,
 }
 
 
+void wpas_notify_p2p_group_formation_failure(struct wpa_supplicant *wpa_s,
+					     const char *reason)
+{
+	/* Notify a group formation failed */
+	wpas_dbus_signal_p2p_group_formation_failure(wpa_s, reason);
+}
+
+
 void wpas_notify_p2p_wps_failed(struct wpa_supplicant *wpa_s,
 				struct wps_event_fail *fail)
 {
 	wpas_dbus_signal_p2p_wps_failed(wpa_s, fail);
+}
+
+
+void wpas_notify_p2p_invitation_received(struct wpa_supplicant *wpa_s,
+					 const u8 *sa, const u8 *go_dev_addr,
+					 const u8 *bssid, int id, int op_freq)
+{
+	/* Notify a P2P Invitation Request */
+	wpas_dbus_signal_p2p_invitation_received(wpa_s, sa, go_dev_addr, bssid,
+						 id, op_freq);
 }
 
 #endif /* CONFIG_P2P */

@@ -691,18 +691,16 @@ int tlsv1_client_hello_ext(struct tlsv1_client *conn, int ext_type,
 	if (data == NULL || data_len == 0)
 		return 0;
 
-	pos = conn->client_hello_ext = os_malloc(6 + data_len);
+	pos = conn->client_hello_ext = os_malloc(4 + data_len);
 	if (pos == NULL)
 		return -1;
 
-	WPA_PUT_BE16(pos, 4 + data_len);
-	pos += 2;
 	WPA_PUT_BE16(pos, ext_type);
 	pos += 2;
 	WPA_PUT_BE16(pos, data_len);
 	pos += 2;
 	os_memcpy(pos, data, data_len);
-	conn->client_hello_ext_len = 6 + data_len;
+	conn->client_hello_ext_len = 4 + data_len;
 
 	if (ext_type == TLS_EXT_PAC_OPAQUE) {
 		conn->session_ticket_included = 1;
@@ -714,12 +712,12 @@ int tlsv1_client_hello_ext(struct tlsv1_client *conn, int ext_type,
 
 
 /**
- * tlsv1_client_get_keys - Get master key and random data from TLS connection
+ * tlsv1_client_get_random - Get random data from TLS connection
  * @conn: TLSv1 client connection data from tlsv1_client_init()
- * @keys: Structure of key/random data (filled on success)
+ * @keys: Structure of random data (filled on success)
  * Returns: 0 on success, -1 on failure
  */
-int tlsv1_client_get_keys(struct tlsv1_client *conn, struct tls_keys *keys)
+int tlsv1_client_get_random(struct tlsv1_client *conn, struct tls_random *keys)
 {
 	os_memset(keys, 0, sizeof(*keys));
 	if (conn->state == CLIENT_HELLO)
@@ -813,9 +811,14 @@ int tlsv1_client_set_cred(struct tlsv1_client *conn,
 }
 
 
-void tlsv1_client_set_time_checks(struct tlsv1_client *conn, int enabled)
+/**
+ * tlsv1_client_set_flags - Set connection flags
+ * @conn: TLSv1 client connection data from tlsv1_client_init()
+ * @flags: TLS_CONN_* bitfield
+ */
+void tlsv1_client_set_flags(struct tlsv1_client *conn, unsigned int flags)
 {
-	conn->disable_time_checks = !enabled;
+	conn->flags = flags;
 }
 
 
@@ -827,4 +830,39 @@ void tlsv1_client_set_session_ticket_cb(struct tlsv1_client *conn,
 		   cb, ctx);
 	conn->session_ticket_cb = cb;
 	conn->session_ticket_cb_ctx = ctx;
+}
+
+
+void tlsv1_client_set_cb(struct tlsv1_client *conn,
+			 void (*event_cb)(void *ctx, enum tls_event ev,
+					  union tls_event_data *data),
+			 void *cb_ctx,
+			 int cert_in_cb)
+{
+	conn->event_cb = event_cb;
+	conn->cb_ctx = cb_ctx;
+	conn->cert_in_cb = !!cert_in_cb;
+}
+
+
+int tlsv1_client_get_version(struct tlsv1_client *conn, char *buf,
+			     size_t buflen)
+{
+	if (!conn)
+		return -1;
+	switch (conn->rl.tls_version) {
+	case TLS_VERSION_1:
+		os_strlcpy(buf, "TLSv1", buflen);
+		break;
+	case TLS_VERSION_1_1:
+		os_strlcpy(buf, "TLSv1.1", buflen);
+		break;
+	case TLS_VERSION_1_2:
+		os_strlcpy(buf, "TLSv1.2", buflen);
+		break;
+	default:
+		return -1;
+	}
+
+	return 0;
 }

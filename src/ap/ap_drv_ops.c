@@ -81,6 +81,22 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 		wpabuf_put_data(proberesp, buf, pos - buf);
 	}
 
+#ifdef CONFIG_FST
+	if (hapd->iface->fst_ies) {
+		size_t add = wpabuf_len(hapd->iface->fst_ies);
+
+		if (wpabuf_resize(&beacon, add) < 0)
+			goto fail;
+		wpabuf_put_buf(beacon, hapd->iface->fst_ies);
+		if (wpabuf_resize(&proberesp, add) < 0)
+			goto fail;
+		wpabuf_put_buf(proberesp, hapd->iface->fst_ies);
+		if (wpabuf_resize(&assocresp, add) < 0)
+			goto fail;
+		wpabuf_put_buf(assocresp, hapd->iface->fst_ies);
+	}
+#endif /* CONFIG_FST */
+
 	if (hapd->wps_beacon_ie) {
 		if (wpabuf_resize(&beacon, wpabuf_len(hapd->wps_beacon_ie)) <
 		    0)
@@ -452,7 +468,7 @@ int hostapd_if_add(struct hostapd_data *hapd, enum wpa_driver_if_type type,
 		return -1;
 	return hapd->driver->if_add(hapd->drv_priv, type, ifname, addr,
 				    bss_ctx, drv_priv, force_ifname, if_addr,
-				    bridge, use_existing);
+				    bridge, use_existing, 1);
 }
 
 
@@ -633,7 +649,19 @@ int hostapd_drv_send_mlme(struct hostapd_data *hapd,
 {
 	if (hapd->driver == NULL || hapd->driver->send_mlme == NULL)
 		return 0;
-	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack, 0);
+	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack, 0,
+				       NULL, 0);
+}
+
+
+int hostapd_drv_send_mlme_csa(struct hostapd_data *hapd,
+			      const void *msg, size_t len, int noack,
+			      const u16 *csa_offs, size_t csa_offs_len)
+{
+	if (hapd->driver == NULL || hapd->driver->send_mlme == NULL)
+		return 0;
+	return hapd->driver->send_mlme(hapd->drv_priv, msg, len, noack, 0,
+				       csa_offs, csa_offs_len);
 }
 
 
@@ -727,6 +755,25 @@ int hostapd_drv_set_qos_map(struct hostapd_data *hapd,
 }
 
 
+static void hostapd_get_hw_mode_any_channels(struct hostapd_data *hapd,
+					     struct hostapd_hw_modes *mode,
+					     int acs_ch_list_all,
+					     int **freq_list)
+{
+	int i;
+
+	for (i = 0; i < mode->num_channels; i++) {
+		struct hostapd_channel_data *chan = &mode->channels[i];
+
+		if ((acs_ch_list_all ||
+		     freq_range_list_includes(&hapd->iface->conf->acs_ch_list,
+					      chan->chan)) &&
+		    !(chan->flag & HOSTAPD_CHAN_DISABLED))
+			int_array_add_unique(freq_list, chan->freq);
+	}
+}
+
+
 int hostapd_drv_do_acs(struct hostapd_data *hapd)
 {
 	struct drv_acs_params params;
@@ -734,6 +781,7 @@ int hostapd_drv_do_acs(struct hostapd_data *hapd)
 	u8 *channels = NULL;
 	unsigned int num_channels = 0;
 	struct hostapd_hw_modes *mode;
+	int *freq_list = NULL;
 
 	if (hapd->driver == NULL || hapd->driver->do_acs == NULL)
 		return 0;
@@ -749,24 +797,35 @@ int hostapd_drv_do_acs(struct hostapd_data *hapd)
 		acs_ch_list_all = 1;
 
 	mode = hapd->iface->current_mode;
-	if (mode == NULL)
-		return -1;
-	channels = os_malloc(mode->num_channels);
-	if (channels == NULL)
-		return -1;
+	if (mode) {
+		channels = os_malloc(mode->num_channels);
+		if (channels == NULL)
+			return -1;
 
-	for (i = 0; i < mode->num_channels; i++) {
-		struct hostapd_channel_data *chan = &mode->channels[i];
-		if (!acs_ch_list_all &&
-		    !freq_range_list_includes(&hapd->iface->conf->acs_ch_list,
-					      chan->chan))
-			continue;
-		if (!(chan->flag & HOSTAPD_CHAN_DISABLED))
-			channels[num_channels++] = chan->chan;
+		for (i = 0; i < mode->num_channels; i++) {
+			struct hostapd_channel_data *chan = &mode->channels[i];
+			if (!acs_ch_list_all &&
+			    !freq_range_list_includes(
+				    &hapd->iface->conf->acs_ch_list,
+				    chan->chan))
+				continue;
+			if (!(chan->flag & HOSTAPD_CHAN_DISABLED)) {
+				channels[num_channels++] = chan->chan;
+				int_array_add_unique(&freq_list, chan->freq);
+			}
+		}
+	} else {
+		for (i = 0; i < hapd->iface->num_hw_features; i++) {
+			mode = &hapd->iface->hw_features[i];
+			hostapd_get_hw_mode_any_channels(hapd, mode,
+							 acs_ch_list_all,
+							 &freq_list);
+		}
 	}
 
 	params.ch_list = channels;
 	params.ch_list_len = num_channels;
+	params.freq_list = freq_list;
 
 	params.ht_enabled = !!(hapd->iface->conf->ieee80211n);
 	params.ht40_enabled = !!(hapd->iface->conf->ht_capab &

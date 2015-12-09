@@ -516,6 +516,7 @@ static int test_key_wrap(void)
 		0xAE, 0xF3, 0x4B, 0xD8, 0xFB, 0x5A, 0x7B, 0x82,
 		0x9D, 0x3E, 0x86, 0x23, 0x71, 0xD2, 0xCF, 0xE5
 	};
+#ifndef CONFIG_BORINGSSL
 	/* RFC 3394 - Test vector 4.2 */
 	u8 kek42[] = {
 		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -531,6 +532,7 @@ static int test_key_wrap(void)
 		0xF9, 0x2B, 0x5B, 0x97, 0xC0, 0x50, 0xAE, 0xD2,
 		0x46, 0x8A, 0xB8, 0xA1, 0x7A, 0xD8, 0x4E, 0x5D
 	};
+#endif /* CONFIG_BORINGSSL */
 	/* RFC 3394 - Test vector 4.3 */
 	u8 kek43[] = {
 		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -547,6 +549,7 @@ static int test_key_wrap(void)
 		0x63, 0xE9, 0x77, 0x79, 0x05, 0x81, 0x8A, 0x2A,
 		0x93, 0xC8, 0x19, 0x1E, 0x7D, 0x6E, 0x8A, 0xE7,
 	};
+#ifndef CONFIG_BORINGSSL
 	/* RFC 3394 - Test vector 4.4 */
 	u8 kek44[] = {
 		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -564,6 +567,7 @@ static int test_key_wrap(void)
 		0xE1, 0xC6, 0xC7, 0xDD, 0xEE, 0x72, 0x5A, 0x93,
 		0x6B, 0xA8, 0x14, 0x91, 0x5C, 0x67, 0x62, 0xD2
 	};
+#endif /* CONFIG_BORINGSSL */
 	/* RFC 3394 - Test vector 4.5 */
 	u8 kek45[] = {
 		0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -624,6 +628,7 @@ static int test_key_wrap(void)
 		ret++;
 	}
 
+#ifndef CONFIG_BORINGSSL
 	wpa_printf(MSG_INFO, "RFC 3394 - Test vector 4.2");
 	if (aes_wrap(kek42, sizeof(kek42), sizeof(plain42) / 8, plain42,
 		     result)) {
@@ -643,6 +648,7 @@ static int test_key_wrap(void)
 		wpa_printf(MSG_ERROR, "AES-UNWRAP-192 failed");
 		ret++;
 	}
+#endif /* CONFIG_BORINGSSL */
 
 	wpa_printf(MSG_INFO, "RFC 3394 - Test vector 4.3");
 	if (aes_wrap(kek43, sizeof(kek43), sizeof(plain43) / 8, plain43,
@@ -664,6 +670,7 @@ static int test_key_wrap(void)
 		ret++;
 	}
 
+#ifndef CONFIG_BORINGSSL
 	wpa_printf(MSG_INFO, "RFC 3394 - Test vector 4.4");
 	if (aes_wrap(kek44, sizeof(kek44), sizeof(plain44) / 8, plain44,
 		     result)) {
@@ -683,6 +690,7 @@ static int test_key_wrap(void)
 		wpa_printf(MSG_ERROR, "AES-UNWRAP-192 failed");
 		ret++;
 	}
+#endif /* CONFIG_BORINGSSL */
 
 	wpa_printf(MSG_INFO, "RFC 3394 - Test vector 4.5");
 	if (aes_wrap(kek45, sizeof(kek45), sizeof(plain45) / 8, plain45,
@@ -733,6 +741,7 @@ static int test_key_wrap(void)
 
 static int test_md5(void)
 {
+#ifndef CONFIG_FIPS
 	struct {
 		char *data;
 		char *hash;
@@ -811,6 +820,10 @@ static int test_md5(void)
 		wpa_printf(MSG_INFO, "MD5 test cases passed");
 
 	return errors;
+#else /* CONFIG_FIPS */
+	wpa_printf(MSG_INFO, "MD5 test cases skipped due to CONFIG_FIPS");
+	return 0;
+#endif /* CONFIG_FIPS */
 }
 
 
@@ -842,6 +855,7 @@ static int test_eap_fast(void)
 		0x38, 0x4B, 0x7A, 0x85, 0xBE, 0x16, 0x4D, 0x27,
 		0x33, 0xD5, 0x24, 0x79, 0x87, 0xB1, 0xC5, 0xA2
 	};
+#ifndef CONFIG_FIPS
 	const u8 key_block[] = {
 		0x59, 0x59, 0xBE, 0x8E, 0x41, 0x3A, 0x77, 0x74,
 		0x8B, 0xB2, 0xE5, 0xD3, 0x60, 0xAC, 0x4D, 0x35,
@@ -858,6 +872,7 @@ static int test_eap_fast(void)
 		0x64, 0xC1, 0xC8, 0x0C, 0x96, 0x44, 0x09, 0x98,
 		0xFF, 0x92, 0xA8, 0xB4, 0xC6, 0x42, 0x28, 0x71
 	};
+#endif /* CONFIG_FIPS */
 	const u8 sks[] = {
 		0xD6, 0x4B, 0x7D, 0x72, 0x17, 0x59, 0x28, 0x05,
 		0xAF, 0xF9, 0xB7, 0xFF, 0x66, 0x6D, 0xA1, 0x96,
@@ -932,6 +947,7 @@ static int test_eap_fast(void)
 		errors++;
 	}
 
+#ifndef CONFIG_FIPS
 	wpa_printf(MSG_INFO, "- PRF (TLS, SHA1/MD5) test case / key_block");
 	if (tls_prf_sha1_md5(master_secret, sizeof(master_secret),
 			     "key expansion", seed, sizeof(seed),
@@ -940,6 +956,7 @@ static int test_eap_fast(void)
 		wpa_printf(MSG_INFO, "PRF test - FAILED!");
 		errors++;
 	}
+#endif /* CONFIG_FIPS */
 
 	wpa_printf(MSG_INFO, "- T-PRF (SHA1) test case / IMCK");
 	if (sha1_t_prf(sks, sizeof(sks), "Inner Methods Compound Keys",
@@ -1486,6 +1503,7 @@ static int test_sha256(void)
 	const u8 *addr[2];
 	size_t len[2];
 	int errors = 0;
+	u8 *key;
 
 	for (i = 0; i < ARRAY_SIZE(tests); i++) {
 		wpa_printf(MSG_INFO, "SHA256 test case %d:", i + 1);
@@ -1556,14 +1574,69 @@ static int test_sha256(void)
 		   hash, sizeof(hash));
 	/* TODO: add proper test case for this */
 
+	key = os_malloc(8161);
+	if (key) {
+#ifdef CONFIG_HMAC_SHA256_KDF
+		int res;
+
+		res = hmac_sha256_kdf((u8 *) "secret", 6, "label",
+				      (u8 *) "seed", 4, key, 8160);
+		if (res) {
+			wpa_printf(MSG_INFO,
+				   "Unexpected hmac_sha256_kdf(outlen=8160) failure");
+			errors++;
+		}
+
+		res = hmac_sha256_kdf((u8 *) "secret", 6, "label",
+				      (u8 *) "seed", 4, key, 8161);
+		if (res == 0) {
+			wpa_printf(MSG_INFO,
+				   "Unexpected hmac_sha256_kdf(outlen=8161) success");
+			errors++;
+		}
+#endif /* CONFIG_HMAC_SHA256_KDF */
+
+		os_free(key);
+	}
+
 	if (!errors)
 		wpa_printf(MSG_INFO, "SHA256 test cases passed");
 	return errors;
 }
 
 
+static int test_fips186_2_prf(void)
+{
+	/* http://csrc.nist.gov/encryption/dss/Examples-1024bit.pdf */
+	u8 xkey[] = {
+		0xbd, 0x02, 0x9b, 0xbe, 0x7f, 0x51, 0x96, 0x0b,
+		0xcf, 0x9e, 0xdb, 0x2b, 0x61, 0xf0, 0x6f, 0x0f,
+		0xeb, 0x5a, 0x38, 0xb6
+	};
+	u8 w[] = {
+		0x20, 0x70, 0xb3, 0x22, 0x3d, 0xba, 0x37, 0x2f,
+		0xde, 0x1c, 0x0f, 0xfc, 0x7b, 0x2e, 0x3b, 0x49,
+		0x8b, 0x26, 0x06, 0x14, 0x3c, 0x6c, 0x18, 0xba,
+		0xcb, 0x0f, 0x6c, 0x55, 0xba, 0xbb, 0x13, 0x78,
+		0x8e, 0x20, 0xd7, 0x37, 0xa3, 0x27, 0x51, 0x16
+	};
+	u8 buf[40];
+
+	wpa_printf(MSG_INFO,
+		   "Testing EAP-SIM PRF (FIPS 186-2 + change notice 1)");
+	if (fips186_2_prf(xkey, sizeof(xkey), buf, sizeof(buf)) < 0 ||
+	    os_memcmp(w, buf, sizeof(w)) != 0) {
+		wpa_printf(MSG_INFO, "fips186_2_prf failed");
+		return 1;
+	}
+
+	return 0;
+}
+
+
 static int test_ms_funcs(void)
 {
+#ifndef CONFIG_FIPS
 	/* Test vector from RFC2759 example */
 	char *username = "User";
 	char *password = "clientPass";
@@ -1656,6 +1729,10 @@ static int test_ms_funcs(void)
 		wpa_printf(MSG_INFO, "ms_funcs test cases passed");
 
 	return errors;
+#else /* CONFIG_FIPS */
+	wpa_printf(MSG_INFO, "ms_funcs test cases skipped due to CONFIG_FIPS");
+	return 0;
+#endif /* CONFIG_FIPS */
 }
 
 
@@ -1673,6 +1750,7 @@ int crypto_module_tests(void)
 	    test_md5() ||
 	    test_sha1() ||
 	    test_sha256() ||
+	    test_fips186_2_prf() ||
 	    test_ms_funcs())
 		ret = -1;
 

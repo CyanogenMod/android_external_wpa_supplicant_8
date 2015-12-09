@@ -225,7 +225,9 @@ struct wpa_ssid {
 	 *
 	 * scan_ssid can be used to scan for APs using hidden SSIDs.
 	 * Note: Many drivers do not support this. ap_mode=2 can be used with
-	 * such drivers to use hidden SSIDs.
+	 * such drivers to use hidden SSIDs. Note2: Most nl80211-based drivers
+	 * do support scan_ssid=1 and that should be used with them instead of
+	 * ap_scan=2.
 	 */
 	int scan_ssid;
 
@@ -446,6 +448,10 @@ struct wpa_ssid {
 	int ht40;
 
 	int vht;
+
+	u8 max_oper_chwidth;
+
+	unsigned int vht_center_freq2;
 
 	/**
 	 * wpa_ptk_rekey - Maximum lifetime for PTK in seconds

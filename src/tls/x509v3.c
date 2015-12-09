@@ -199,11 +199,10 @@ static int x509_parse_algorithm_identifier(
 			   hdr.class, hdr.tag);
 		return -1;
 	}
+	if (hdr.length > buf + len - hdr.payload)
+		return -1;
 	pos = hdr.payload;
 	end = pos + hdr.length;
-
-	if (end > buf + len)
-		return -1;
 
 	*next = end;
 
@@ -243,7 +242,7 @@ static int x509_parse_public_key(const u8 *buf, size_t len,
 	}
 	pos = hdr.payload;
 
-	if (pos + hdr.length > end)
+	if (hdr.length > end - pos)
 		return -1;
 	end = pos + hdr.length;
 	*next = end;
@@ -319,7 +318,7 @@ static int x509_parse_name(const u8 *buf, size_t len, struct x509_name *name,
 	}
 	pos = hdr.payload;
 
-	if (pos + hdr.length > buf + len)
+	if (hdr.length > buf + len - pos)
 		return -1;
 
 	end = *next = pos + hdr.length;
@@ -677,7 +676,7 @@ static int x509_parse_validity(const u8 *buf, size_t len,
 	pos = hdr.payload;
 	plen = hdr.length;
 
-	if (pos + plen > buf + len)
+	if (plen > (size_t) (buf + len - pos))
 		return -1;
 
 	*next = pos + plen;
@@ -718,6 +717,15 @@ static int x509_id_ce_oid(struct asn1_oid *oid)
 		oid->oid[0] == 2 /* joint-iso-ccitt */ &&
 		oid->oid[1] == 5 /* ds */ &&
 		oid->oid[2] == 29 /* id-ce */;
+}
+
+
+static int x509_any_ext_key_usage_oid(struct asn1_oid *oid)
+{
+	return oid->len == 6 &&
+		x509_id_ce_oid(oid) &&
+		oid->oid[3] == 37 /* extKeyUsage */ &&
+		oid->oid[4] == 0 /* anyExtendedKeyUsage */;
 }
 
 
@@ -801,7 +809,7 @@ static int x509_parse_ext_basic_constraints(struct x509_certificate *cert,
 		}
 		cert->ca = hdr.payload[0];
 
-		if (hdr.payload + hdr.length == pos + len) {
+		if (hdr.length == pos + len - hdr.payload) {
 			wpa_printf(MSG_DEBUG, "X509: BasicConstraints - cA=%d",
 				   cert->ca);
 			return 0;
@@ -1074,6 +1082,100 @@ static int x509_parse_ext_issuer_alt_name(struct x509_certificate *cert,
 }
 
 
+static int x509_id_pkix_oid(struct asn1_oid *oid)
+{
+	return oid->len >= 7 &&
+		oid->oid[0] == 1 /* iso */ &&
+		oid->oid[1] == 3 /* identified-organization */ &&
+		oid->oid[2] == 6 /* dod */ &&
+		oid->oid[3] == 1 /* internet */ &&
+		oid->oid[4] == 5 /* security */ &&
+		oid->oid[5] == 5 /* mechanisms */ &&
+		oid->oid[6] == 7 /* id-pkix */;
+}
+
+
+static int x509_id_kp_oid(struct asn1_oid *oid)
+{
+	/* id-kp */
+	return oid->len >= 8 &&
+		x509_id_pkix_oid(oid) &&
+		oid->oid[7] == 3 /* id-kp */;
+}
+
+
+static int x509_id_kp_server_auth_oid(struct asn1_oid *oid)
+{
+	/* id-kp */
+	return oid->len == 9 &&
+		x509_id_kp_oid(oid) &&
+		oid->oid[8] == 1 /* id-kp-serverAuth */;
+}
+
+
+static int x509_id_kp_client_auth_oid(struct asn1_oid *oid)
+{
+	/* id-kp */
+	return oid->len == 9 &&
+		x509_id_kp_oid(oid) &&
+		oid->oid[8] == 2 /* id-kp-clientAuth */;
+}
+
+
+static int x509_parse_ext_ext_key_usage(struct x509_certificate *cert,
+					const u8 *pos, size_t len)
+{
+	struct asn1_hdr hdr;
+	const u8 *end;
+	struct asn1_oid oid;
+
+	/*
+	 * ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
+	 *
+	 * KeyPurposeId ::= OBJECT IDENTIFIER
+	 */
+
+	if (asn1_get_next(pos, len, &hdr) < 0 ||
+	    hdr.class != ASN1_CLASS_UNIVERSAL ||
+	    hdr.tag != ASN1_TAG_SEQUENCE) {
+		wpa_printf(MSG_DEBUG, "X509: Expected SEQUENCE "
+			   "(ExtKeyUsageSyntax) - found class %d tag 0x%x",
+			   hdr.class, hdr.tag);
+		return -1;
+	}
+	if (hdr.length > pos + len - hdr.payload)
+		return -1;
+	pos = hdr.payload;
+	end = pos + hdr.length;
+
+	wpa_hexdump(MSG_MSGDUMP, "X509: ExtKeyUsageSyntax", pos, end - pos);
+
+	while (pos < end) {
+		char buf[80];
+
+		if (asn1_get_oid(pos, end - pos, &oid, &pos))
+			return -1;
+		if (x509_any_ext_key_usage_oid(&oid)) {
+			os_strlcpy(buf, "anyExtendedKeyUsage", sizeof(buf));
+			cert->ext_key_usage |= X509_EXT_KEY_USAGE_ANY;
+		} else if (x509_id_kp_server_auth_oid(&oid)) {
+			os_strlcpy(buf, "id-kp-serverAuth", sizeof(buf));
+			cert->ext_key_usage |= X509_EXT_KEY_USAGE_SERVER_AUTH;
+		} else if (x509_id_kp_client_auth_oid(&oid)) {
+			os_strlcpy(buf, "id-kp-clientAuth", sizeof(buf));
+			cert->ext_key_usage |= X509_EXT_KEY_USAGE_CLIENT_AUTH;
+		} else {
+			asn1_oid_to_str(&oid, buf, sizeof(buf));
+		}
+		wpa_printf(MSG_DEBUG, "ExtKeyUsage KeyPurposeId: %s", buf);
+	}
+
+	cert->extensions_present |= X509_EXT_EXT_KEY_USAGE;
+
+	return 0;
+}
+
+
 static int x509_parse_extension_data(struct x509_certificate *cert,
 				     struct asn1_oid *oid,
 				     const u8 *pos, size_t len)
@@ -1085,7 +1187,6 @@ static int x509_parse_extension_data(struct x509_certificate *cert,
 	 * certificate policies (section 4.2.1.5)
 	 * name constraints (section 4.2.1.11)
 	 * policy constraints (section 4.2.1.12)
-	 * extended key usage (section 4.2.1.13)
 	 * inhibit any-policy (section 4.2.1.15)
 	 */
 	switch (oid->oid[3]) {
@@ -1097,6 +1198,8 @@ static int x509_parse_extension_data(struct x509_certificate *cert,
 		return x509_parse_ext_issuer_alt_name(cert, pos, len);
 	case 19: /* id-ce-basicConstraints */
 		return x509_parse_ext_basic_constraints(cert, pos, len);
+	case 37: /* id-ce-extKeyUsage */
+		return x509_parse_ext_ext_key_usage(cert, pos, len);
 	default:
 		return 1;
 	}
@@ -1449,7 +1552,7 @@ static int x509_sha1_oid(struct asn1_oid *oid)
 }
 
 
-static int x509_sha256_oid(struct asn1_oid *oid)
+static int x509_sha2_oid(struct asn1_oid *oid)
 {
 	return oid->len == 9 &&
 		oid->oid[0] == 2 /* joint-iso-itu-t */ &&
@@ -1459,8 +1562,28 @@ static int x509_sha256_oid(struct asn1_oid *oid)
 		oid->oid[4] == 101 /* gov */ &&
 		oid->oid[5] == 3 /* csor */ &&
 		oid->oid[6] == 4 /* nistAlgorithm */ &&
-		oid->oid[7] == 2 /* hashAlgs */ &&
+		oid->oid[7] == 2 /* hashAlgs */;
+}
+
+
+static int x509_sha256_oid(struct asn1_oid *oid)
+{
+	return x509_sha2_oid(oid) &&
 		oid->oid[8] == 1 /* sha256 */;
+}
+
+
+static int x509_sha384_oid(struct asn1_oid *oid)
+{
+	return x509_sha2_oid(oid) &&
+		oid->oid[8] == 2 /* sha384 */;
+}
+
+
+static int x509_sha512_oid(struct asn1_oid *oid)
+{
+	return x509_sha2_oid(oid) &&
+		oid->oid[8] == 3 /* sha512 */;
 }
 
 
@@ -1503,12 +1626,12 @@ struct x509_certificate * x509_certificate_parse(const u8 *buf, size_t len)
 	}
 	pos = hdr.payload;
 
-	if (pos + hdr.length > end) {
+	if (hdr.length > end - pos) {
 		x509_certificate_free(cert);
 		return NULL;
 	}
 
-	if (pos + hdr.length < end) {
+	if (hdr.length < end - pos) {
 		wpa_hexdump(MSG_MSGDUMP, "X509: Ignoring extra data after DER "
 			    "encoded certificate",
 			    pos + hdr.length, end - (pos + hdr.length));
@@ -1588,7 +1711,7 @@ int x509_certificate_check_signature(struct x509_certificate *issuer,
 	size_t data_len;
 	struct asn1_hdr hdr;
 	struct asn1_oid oid;
-	u8 hash[32];
+	u8 hash[64];
 	size_t hash_len;
 
 	if (!x509_pkcs_oid(&cert->signature.oid) ||
@@ -1700,6 +1823,32 @@ int x509_certificate_check_signature(struct x509_certificate *issuer,
 		goto skip_digest_oid;
 	}
 
+	if (x509_sha384_oid(&oid)) {
+		if (cert->signature.oid.oid[6] !=
+		    12 /* sha384WithRSAEncryption */) {
+			wpa_printf(MSG_DEBUG, "X509: digestAlgorithm SHA384 "
+				   "does not match with certificate "
+				   "signatureAlgorithm (%lu)",
+				   cert->signature.oid.oid[6]);
+			os_free(data);
+			return -1;
+		}
+		goto skip_digest_oid;
+	}
+
+	if (x509_sha512_oid(&oid)) {
+		if (cert->signature.oid.oid[6] !=
+		    13 /* sha512WithRSAEncryption */) {
+			wpa_printf(MSG_DEBUG, "X509: digestAlgorithm SHA512 "
+				   "does not match with certificate "
+				   "signatureAlgorithm (%lu)",
+				   cert->signature.oid.oid[6]);
+			os_free(data);
+			return -1;
+		}
+		goto skip_digest_oid;
+	}
+
 	if (!x509_digest_oid(&oid)) {
 		wpa_printf(MSG_DEBUG, "X509: Unrecognized digestAlgorithm");
 		os_free(data);
@@ -1765,9 +1914,21 @@ skip_digest_oid:
 		wpa_hexdump(MSG_MSGDUMP, "X509: Certificate hash (SHA256)",
 			    hash, hash_len);
 		break;
-	case 2: /* md2WithRSAEncryption */
 	case 12: /* sha384WithRSAEncryption */
+		sha384_vector(1, &cert->tbs_cert_start, &cert->tbs_cert_len,
+			      hash);
+		hash_len = 48;
+		wpa_hexdump(MSG_MSGDUMP, "X509: Certificate hash (SHA384)",
+			    hash, hash_len);
+		break;
 	case 13: /* sha512WithRSAEncryption */
+		sha512_vector(1, &cert->tbs_cert_start, &cert->tbs_cert_len,
+			      hash);
+		hash_len = 64;
+		wpa_hexdump(MSG_MSGDUMP, "X509: Certificate hash (SHA512)",
+			    hash, hash_len);
+		break;
+	case 2: /* md2WithRSAEncryption */
 	default:
 		wpa_printf(MSG_INFO, "X509: Unsupported certificate signature "
 			   "algorithm (%lu)", cert->signature.oid.oid[6]);

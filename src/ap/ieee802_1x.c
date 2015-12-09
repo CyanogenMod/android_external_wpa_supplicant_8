@@ -125,6 +125,9 @@ void ieee802_1x_set_sta_authorized(struct hostapd_data *hapd,
 }
 
 
+#ifndef CONFIG_FIPS
+#ifndef CONFIG_NO_RC4
+
 static void ieee802_1x_tx_key_one(struct hostapd_data *hapd,
 				  struct sta_info *sta,
 				  int idx, int broadcast,
@@ -204,7 +207,7 @@ static void ieee802_1x_tx_key_one(struct hostapd_data *hapd,
 }
 
 
-void ieee802_1x_tx_key(struct hostapd_data *hapd, struct sta_info *sta)
+static void ieee802_1x_tx_key(struct hostapd_data *hapd, struct sta_info *sta)
 {
 	struct eapol_authenticator *eapol = hapd->eapol_auth;
 	struct eapol_state_machine *sm = sta->eapol_sm;
@@ -258,6 +261,9 @@ void ieee802_1x_tx_key(struct hostapd_data *hapd, struct sta_info *sta)
 		os_free(ikey);
 	}
 }
+
+#endif /* CONFIG_NO_RC4 */
+#endif /* CONFIG_FIPS */
 
 
 const char *radius_mode_txt(struct hostapd_data *hapd)
@@ -1100,6 +1106,7 @@ void ieee802_1x_new_station(struct hostapd_data *hapd, struct sta_info *sta)
 		sta->eapol_sm->be_auth_state = BE_AUTH_SUCCESS;
 		sta->eapol_sm->authSuccess = TRUE;
 		sta->eapol_sm->authFail = FALSE;
+		sta->eapol_sm->portValid = TRUE;
 		if (sta->eapol_sm->eap)
 			eap_sm_notify_cached(sta->eapol_sm->eap);
 		/* TODO: get vlan_id from R0KH using RRB message */
@@ -1709,15 +1716,6 @@ ieee802_1x_receive_auth(struct radius_msg *msg, struct radius_msg *req,
 		ieee802_1x_check_hs20(hapd, sta, msg,
 				      session_timeout_set ?
 				      (int) session_timeout : -1);
-		if (sm->eap_if->eapKeyAvailable && !sta->remediation &&
-		    !sta->hs20_deauth_requested &&
-		    wpa_auth_pmksa_add(sta->wpa_sm, sm->eapol_key_crypt,
-				       session_timeout_set ?
-				       (int) session_timeout : -1, sm) == 0) {
-			hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_WPA,
-				       HOSTAPD_LEVEL_DEBUG,
-				       "Added PMKSA cache entry");
-		}
 		break;
 	case RADIUS_CODE_ACCESS_REJECT:
 		sm->eap_if->aaaFail = TRUE;
@@ -2023,9 +2021,13 @@ static void _ieee802_1x_abort_auth(void *ctx, void *sta_ctx)
 
 static void _ieee802_1x_tx_key(void *ctx, void *sta_ctx)
 {
+#ifndef CONFIG_FIPS
+#ifndef CONFIG_NO_RC4
 	struct hostapd_data *hapd = ctx;
 	struct sta_info *sta = sta_ctx;
 	ieee802_1x_tx_key(hapd, sta);
+#endif /* CONFIG_NO_RC4 */
+#endif /* CONFIG_FIPS */
 }
 
 
@@ -2096,6 +2098,7 @@ int ieee802_1x_init(struct hostapd_data *hapd)
 	conf.erp_send_reauth_start = hapd->conf->erp_send_reauth_start;
 	conf.erp_domain = hapd->conf->erp_domain;
 	conf.erp = hapd->conf->eap_server_erp;
+	conf.tls_session_lifetime = hapd->conf->tls_session_lifetime;
 	conf.pac_opaque_encr_key = hapd->conf->pac_opaque_encr_key;
 	conf.eap_fast_a_id = hapd->conf->eap_fast_a_id;
 	conf.eap_fast_a_id_len = hapd->conf->eap_fast_a_id_len;
@@ -2179,7 +2182,7 @@ void ieee802_1x_deinit(struct hostapd_data *hapd)
 {
 	eloop_cancel_timeout(ieee802_1x_rekey, hapd, NULL);
 
-	if (hapd->driver != NULL &&
+	if (hapd->driver && hapd->drv_priv &&
 	    (hapd->conf->ieee802_1x || hapd->conf->wpa))
 		hostapd_set_drv_ieee8021x(hapd, hapd->conf->iface, 0);
 
@@ -2573,7 +2576,7 @@ static void ieee802_1x_finished(struct hostapd_data *hapd,
 		session_timeout = dot11RSNAConfigPMKLifetime;
 	if (success && key && len >= PMK_LEN && !sta->remediation &&
 	    !sta->hs20_deauth_requested &&
-	    wpa_auth_pmksa_add(sta->wpa_sm, key, session_timeout,
+	    wpa_auth_pmksa_add(sta->wpa_sm, key, len, session_timeout,
 			       sta->eapol_sm) == 0) {
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_WPA,
 			       HOSTAPD_LEVEL_DEBUG,

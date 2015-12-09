@@ -37,12 +37,14 @@ static int ieee80211_11_get_tfs_ie(struct wpa_supplicant *wpa_s, u8 *buf,
 
 /* set the TFS IE to driver */
 static int ieee80211_11_set_tfs_ie(struct wpa_supplicant *wpa_s,
-				   const u8 *addr, u8 *buf, u16 *buf_len,
+				   const u8 *addr, const u8 *buf, u16 buf_len,
 				   enum wnm_oper oper)
 {
+	u16 len = buf_len;
+
 	wpa_printf(MSG_DEBUG, "%s: TFS set operation %d", __func__, oper);
 
-	return wpa_drv_wnm_oper(wpa_s, oper, addr, buf, buf_len);
+	return wpa_drv_wnm_oper(wpa_s, oper, addr, (u8 *) buf, &len);
 }
 
 
@@ -137,6 +139,8 @@ int ieee802_11_send_wnmsleep_req(struct wpa_supplicant *wpa_s,
 	if (res < 0)
 		wpa_printf(MSG_DEBUG, "Failed to send WNM-Sleep Request "
 			   "(action=%d, intval=%d)", action, intval);
+	else
+		wpa_s->wnmsleep_used = 1;
 
 	os_free(wnmsleep_ie);
 	os_free(wnmtfs_ie);
@@ -147,8 +151,8 @@ int ieee802_11_send_wnmsleep_req(struct wpa_supplicant *wpa_s,
 
 
 static void wnm_sleep_mode_enter_success(struct wpa_supplicant *wpa_s,
-					 u8 *tfsresp_ie_start,
-					 u8 *tfsresp_ie_end)
+					 const u8 *tfsresp_ie_start,
+					 const u8 *tfsresp_ie_end)
 {
 	wpa_drv_wnm_oper(wpa_s, WNM_SLEEP_ENTER_CONFIRM,
 			 wpa_s->bssid, NULL, NULL);
@@ -164,7 +168,7 @@ static void wnm_sleep_mode_enter_success(struct wpa_supplicant *wpa_s,
 		/* pass the TFS Resp IE(s) to driver for processing */
 		if (ieee80211_11_set_tfs_ie(wpa_s, wpa_s->bssid,
 					    tfsresp_ie_start,
-					    &tfsresp_ie_len,
+					    tfsresp_ie_len,
 					    WNM_SLEEP_TFS_RESP_IE_SET))
 			wpa_printf(MSG_DEBUG, "WNM: Fail to set TFS Resp IE");
 	}
@@ -193,8 +197,8 @@ static void wnm_sleep_mode_exit_success(struct wpa_supplicant *wpa_s,
 		return;
 	}
 
-	while (ptr + 1 < end) {
-		if (ptr + 2 + ptr[1] > end) {
+	while (end - ptr > 1) {
+		if (2 + ptr[1] > end - ptr) {
 			wpa_printf(MSG_DEBUG, "WNM: Invalid Key Data element "
 				   "length");
 			if (end > ptr) {
@@ -245,13 +249,19 @@ static void ieee802_11_rx_wnmsleep_resp(struct wpa_supplicant *wpa_s,
 	 * Action [1] | Dialog Token [1] | Key Data Len [2] | Key Data |
 	 * WNM-Sleep Mode IE | TFS Response IE
 	 */
-	u8 *pos = (u8 *) frm; /* point to payload after the action field */
+	const u8 *pos = frm; /* point to payload after the action field */
 	u16 key_len_total;
 	struct wnm_sleep_element *wnmsleep_ie = NULL;
 	/* multiple TFS Resp IE (assuming consecutive) */
-	u8 *tfsresp_ie_start = NULL;
-	u8 *tfsresp_ie_end = NULL;
+	const u8 *tfsresp_ie_start = NULL;
+	const u8 *tfsresp_ie_end = NULL;
 	size_t left;
+
+	if (!wpa_s->wnmsleep_used) {
+		wpa_printf(MSG_DEBUG,
+			   "WNM: Ignore WNM-Sleep Mode Response frame since WNM-Sleep Mode has not been used in this association");
+		return;
+	}
 
 	if (len < 3)
 		return;
@@ -265,14 +275,14 @@ static void ieee802_11_rx_wnmsleep_resp(struct wpa_supplicant *wpa_s,
 		return;
 	}
 	pos += 3 + key_len_total;
-	while (pos - frm < len) {
+	while (pos - frm + 1 < len) {
 		u8 ie_len = *(pos + 1);
-		if (pos + 2 + ie_len > frm + len) {
+		if (2 + ie_len > frm + len - pos) {
 			wpa_printf(MSG_INFO, "WNM: Invalid IE len %u", ie_len);
 			break;
 		}
 		wpa_hexdump(MSG_DEBUG, "WNM: Element", pos, 2 + ie_len);
-		if (*pos == WLAN_EID_WNMSLEEP)
+		if (*pos == WLAN_EID_WNMSLEEP && ie_len >= 4)
 			wnmsleep_ie = (struct wnm_sleep_element *) pos;
 		else if (*pos == WLAN_EID_TFS_RESP) {
 			if (!tfsresp_ie_start)
@@ -643,6 +653,7 @@ int wnm_scan_process(struct wpa_supplicant *wpa_s, int reply_on_fail)
 	if (bss == wpa_s->current_bss) {
 		wpa_printf(MSG_DEBUG,
 			   "WNM: Already associated with the preferred candidate");
+		wnm_deallocate_memory(wpa_s);
 		return 1;
 	}
 
@@ -796,7 +807,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 	unsigned int beacon_int;
 	u8 valid_int;
 
-	if (pos + 5 > end)
+	if (end - pos < 5)
 		return;
 
 	if (wpa_s->current_bss)
@@ -819,7 +830,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 	pos += 5;
 
 	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_BSS_TERMINATION_INCLUDED) {
-		if (pos + 12 > end) {
+		if (end - pos < 12) {
 			wpa_printf(MSG_DEBUG, "WNM: Too short BSS TM Request");
 			return;
 		}
@@ -830,7 +841,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 	if (wpa_s->wnm_mode & WNM_BSS_TM_REQ_ESS_DISASSOC_IMMINENT) {
 		char url[256];
 
-		if (pos + 1 > end || pos + 1 + pos[0] > end) {
+		if (end - pos < 1 || 1 + pos[0] > end - pos) {
 			wpa_printf(MSG_DEBUG, "WNM: Invalid BSS Transition "
 				   "Management Request (URL)");
 			return;
@@ -866,7 +877,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		if (wpa_s->wnm_neighbor_report_elements == NULL)
 			return;
 
-		while (pos + 2 <= end &&
+		while (end - pos >= 2 &&
 		       wpa_s->wnm_num_neighbor_report < WNM_MAX_NEIGHBOR_REPORT)
 		{
 			u8 tag = *pos++;
@@ -874,7 +885,7 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 
 			wpa_printf(MSG_DEBUG, "WNM: Neighbor report tag %u",
 				   tag);
-			if (pos + len > end) {
+			if (len > end - pos) {
 				wpa_printf(MSG_DEBUG, "WNM: Truncated request");
 				return;
 			}
@@ -977,7 +988,7 @@ static void ieee802_11_rx_wnm_notif_req_wfa(struct wpa_supplicant *wpa_s,
 	pos = data;
 	end = data + len;
 
-	while (pos + 1 < end) {
+	while (end - pos > 1) {
 		ie = *pos++;
 		ie_len = *pos++;
 		wpa_printf(MSG_DEBUG, "WNM: WFA subelement %u len %u",
@@ -1015,7 +1026,7 @@ static void ieee802_11_rx_wnm_notif_req_wfa(struct wpa_supplicant *wpa_s,
 				url = NULL;
 				osu_method = 1;
 			} else {
-				if (pos + url_len + 1 > ie_end) {
+				if (url_len + 1 > ie_end - pos) {
 					wpa_printf(MSG_DEBUG, "WNM: Not enough room for Server URL (len=%u) and Server Method (left %d)",
 						   url_len,
 						   (int) (ie_end - pos));
@@ -1054,7 +1065,7 @@ static void ieee802_11_rx_wnm_notif_req_wfa(struct wpa_supplicant *wpa_s,
 				   "Imminent - Reason Code %u   "
 				   "Re-Auth Delay %u  URL Length %u",
 				   code, reauth_delay, url_len);
-			if (pos + url_len > ie_end)
+			if (url_len > ie_end - pos)
 				break;
 			url = os_malloc(url_len + 1);
 			if (url == NULL)

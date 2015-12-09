@@ -26,6 +26,9 @@
 #include "common.h"
 #include "xml-utils.h"
 #include "http-utils.h"
+#ifdef EAP_TLS_OPENSSL
+#include "crypto/tls_openssl.h"
+#endif /* EAP_TLS_OPENSSL */
 
 
 struct http_ctx {
@@ -421,6 +424,28 @@ ASN1_SEQUENCE(LogotypeExtn) = {
 
 IMPLEMENT_ASN1_FUNCTIONS(LogotypeExtn);
 
+#ifdef OPENSSL_IS_BORINGSSL
+#define sk_LogotypeInfo_num(st) \
+sk_num(CHECKED_CAST(_STACK *, STACK_OF(LogotypeInfo) *, (st)))
+#define sk_LogotypeInfo_value(st, i) (LogotypeInfo *) \
+sk_value(CHECKED_CAST(_STACK *, const STACK_OF(LogotypeInfo) *, (st)), (i))
+#define sk_LogotypeImage_num(st) \
+sk_num(CHECKED_CAST(_STACK *, STACK_OF(LogotypeImage) *, (st)))
+#define sk_LogotypeImage_value(st, i) (LogotypeImage *) \
+sk_value(CHECKED_CAST(_STACK *, const STACK_OF(LogotypeImage) *, (st)), (i))
+#define sk_LogotypeAudio_num(st) \
+sk_num(CHECKED_CAST(_STACK *, STACK_OF(LogotypeAudio) *, (st)))
+#define sk_LogotypeAudio_value(st, i) (LogotypeAudio *) \
+sk_value(CHECK_CAST(_STACK *, const STACK_OF(LogotypeAudio) *, (st)), (i))
+#define sk_HashAlgAndValue_num(st) \
+sk_num(CHECKED_CAST(_STACK *, STACK_OF(HashAlgAndValue) *, (st)))
+#define sk_HashAlgAndValue_value(st, i) (HashAlgAndValue *) \
+sk_value(CHECKED_CAST(_STACK *, const STACK_OF(HashAlgAndValue) *, (st)), (i))
+#define sk_ASN1_IA5STRING_num(st) \
+sk_num(CHECKED_CAST(_STACK *, STACK_OF(ASN1_IA5STRING) *, (st)))
+#define sk_ASN1_IA5STRING_value(st, i) (ASN1_IA5STRING *) \
+sk_value(CHECKED_CAST(_STACK *, const STACK_OF(ASN1_IA5STRING) *, (st)), (i))
+#else /* OPENSSL_IS_BORINGSSL */
 #define sk_LogotypeInfo_num(st) SKM_sk_num(LogotypeInfo, (st))
 #define sk_LogotypeInfo_value(st, i) SKM_sk_value(LogotypeInfo, (st), (i))
 #define sk_LogotypeImage_num(st) SKM_sk_num(LogotypeImage, (st))
@@ -431,6 +456,7 @@ IMPLEMENT_ASN1_FUNCTIONS(LogotypeExtn);
 #define sk_HashAlgAndValue_value(st, i) SKM_sk_value(HashAlgAndValue, (st), (i))
 #define sk_ASN1_IA5STRING_num(st) SKM_sk_num(ASN1_IA5STRING, (st))
 #define sk_ASN1_IA5STRING_value(st, i) SKM_sk_value(ASN1_IA5STRING, (st), (i))
+#endif /* OPENSSL_IS_BORINGSSL */
 
 
 static void add_logo(struct http_ctx *ctx, struct http_cert *hcert,
@@ -981,6 +1007,26 @@ static int curl_cb_ssl_verify(int preverify_ok, X509_STORE_CTX *x509_ctx)
 	if (depth == 0 && preverify_ok && validate_server_cert(ctx, cert) < 0)
 		return 0;
 
+#ifdef OPENSSL_IS_BORINGSSL
+	if (depth == 0 && ctx->ocsp != NO_OCSP && preverify_ok) {
+		enum ocsp_result res;
+
+		res = check_ocsp_resp(ssl_ctx, ssl, cert, ctx->peer_issuer,
+				      ctx->peer_issuer_issuer);
+		if (res == OCSP_REVOKED) {
+			preverify_ok = 0;
+			wpa_printf(MSG_INFO, "OCSP: certificate revoked");
+			if (err == X509_V_OK)
+				X509_STORE_CTX_set_error(
+					x509_ctx, X509_V_ERR_CERT_REVOKED);
+		} else if (res != OCSP_GOOD && (ctx->ocsp == MANDATORY_OCSP)) {
+			preverify_ok = 0;
+			wpa_printf(MSG_INFO,
+				   "OCSP: bad certificate status response");
+		}
+	}
+#endif /* OPENSSL_IS_BORINGSSL */
+
 	if (!preverify_ok)
 		ctx->last_err = "TLS validation failed";
 
@@ -1273,6 +1319,16 @@ static CURL * setup_curl_post(struct http_ctx *ctx, const char *address,
 #ifdef EAP_TLS_OPENSSL
 		curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, curl_cb_ssl);
 		curl_easy_setopt(curl, CURLOPT_SSL_CTX_DATA, ctx);
+#ifdef OPENSSL_IS_BORINGSSL
+		/* For now, using the CURLOPT_SSL_VERIFYSTATUS option only
+		 * with BoringSSL since the OpenSSL specific callback hack to
+		 * enable OCSP is not available with BoringSSL. The OCSP
+		 * implementation within libcurl is not sufficient for the
+		 * Hotspot 2.0 OSU needs, so cannot use this with OpenSSL.
+		 */
+		if (ctx->ocsp != NO_OCSP)
+			curl_easy_setopt(curl, CURLOPT_SSL_VERIFYSTATUS, 1L);
+#endif /* OPENSSL_IS_BORINGSSL */
 #endif /* EAP_TLS_OPENSSL */
 	} else {
 		curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);

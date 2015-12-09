@@ -213,6 +213,32 @@ static int hostapd_radius_acl_query(struct hostapd_data *hapd, const u8 *addr,
 
 
 /**
+ * hostapd_check_acl - Check a specified STA against accept/deny ACLs
+ * @hapd: hostapd BSS data
+ * @addr: MAC address of the STA
+ * @vlan_id: Buffer for returning VLAN ID
+ * Returns: HOSTAPD_ACL_ACCEPT, HOSTAPD_ACL_REJECT, or HOSTAPD_ACL_PENDING
+ */
+ int hostapd_check_acl(struct hostapd_data *hapd, const u8 *addr, int *vlan_id)
+{
+	if (hostapd_maclist_found(hapd->conf->accept_mac,
+				  hapd->conf->num_accept_mac, addr, vlan_id))
+		return HOSTAPD_ACL_ACCEPT;
+
+	if (hostapd_maclist_found(hapd->conf->deny_mac,
+				  hapd->conf->num_deny_mac, addr, vlan_id))
+		return HOSTAPD_ACL_REJECT;
+
+	if (hapd->conf->macaddr_acl == ACCEPT_UNLESS_DENIED)
+		return HOSTAPD_ACL_ACCEPT;
+	if (hapd->conf->macaddr_acl == DENY_UNLESS_ACCEPTED)
+		return HOSTAPD_ACL_REJECT;
+
+	return HOSTAPD_ACL_PENDING;
+}
+
+
+/**
  * hostapd_allowed_address - Check whether a specified STA can be authenticated
  * @hapd: hostapd BSS data
  * @addr: MAC address of the STA
@@ -235,6 +261,8 @@ int hostapd_allowed_address(struct hostapd_data *hapd, const u8 *addr,
 			    struct hostapd_sta_wpa_psk_short **psk,
 			    char **identity, char **radius_cui)
 {
+	int res;
+
 	if (session_timeout)
 		*session_timeout = 0;
 	if (acct_interim_interval)
@@ -248,18 +276,9 @@ int hostapd_allowed_address(struct hostapd_data *hapd, const u8 *addr,
 	if (radius_cui)
 		*radius_cui = NULL;
 
-	if (hostapd_maclist_found(hapd->conf->accept_mac,
-				  hapd->conf->num_accept_mac, addr, vlan_id))
-		return HOSTAPD_ACL_ACCEPT;
-
-	if (hostapd_maclist_found(hapd->conf->deny_mac,
-				  hapd->conf->num_deny_mac, addr, vlan_id))
-		return HOSTAPD_ACL_REJECT;
-
-	if (hapd->conf->macaddr_acl == ACCEPT_UNLESS_DENIED)
-		return HOSTAPD_ACL_ACCEPT;
-	if (hapd->conf->macaddr_acl == DENY_UNLESS_ACCEPTED)
-		return HOSTAPD_ACL_REJECT;
+	res = hostapd_check_acl(hapd, addr, vlan_id);
+	if (res != HOSTAPD_ACL_PENDING)
+		return res;
 
 	if (hapd->conf->macaddr_acl == USE_EXTERNAL_RADIUS_AUTH) {
 #ifdef CONFIG_NO_RADIUS
@@ -268,10 +287,9 @@ int hostapd_allowed_address(struct hostapd_data *hapd, const u8 *addr,
 		struct hostapd_acl_query_data *query;
 
 		/* Check whether ACL cache has an entry for this station */
-		int res = hostapd_acl_cache_get(hapd, addr, session_timeout,
-						acct_interim_interval,
-						vlan_id, psk,
-						identity, radius_cui);
+		res = hostapd_acl_cache_get(hapd, addr, session_timeout,
+					    acct_interim_interval, vlan_id, psk,
+					    identity, radius_cui);
 		if (res == HOSTAPD_ACL_ACCEPT ||
 		    res == HOSTAPD_ACL_ACCEPT_TIMEOUT)
 			return res;
@@ -399,19 +417,15 @@ static void hostapd_acl_expire_queries(struct hostapd_data *hapd,
 
 /**
  * hostapd_acl_expire - ACL cache expiration callback
- * @eloop_ctx: struct hostapd_data *
- * @timeout_ctx: Not used
+ * @hapd: struct hostapd_data *
  */
-static void hostapd_acl_expire(void *eloop_ctx, void *timeout_ctx)
+void hostapd_acl_expire(struct hostapd_data *hapd)
 {
-	struct hostapd_data *hapd = eloop_ctx;
 	struct os_reltime now;
 
 	os_get_reltime(&now);
 	hostapd_acl_expire_cache(hapd, &now);
 	hostapd_acl_expire_queries(hapd, &now);
-
-	eloop_register_timeout(10, 0, hostapd_acl_expire, hapd, NULL);
 }
 
 
@@ -615,8 +629,6 @@ int hostapd_acl_init(struct hostapd_data *hapd)
 	if (radius_client_register(hapd->radius, RADIUS_AUTH,
 				   hostapd_acl_recv_radius, hapd))
 		return -1;
-
-	eloop_register_timeout(10, 0, hostapd_acl_expire, hapd, NULL);
 #endif /* CONFIG_NO_RADIUS */
 
 	return 0;
@@ -632,8 +644,6 @@ void hostapd_acl_deinit(struct hostapd_data *hapd)
 	struct hostapd_acl_query_data *query, *prev;
 
 #ifndef CONFIG_NO_RADIUS
-	eloop_cancel_timeout(hostapd_acl_expire, hapd, NULL);
-
 	hostapd_acl_cache_free(hapd->acl_cache);
 #endif /* CONFIG_NO_RADIUS */
 

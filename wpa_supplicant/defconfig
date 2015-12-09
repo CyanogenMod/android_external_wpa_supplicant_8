@@ -31,6 +31,9 @@ CONFIG_DRIVER_WEXT=y
 # Driver interface for Linux drivers using the nl80211 kernel interface
 CONFIG_DRIVER_NL80211=y
 
+# QCA vendor extensions to nl80211
+#CONFIG_DRIVER_NL80211_QCA=y
+
 # driver_nl80211.c requires libnl. If you are compiling it yourself
 # you may need to point hostapd to your version of libnl.
 #
@@ -276,6 +279,12 @@ CONFIG_BACKEND=file
 # none = Empty template
 #CONFIG_L2_PACKET=linux
 
+# Disable Linux packet socket workaround applicable for station interface
+# in a bridge for EAPOL frames. This should be uncommented only if the kernel
+# is known to not have the regression issue in packet socket behavior with
+# bridge interfaces (commit 'bridge: respect RFC2863 operational state')').
+#CONFIG_NO_LINUX_PACKET_SOCKET_WAR=y
+
 # PeerKey handshake for Station to Station Link (IEEE 802.11e DLS)
 CONFIG_PEERKEY=y
 
@@ -495,3 +504,12 @@ CONFIG_PEERKEY=y
 #
 # External password backend for testing purposes (developer use)
 #CONFIG_EXT_PASSWORD_TEST=y
+
+# Enable Fast Session Transfer (FST)
+#CONFIG_FST=y
+
+# Enable CLI commands for FST testing
+#CONFIG_FST_TEST=y
+
+# OS X builds. This is only for building eapol_test.
+#CONFIG_OSX=y

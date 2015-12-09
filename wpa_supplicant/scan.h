@@ -40,8 +40,7 @@ void scan_only_handler(struct wpa_supplicant *wpa_s,
 		       struct wpa_scan_results *scan_res);
 int wpas_scan_scheduled(struct wpa_supplicant *wpa_s);
 int wpa_supplicant_start_sched_scan(struct wpa_supplicant *wpa_s,
-				    struct wpa_driver_scan_params *params,
-				    int interval);
+				    struct wpa_driver_scan_params *params);
 int wpa_supplicant_stop_sched_scan(struct wpa_supplicant *wpa_s);
 struct wpa_driver_scan_params *
 wpa_scan_clone_params(const struct wpa_driver_scan_params *src);
@@ -54,5 +53,6 @@ void wpas_mac_addr_rand_scan_clear(struct wpa_supplicant *wpa_s,
 int wpas_mac_addr_rand_scan_set(struct wpa_supplicant *wpa_s,
 				unsigned int type, const u8 *addr,
 				const u8 *mask);
+int wpas_abort_ongoing_scan(struct wpa_supplicant *wpa_s);
 
 #endif /* SCAN_H */

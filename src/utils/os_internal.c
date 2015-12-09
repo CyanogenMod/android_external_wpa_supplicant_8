@@ -243,7 +243,7 @@ char * os_readfile(const char *name, size_t *len)
 }
 
 
-int os_fsync(FILE *stream)
+int os_fdatasync(FILE *stream)
 {
 	return 0;
 }

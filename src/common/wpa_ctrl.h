@@ -28,6 +28,8 @@ extern "C" {
 #define WPA_EVENT_DISCONNECTED "CTRL-EVENT-DISCONNECTED "
 /** Association rejected during connection attempt */
 #define WPA_EVENT_ASSOC_REJECT "CTRL-EVENT-ASSOC-REJECT "
+/** Authentication rejected during connection attempt */
+#define WPA_EVENT_AUTH_REJECT "CTRL-EVENT-AUTH-REJECT "
 /** wpa_supplicant is exiting */
 #define WPA_EVENT_TERMINATING "CTRL-EVENT-TERMINATING "
 /** Password change was completed successfully */
@@ -74,6 +76,19 @@ extern "C" {
 #define WPA_EVENT_SIGNAL_CHANGE "CTRL-EVENT-SIGNAL-CHANGE "
 /** Regulatory domain channel */
 #define WPA_EVENT_REGDOM_CHANGE "CTRL-EVENT-REGDOM-CHANGE "
+
+/** IP subnet status change notification
+ *
+ * When using an offloaded roaming mechanism where driver/firmware takes care
+ * of roaming and IP subnet validation checks post-roaming, this event can
+ * indicate whether IP subnet has changed.
+ *
+ * The event has a status=<0/1/2> parameter where
+ * 0 = unknown
+ * 1 = IP subnet unchanged (can continue to use the old IP address)
+ * 2 = IP subnet changed (need to get a new IP address)
+ */
+#define WPA_EVENT_SUBNET_STATUS_UPDATE "CTRL-EVENT-SUBNET-STATUS-UPDATE "
 
 /** RSN IBSS 4-way handshakes completed with specified peer */
 #define IBSS_RSN_COMPLETED "IBSS-RSN-COMPLETED "
@@ -279,6 +294,7 @@ extern "C" {
 #define WPA_BSS_MASK_MESH_SCAN		BIT(18)
 #define WPA_BSS_MASK_SNR		BIT(19)
 #define WPA_BSS_MASK_EST_THROUGHPUT	BIT(20)
+#define WPA_BSS_MASK_FST		BIT(21)
 
 
 /* VENDOR_ELEM_* frame id values */
@@ -314,6 +330,20 @@ enum wpa_vendor_elem_frame {
  * interface need to use matching path configuration.
  */
 struct wpa_ctrl * wpa_ctrl_open(const char *ctrl_path);
+
+/**
+ * wpa_ctrl_open2 - Open a control interface to wpa_supplicant/hostapd
+ * @ctrl_path: Path for UNIX domain sockets; ignored if UDP sockets are used.
+ * @cli_path: Path for client UNIX domain sockets; ignored if UDP socket
+ *            is used.
+ * Returns: Pointer to abstract control interface data or %NULL on failure
+ *
+ * This function is used to open a control interface to wpa_supplicant/hostapd
+ * when the socket path for client need to be specified explicitly. Default
+ * ctrl_path is usually /var/run/wpa_supplicant or /var/run/hostapd and client
+ * socket path is /tmp.
+ */
+struct wpa_ctrl * wpa_ctrl_open2(const char *ctrl_path, const char *cli_path);
 
 
 /**

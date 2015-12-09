@@ -225,7 +225,7 @@ struct wpa_params {
 	 * This can also be %NULL. In such a case, if a P2P Device dedicated
 	 * interfaces is created, the main configuration file will be used.
 	 */
-	const char *conf_p2p_dev;
+	char *conf_p2p_dev;
 #endif /* CONFIG_P2P */
 
 };
@@ -278,6 +278,7 @@ struct wpa_global {
 	unsigned int p2p_24ghz_social_channels:1;
 	unsigned int pending_p2ps_group:1;
 	unsigned int pending_group_iface_for_p2ps:1;
+	unsigned int pending_p2ps_group_freq;
 
 #ifdef CONFIG_WIFI_DISPLAY
 	int wifi_display;
@@ -300,8 +301,17 @@ struct wpa_radio {
 	char name[16]; /* from driver_ops get_radio_name() or empty if not
 			* available */
 	unsigned int external_scan_running:1;
+	unsigned int num_active_works;
 	struct dl_list ifaces; /* struct wpa_supplicant::radio_list entries */
 	struct dl_list work; /* struct wpa_radio_work::list entries */
+};
+
+#define MAX_ACTIVE_WORKS 2
+
+enum wpa_radio_work_band {
+	BAND_2_4_GHZ = BIT(0),
+	BAND_5_GHZ = BIT(1),
+	BAND_60_GHZ = BIT(2),
 };
 
 /**
@@ -316,6 +326,7 @@ struct wpa_radio_work {
 	void *ctx;
 	unsigned int started:1;
 	struct os_reltime time;
+	unsigned int bands;
 };
 
 int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
@@ -500,9 +511,10 @@ struct wpa_supplicant {
 
 	struct wpa_ssid *prev_sched_ssid; /* last SSID used in sched scan */
 	int sched_scan_timeout;
-	int sched_scan_interval;
 	int first_sched_scan;
 	int sched_scan_timed_out;
+	struct sched_scan_plan *sched_scan_plans;
+	size_t sched_scan_plans_num;
 
 	void (*scan_res_handler)(struct wpa_supplicant *wpa_s,
 				 struct wpa_scan_results *scan_res);
@@ -593,6 +605,8 @@ struct wpa_supplicant {
 	} scan_req, last_scan_req;
 	enum wpa_states scan_prev_wpa_state;
 	struct os_reltime scan_trigger_time, scan_start_time;
+	/* Minimum freshness requirement for connection purposes */
+	struct os_reltime scan_min_time;
 	int scan_runs; /* number of scan runs since WPS was started */
 	int *next_scan_freqs;
 	int *manual_scan_freqs;
@@ -632,6 +646,9 @@ struct wpa_supplicant {
 
 	int max_scan_ssids;
 	int max_sched_scan_ssids;
+	unsigned int max_sched_scan_plans;
+	unsigned int max_sched_scan_plan_interval;
+	unsigned int max_sched_scan_plan_iterations;
 	int sched_scan_supported;
 	unsigned int max_match_sets;
 	unsigned int max_remain_on_chan;
@@ -656,6 +673,7 @@ struct wpa_supplicant {
 	unsigned int reattach:1; /* reassociation to the same BSS requested */
 	unsigned int mac_addr_changed:1;
 	unsigned int added_vif:1;
+	unsigned int wnmsleep_used:1;
 
 	struct os_reltime last_mac_addr_change;
 	int last_mac_addr_style;
@@ -720,6 +738,7 @@ struct wpa_supplicant {
 	int mesh_if_idx;
 	unsigned int mesh_if_created:1;
 	unsigned int mesh_ht_enabled:1;
+	unsigned int mesh_vht_enabled:1;
 	int mesh_auth_block_duration; /* sec */
 #endif /* CONFIG_MESH */
 
@@ -820,7 +839,7 @@ struct wpa_supplicant {
 	unsigned int p2p_nfc_tag_enabled:1;
 	unsigned int p2p_peer_oob_pk_hash_known:1;
 	unsigned int p2p_disable_ip_addr_req:1;
-	unsigned int p2ps_join_addr_valid:1;
+	unsigned int p2ps_method_config_any:1;
 	unsigned int p2p_cli_probe:1;
 	int p2p_persistent_go_freq;
 	int p2p_persistent_id;
@@ -842,6 +861,9 @@ struct wpa_supplicant {
 	int *p2p_group_common_freqs;
 	unsigned int p2p_group_common_freqs_num;
 	u8 p2ps_join_addr[ETH_ALEN];
+
+	unsigned int p2p_go_max_oper_chwidth;
+	unsigned int p2p_go_vht_center_freq2;
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;
@@ -967,6 +989,7 @@ struct wpa_supplicant {
 	struct l2_packet_data *l2_test;
 	unsigned int extra_roc_dur;
 	enum wpa_supplicant_test_failure test_failure;
+	unsigned int p2p_go_csa_on_inv:1;
 #endif /* CONFIG_TESTING_OPTIONS */
 
 	struct wmm_ac_assoc_data *wmm_ac_assoc_info;
@@ -977,6 +1000,12 @@ struct wpa_supplicant {
 	u8 last_tspecs_count;
 
 	struct rrm_data rrm;
+
+#ifdef CONFIG_FST
+	struct fst_iface *fst;
+	const struct wpabuf *fst_ies;
+	struct wpabuf *received_mb_ies;
+#endif /* CONFIG_FST */
 };
 
 
@@ -1149,4 +1178,16 @@ int get_shared_radio_freqs(struct wpa_supplicant *wpa_s,
 			   int *freq_array, unsigned int len);
 
 void wpas_network_reenabled(void *eloop_ctx, void *timeout_ctx);
+
+#ifdef CONFIG_FST
+
+struct fst_wpa_obj;
+
+void fst_wpa_supplicant_fill_iface_obj(struct wpa_supplicant *wpa_s,
+				       struct fst_wpa_obj *iface_obj);
+
+#endif /* CONFIG_FST */
+
+int wpas_sched_scan_plans_set(struct wpa_supplicant *wpa_s, const char *cmd);
+
 #endif /* WPA_SUPPLICANT_I_H */

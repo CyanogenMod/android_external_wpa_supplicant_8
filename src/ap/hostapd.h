@@ -228,6 +228,8 @@ struct hostapd_data {
 	unsigned int cs_c_off_beacon;
 	unsigned int cs_c_off_proberesp;
 	int csa_in_progress;
+	unsigned int cs_c_off_ecsa_beacon;
+	unsigned int cs_c_off_ecsa_proberesp;
 
 	/* BSS Load */
 	unsigned int bss_load_update_timeout;
@@ -269,6 +271,7 @@ struct hostapd_data {
 	/** Key used for generating SAE anti-clogging tokens */
 	u8 sae_token_key[8];
 	struct os_reltime last_sae_token_key_update;
+	int dot11RSNASAERetransPeriod; /* msec */
 #endif /* CONFIG_SAE */
 
 #ifdef CONFIG_TESTING_OPTIONS
@@ -279,6 +282,12 @@ struct hostapd_data {
 #endif /* CONFIG_TESTING_OPTIONS */
 };
 
+
+struct hostapd_sta_info {
+	struct dl_list list;
+	u8 addr[ETH_ALEN];
+	struct os_reltime last_seen;
+};
 
 /**
  * struct hostapd_iface - hostapd per-interface data structure
@@ -309,12 +318,25 @@ struct hostapd_iface {
 
 	unsigned int wait_channel_update:1;
 	unsigned int cac_started:1;
+#ifdef CONFIG_FST
+	struct fst_iface *fst;
+	const struct wpabuf *fst_ies;
+#endif /* CONFIG_FST */
 
 	/*
 	 * When set, indicates that the driver will handle the AP
 	 * teardown: delete global keys, station keys, and stations.
 	 */
 	unsigned int driver_ap_teardown:1;
+
+	/*
+	 * When set, indicates that this interface is part of list of
+	 * interfaces that need to be started together (synchronously).
+	 */
+	unsigned int need_to_start_in_sync:1;
+
+	/* Ready to start but waiting for other interfaces to become ready. */
+	unsigned int ready_to_start_in_sync:1;
 
 	int num_ap; /* number of entries in ap_list */
 	struct ap_info *ap_list; /* AP info list head */
@@ -391,6 +413,9 @@ struct hostapd_iface {
 	u64 last_channel_time_busy;
 	u8 channel_utilization;
 
+	/* eCSA IE will be added only if operating class is specified */
+	u8 cs_oper_class;
+
 	unsigned int dfs_cac_ms;
 	struct os_reltime dfs_cac_start;
 
@@ -404,6 +429,9 @@ struct hostapd_iface {
 
 	void (*scan_cb)(struct hostapd_iface *iface);
 	int num_ht40_scan_tries;
+
+	struct dl_list sta_seen; /* struct hostapd_sta_info */
+	unsigned int num_sta_seen;
 };
 
 /* hostapd.c */
@@ -435,12 +463,14 @@ int hostapd_remove_iface(struct hapd_interfaces *ifaces, char *buf);
 void hostapd_channel_list_updated(struct hostapd_iface *iface, int initiator);
 void hostapd_set_state(struct hostapd_iface *iface, enum hostapd_iface_state s);
 const char * hostapd_state_text(enum hostapd_iface_state s);
+int hostapd_csa_in_progress(struct hostapd_iface *iface);
 int hostapd_switch_channel(struct hostapd_data *hapd,
 			   struct csa_settings *settings);
 void
 hostapd_switch_channel_fallback(struct hostapd_iface *iface,
 				const struct hostapd_freq_params *freq_params);
 void hostapd_cleanup_cs_params(struct hostapd_data *hapd);
+void hostapd_periodic_iface(struct hostapd_iface *iface);
 
 /* utils.c */
 int hostapd_register_probereq_cb(struct hostapd_data *hapd,
@@ -467,5 +497,13 @@ void hostapd_event_ch_switch(struct hostapd_data *hapd, int freq, int ht,
 const struct hostapd_eap_user *
 hostapd_get_eap_user(struct hostapd_data *hapd, const u8 *identity,
 		     size_t identity_len, int phase2);
+
+struct hostapd_data * hostapd_get_iface(struct hapd_interfaces *interfaces,
+					const char *ifname);
+
+#ifdef CONFIG_FST
+void fst_hostapd_fill_iface_obj(struct hostapd_data *hapd,
+				struct fst_wpa_obj *iface_obj);
+#endif /* CONFIG_FST */
 
 #endif /* HOSTAPD_H */

@@ -76,9 +76,9 @@ int wpas_ap_wps_add_nfc_pw(struct wpa_supplicant *wpa_s, u16 pw_id,
 			   const struct wpabuf *pw, const u8 *pubkey_hash);
 
 struct hostapd_config;
-void wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
-			       struct wpa_ssid *ssid,
-			       struct hostapd_config *conf);
+int wpa_supplicant_conf_ap_ht(struct wpa_supplicant *wpa_s,
+			      struct wpa_ssid *ssid,
+			      struct hostapd_config *conf);
 
 int wpas_ap_stop_ap(struct wpa_supplicant *wpa_s);
 
@@ -92,5 +92,7 @@ void wpas_event_dfs_cac_aborted(struct wpa_supplicant *wpa_s,
 				struct dfs_event *radar);
 void wpas_event_dfs_cac_nop_finished(struct wpa_supplicant *wpa_s,
 				     struct dfs_event *radar);
+
+void ap_periodic(struct wpa_supplicant *wpa_s);
 
 #endif /* AP_H */
