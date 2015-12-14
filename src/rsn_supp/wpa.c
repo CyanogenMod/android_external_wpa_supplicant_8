@@ -364,13 +364,12 @@ int wpa_supplicant_send_2_of_4(struct wpa_sm *sm, const unsigned char *dst,
 		if (rsn_ie_buf == NULL)
 			return -1;
 		os_memcpy(rsn_ie_buf, wpa_ie, wpa_ie_len);
-		res = wpa_insert_pmkid(rsn_ie_buf, wpa_ie_len,
+		res = wpa_insert_pmkid(rsn_ie_buf, &wpa_ie_len,
 				       sm->pmk_r1_name);
 		if (res < 0) {
 			os_free(rsn_ie_buf);
 			return -1;
 		}
-		wpa_ie_len += res;
 
 		if (sm->assoc_resp_ies) {
 			os_memcpy(rsn_ie_buf + wpa_ie_len, sm->assoc_resp_ies,
@@ -2291,6 +2290,9 @@ void wpa_sm_deinit(struct wpa_sm *sm)
 #ifdef CONFIG_IEEE80211R
 	os_free(sm->assoc_resp_ies);
 #endif /* CONFIG_IEEE80211R */
+#ifdef CONFIG_TESTING_OPTIONS
+	wpabuf_free(sm->test_assoc_ie);
+#endif /* CONFIG_TESTING_OPTIONS */
 	os_free(sm);
 }
 
@@ -2692,6 +2694,17 @@ int wpa_sm_set_assoc_wpa_ie_default(struct wpa_sm *sm, u8 *wpa_ie,
 	if (sm == NULL)
 		return -1;
 
+#ifdef CONFIG_TESTING_OPTIONS
+	if (sm->test_assoc_ie) {
+		wpa_printf(MSG_DEBUG,
+			   "TESTING: Replace association WPA/RSN IE");
+		if (*wpa_ie_len < wpabuf_len(sm->test_assoc_ie))
+			return -1;
+		os_memcpy(wpa_ie, wpabuf_head(sm->test_assoc_ie),
+			  wpabuf_len(sm->test_assoc_ie));
+		res = wpabuf_len(sm->test_assoc_ie);
+	} else
+#endif /* CONFIG_TESTING_OPTIONS */
 	res = wpa_gen_wpa_ie(sm, wpa_ie, *wpa_ie_len);
 	if (res < 0)
 		return -1;
@@ -3031,3 +3044,12 @@ void wpa_sm_set_ptk_kck_kek(struct wpa_sm *sm,
 	}
 	sm->ptk_set = 1;
 }
+
+
+#ifdef CONFIG_TESTING_OPTIONS
+void wpa_sm_set_test_assoc_ie(struct wpa_sm *sm, struct wpabuf *buf)
+{
+	wpabuf_free(sm->test_assoc_ie);
+	sm->test_assoc_ie = buf;
+}
+#endif /* CONFIG_TESTING_OPTIONS */

@@ -2298,14 +2298,19 @@ SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 	pos += wpa_ie_len;
 #ifdef CONFIG_IEEE80211R
 	if (wpa_key_mgmt_ft(sm->wpa_key_mgmt)) {
-		int res = wpa_insert_pmkid(kde, pos - kde, sm->pmk_r1_name);
+		int res;
+		size_t elen;
+
+		elen = pos - kde;
+		res = wpa_insert_pmkid(kde, &elen, sm->pmk_r1_name);
 		if (res < 0) {
 			wpa_printf(MSG_ERROR, "FT: Failed to insert "
 				   "PMKR1Name into RSN IE in EAPOL-Key data");
 			os_free(kde);
 			return;
 		}
-		pos += res;
+		pos -= wpa_ie_len;
+		pos += elen;
 	}
 #endif /* CONFIG_IEEE80211R */
 	if (gtk) {
@@ -2323,10 +2328,18 @@ SM_STATE(WPA_PTK, PTKINITNEGOTIATING)
 		struct wpa_auth_config *conf;
 
 		conf = &sm->wpa_auth->conf;
-		res = wpa_write_ftie(conf, conf->r0_key_holder,
-				     conf->r0_key_holder_len,
-				     NULL, NULL, pos, kde + kde_len - pos,
-				     NULL, 0);
+		if (sm->assoc_resp_ftie &&
+		    kde + kde_len - pos >= 2 + sm->assoc_resp_ftie[1]) {
+			os_memcpy(pos, sm->assoc_resp_ftie,
+				  2 + sm->assoc_resp_ftie[1]);
+			res = 2 + sm->assoc_resp_ftie[1];
+		} else {
+			res = wpa_write_ftie(conf, conf->r0_key_holder,
+					     conf->r0_key_holder_len,
+					     NULL, NULL, pos,
+					     kde + kde_len - pos,
+					     NULL, 0);
+		}
 		if (res < 0) {
 			wpa_printf(MSG_ERROR, "FT: Failed to insert FTIE "
 				   "into EAPOL-Key Key Data");

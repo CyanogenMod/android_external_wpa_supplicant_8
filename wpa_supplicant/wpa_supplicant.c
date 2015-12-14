@@ -5556,6 +5556,16 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 		if (wpa_s->wpa_state == WPA_SCANNING && !wpa_s->scanning)
 			wpa_supplicant_req_scan(wpa_s, 0, 0);
 		break;
+	case WPA_CTRL_REQ_EXT_CERT_CHECK:
+		if (eap->pending_ext_cert_check != PENDING_CHECK)
+			return -1;
+		if (os_strcmp(value, "good") == 0)
+			eap->pending_ext_cert_check = EXT_CERT_CHECK_GOOD;
+		else if (os_strcmp(value, "bad") == 0)
+			eap->pending_ext_cert_check = EXT_CERT_CHECK_BAD;
+		else
+			return -1;
+		break;
 	default:
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Unknown field '%s'", field);
 		return -1;
@@ -6142,4 +6152,87 @@ void wpas_rrm_handle_link_measurement_request(struct wpa_supplicant *wpa_s,
 			   "RRM: Link measurement report failed. Send action failed");
 	}
 	wpabuf_free(buf);
+}
+
+
+struct wpa_supplicant *
+wpas_vendor_elem(struct wpa_supplicant *wpa_s, enum wpa_vendor_elem_frame frame)
+{
+	switch (frame) {
+#ifdef CONFIG_P2P
+	case VENDOR_ELEM_PROBE_REQ_P2P:
+	case VENDOR_ELEM_PROBE_RESP_P2P:
+	case VENDOR_ELEM_PROBE_RESP_P2P_GO:
+	case VENDOR_ELEM_BEACON_P2P_GO:
+	case VENDOR_ELEM_P2P_PD_REQ:
+	case VENDOR_ELEM_P2P_PD_RESP:
+	case VENDOR_ELEM_P2P_GO_NEG_REQ:
+	case VENDOR_ELEM_P2P_GO_NEG_RESP:
+	case VENDOR_ELEM_P2P_GO_NEG_CONF:
+	case VENDOR_ELEM_P2P_INV_REQ:
+	case VENDOR_ELEM_P2P_INV_RESP:
+	case VENDOR_ELEM_P2P_ASSOC_REQ:
+	case VENDOR_ELEM_P2P_ASSOC_RESP:
+		return wpa_s->parent;
+#endif /* CONFIG_P2P */
+	default:
+		return wpa_s;
+	}
+}
+
+
+void wpas_vendor_elem_update(struct wpa_supplicant *wpa_s)
+{
+	unsigned int i;
+	char buf[30];
+
+	wpa_printf(MSG_DEBUG, "Update vendor elements");
+
+	for (i = 0; i < NUM_VENDOR_ELEM_FRAMES; i++) {
+		if (wpa_s->vendor_elem[i]) {
+			int res;
+
+			res = os_snprintf(buf, sizeof(buf), "frame[%u]", i);
+			if (!os_snprintf_error(sizeof(buf), res)) {
+				wpa_hexdump_buf(MSG_DEBUG, buf,
+						wpa_s->vendor_elem[i]);
+			}
+		}
+	}
+
+#ifdef CONFIG_P2P
+	if (wpa_s->parent == wpa_s &&
+	    wpa_s->global->p2p &&
+	    !wpa_s->global->p2p_disabled)
+		p2p_set_vendor_elems(wpa_s->global->p2p, wpa_s->vendor_elem);
+#endif /* CONFIG_P2P */
+}
+
+
+int wpas_vendor_elem_remove(struct wpa_supplicant *wpa_s, int frame,
+			    const u8 *elem, size_t len)
+{
+	u8 *ie, *end;
+
+	ie = wpabuf_mhead_u8(wpa_s->vendor_elem[frame]);
+	end = ie + wpabuf_len(wpa_s->vendor_elem[frame]);
+
+	for (; ie + 1 < end; ie += 2 + ie[1]) {
+		if (ie + len > end)
+			break;
+		if (os_memcmp(ie, elem, len) != 0)
+			continue;
+
+		if (wpabuf_len(wpa_s->vendor_elem[frame]) == len) {
+			wpabuf_free(wpa_s->vendor_elem[frame]);
+			wpa_s->vendor_elem[frame] = NULL;
+		} else {
+			os_memmove(ie, ie + len, end - (ie + len));
+			wpa_s->vendor_elem[frame]->used -= len;
+		}
+		wpas_vendor_elem_update(wpa_s);
+		return 0;
+	}
+
+	return -1;
 }
