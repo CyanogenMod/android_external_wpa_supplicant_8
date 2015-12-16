@@ -306,6 +306,7 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 	wpa_s->key_mgmt = 0;
 
 	wpas_rrm_reset(wpa_s);
+	wpa_s->wnmsleep_used = 0;
 }
 
 
@@ -2370,7 +2371,8 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 	if (!wpa_s->disconnected &&
 	    (!wpa_s->auto_reconnect_disabled ||
 	     wpa_s->key_mgmt == WPA_KEY_MGMT_WPS ||
-	     wpas_wps_searching(wpa_s))) {
+	     wpas_wps_searching(wpa_s) ||
+	     wpas_wps_reenable_networks_pending(wpa_s))) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Auto connect enabled: try to "
 			"reconnect (wps=%d/%d wpa_state=%d)",
 			wpa_s->key_mgmt == WPA_KEY_MGMT_WPS,
