@@ -1795,6 +1795,10 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 		wpa_printf(MSG_ERROR, " QMI-ERROR Unable to start the EAP session;"
 			   " error_ret=%d; qmi_err=%d\n", qmiRetCode,
 			   eap_auth_start_resp.resp.error);
+		if(eap_auth_start.eap_method_mask == QMI_AUTH_EAP_METHOD_MASK_AKA_PRIME_V01 &&
+		   eap_auth_start_resp.resp.error == QMI_ERR_INVALID_ARG_V01)
+			wpa_printf(MSG_ERROR, "QMI-ERROR AKA' not supported\n");
+
 		return FALSE;
 		}
 		eap_proxy->eap_auth_session_flag[sim_num] = TRUE;
