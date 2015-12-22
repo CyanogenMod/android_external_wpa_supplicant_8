@@ -1927,6 +1927,12 @@ static int wpa_ctrl_command_sta(struct wpa_ctrl *ctrl, char *cmd,
 		printf("Not connected to hostapd - command dropped.\n");
 		return -1;
 	}
+	if (ifname_prefix) {
+		os_snprintf(buf, sizeof(buf), "IFNAME=%s %s",
+			    ifname_prefix, cmd);
+		buf[sizeof(buf) - 1] = '\0';
+		cmd = buf;
+	}
 	len = sizeof(buf) - 1;
 	ret = wpa_ctrl_request(ctrl, cmd, os_strlen(cmd), buf, &len,
 			       wpa_cli_msg_cb);
@@ -2754,6 +2760,13 @@ static int wpa_cli_cmd_signal_poll(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_signal_monitor(struct wpa_ctrl *ctrl, int argc,
+				   char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "SIGNAL_MONITOR", 0, argc, argv);
+}
+
+
 static int wpa_cli_cmd_pktcnt_poll(struct wpa_ctrl *ctrl, int argc,
 				   char *argv[])
 {
@@ -3388,6 +3401,9 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "signal_poll", wpa_cli_cmd_signal_poll, NULL,
 	  cli_cmd_flag_none,
 	  "= get signal parameters" },
+	{ "signal_monitor", wpa_cli_cmd_signal_monitor, NULL,
+	  cli_cmd_flag_none,
+	  "= set signal monitor parameters" },
 	{ "pktcnt_poll", wpa_cli_cmd_pktcnt_poll, NULL,
 	  cli_cmd_flag_none,
 	  "= get TX/RX packet counters" },
