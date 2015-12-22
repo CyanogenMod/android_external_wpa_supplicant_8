@@ -70,8 +70,8 @@ struct eap_peap_data {
 };
 
 
-static int eap_peap_parse_phase1(struct eap_peap_data *data,
-				 const char *phase1)
+static void eap_peap_parse_phase1(struct eap_peap_data *data,
+				  const char *phase1)
 {
 	const char *pos;
 
@@ -126,8 +126,6 @@ static int eap_peap_parse_phase1(struct eap_peap_data *data,
 		wpa_printf(MSG_DEBUG, "EAP-PEAP: SoH version 2 enabled");
 	}
 #endif /* EAP_TNC */
-
-	return 0;
 }
 
 
@@ -145,11 +143,8 @@ static void * eap_peap_init(struct eap_sm *sm)
 	data->peap_outer_success = 2;
 	data->crypto_binding = OPTIONAL_BINDING;
 
-	if (config && config->phase1 &&
-	    eap_peap_parse_phase1(data, config->phase1) < 0) {
-		eap_peap_deinit(sm, data);
-		return NULL;
-	}
+	if (config && config->phase1)
+		eap_peap_parse_phase1(data, config->phase1);
 
 	if (eap_peer_select_phase2_methods(config, "auth=",
 					   &data->phase2_types,
@@ -339,7 +334,8 @@ static int eap_tlv_add_cryptobinding(struct eap_sm *sm,
 		    addr[0], len[0]);
 	wpa_hexdump(MSG_MSGDUMP, "EAP-PEAP: Compound_MAC data 2",
 		    addr[1], len[1]);
-	hmac_sha1_vector(data->cmk, 20, 2, addr, len, mac);
+	if (hmac_sha1_vector(data->cmk, 20, 2, addr, len, mac) < 0)
+		return -1;
 	wpa_hexdump(MSG_MSGDUMP, "EAP-PEAP: Compound_MAC", mac, SHA1_MAC_LEN);
 	data->crypto_binding_used = 1;
 
@@ -650,6 +646,7 @@ static int eap_peap_phase2_request(struct eap_sm *sm,
 					if (*resp == NULL) {
 						ret->methodState = METHOD_DONE;
 						ret->decision = DECISION_FAIL;
+						wpabuf_free(buf);
 						return -1;
 					}
 					wpabuf_put_buf(*resp, buf);

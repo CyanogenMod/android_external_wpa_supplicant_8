@@ -1602,6 +1602,13 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 
 	wpa_s->own_disconnect_req = 0;
 
+	/*
+	 * If we are starting a new connection, any previously pending EAPOL
+	 * RX cannot be valid anymore.
+	 */
+	wpabuf_free(wpa_s->pending_eapol_rx);
+	wpa_s->pending_eapol_rx = NULL;
+
 	if (ssid->mac_addr == -1)
 		rand_style = wpa_s->conf->mac_addr;
 	else
@@ -4749,6 +4756,10 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 	wpas_rrm_reset(wpa_s);
 
 	wpas_sched_scan_plans_set(wpa_s, wpa_s->conf->sched_scan_plans);
+
+#ifdef CONFIG_HS20
+	hs20_init(wpa_s);
+#endif /* CONFIG_HS20 */
 
 	return 0;
 }
