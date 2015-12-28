@@ -1518,6 +1518,10 @@ static int _wpa_supplicant_event_scan_results(struct wpa_supplicant *wpa_s,
 
 	wpas_wps_update_ap_info(wpa_s, scan_res);
 
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING &&
+	    wpa_s->wpa_state < WPA_COMPLETED)
+		goto scan_work_done;
+
 	wpa_scan_results_free(scan_res);
 
 	if (own_request && wpa_s->scan_work) {
@@ -1568,6 +1572,13 @@ static int wpas_select_network_from_last_scan(struct wpa_supplicant *wpa_s,
 			if (new_scan)
 				wpa_supplicant_rsn_preauth_scan_results(wpa_s);
 			return 0;
+		}
+
+		if (ssid != wpa_s->current_ssid &&
+		    wpa_s->wpa_state >= WPA_AUTHENTICATING) {
+			wpa_s->own_disconnect_req = 1;
+			wpa_supplicant_deauthenticate(
+				wpa_s, WLAN_REASON_DEAUTH_LEAVING);
 		}
 
 		if (wpa_supplicant_connect(wpa_s, selected, ssid) < 0) {
