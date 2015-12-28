@@ -6,6 +6,17 @@ ifndef CFLAGS
 CFLAGS = -MMD -O2 -Wall -g
 endif
 
+ifdef LIBS
+# If LIBS is set with some global build system defaults, clone those for
+# LIBS_c and LIBS_p to cover wpa_passphrase and wpa_cli as well.
+ifndef LIBS_c
+LIBS_c := $(LIBS)
+endif
+ifndef LIBS_p
+LIBS_p := $(LIBS)
+endif
+endif
+
 export LIBDIR ?= /usr/local/lib/
 export INCDIR ?= /usr/local/include/
 export BINDIR ?= /usr/local/sbin/
@@ -882,6 +893,12 @@ endif
 ifdef CONFIG_PEERKEY
 OBJS += ../src/ap/peerkey_auth.o
 endif
+endif
+
+ifdef CONFIG_ACS
+CFLAGS += -DCONFIG_ACS
+OBJS += ../src/ap/acs.o
+LIBS += -lm
 endif
 
 ifdef CONFIG_PCSC

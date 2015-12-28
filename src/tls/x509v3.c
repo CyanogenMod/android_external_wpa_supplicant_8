@@ -1339,6 +1339,7 @@ static int x509_parse_tbs_certificate(const u8 *buf, size_t len,
 	size_t left;
 	char sbuf[128];
 	unsigned long value;
+	const u8 *subject_dn;
 
 	/* tbsCertificate TBSCertificate ::= SEQUENCE */
 	if (asn1_get_next(buf, len, &hdr) < 0 ||
@@ -1436,7 +1437,6 @@ static int x509_parse_tbs_certificate(const u8 *buf, size_t len,
 		return -1;
 
 	/* subject Name */
-	const u8 *subject_dn;
 	subject_dn = pos;
 	if (x509_parse_name(pos, end - pos, &cert->subject, &pos))
 		return -1;
@@ -2038,6 +2038,7 @@ int x509_certificate_chain_validate(struct x509_certificate *trusted,
 	os_get_time(&now);
 
 	for (cert = chain, idx = 0; cert; cert = cert->next, idx++) {
+		cert->issuer_trusted = 0;
 		x509_name_string(&cert->subject, buf, sizeof(buf)); 
 		wpa_printf(MSG_DEBUG, "X509: %lu: %s", idx, buf);
 
@@ -2123,6 +2124,7 @@ int x509_certificate_chain_validate(struct x509_certificate *trusted,
 
 			wpa_printf(MSG_DEBUG, "X509: Trusted certificate "
 				   "found to complete the chain");
+			cert->issuer_trusted = 1;
 			chain_trusted = 1;
 		}
 	}

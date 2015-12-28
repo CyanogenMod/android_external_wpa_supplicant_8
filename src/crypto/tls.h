@@ -96,6 +96,7 @@ struct tls_config {
 #define TLS_CONN_EAP_FAST BIT(7)
 #define TLS_CONN_DISABLE_TLSv1_0 BIT(8)
 #define TLS_CONN_EXT_CERT_CHECK BIT(9)
+#define TLS_CONN_REQUIRE_OCSP_ALL BIT(10)
 
 /**
  * struct tls_connection_params - Parameters for TLS connection
@@ -140,6 +141,9 @@ struct tls_config {
  * @flags: Parameter options (TLS_CONN_*)
  * @ocsp_stapling_response: DER encoded file with cached OCSP stapling response
  *	or %NULL if OCSP is not enabled
+ * @ocsp_stapling_response_multi: DER encoded file with cached OCSP stapling
+ *	response list (OCSPResponseList for ocsp_multi in RFC 6961) or %NULL if
+ *	ocsp_multi is not enabled
  *
  * TLS connection parameters to be configured with tls_connection_set_params()
  * and tls_global_set_params().
@@ -180,6 +184,7 @@ struct tls_connection_params {
 
 	unsigned int flags;
 	const char *ocsp_stapling_response;
+	const char *ocsp_stapling_response_multi;
 };
 
 

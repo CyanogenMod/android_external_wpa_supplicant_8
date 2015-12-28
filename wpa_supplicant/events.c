@@ -3942,6 +3942,22 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 				     data->mesh_peer.ie_len);
 #endif /* CONFIG_MESH */
 		break;
+	case EVENT_SURVEY:
+#ifdef CONFIG_AP
+		if (!wpa_s->ap_iface)
+			break;
+		hostapd_event_get_survey(wpa_s->ap_iface,
+					 &data->survey_results);
+#endif /* CONFIG_AP */
+		break;
+	case EVENT_ACS_CHANNEL_SELECTED:
+#ifdef CONFIG_ACS
+		if (!wpa_s->ap_iface)
+			break;
+		hostapd_acs_channel_selected(wpa_s->ap_iface->bss[0],
+					     &data->acs_selected_channels);
+#endif /* CONFIG_ACS */
+		break;
 	default:
 		wpa_msg(wpa_s, MSG_INFO, "Unknown event %d", event);
 		break;
