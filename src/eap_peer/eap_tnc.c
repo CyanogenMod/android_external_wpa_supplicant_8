@@ -10,6 +10,7 @@
 
 #include "common.h"
 #include "eap_i.h"
+#include "eap_config.h"
 #include "tncc.h"
 
 
@@ -35,12 +36,16 @@ struct eap_tnc_data {
 static void * eap_tnc_init(struct eap_sm *sm)
 {
 	struct eap_tnc_data *data;
+	struct eap_peer_config *config = eap_get_config(sm);
 
 	data = os_zalloc(sizeof(*data));
 	if (data == NULL)
 		return NULL;
 	data->state = WAIT_START;
-	data->fragment_size = 1300;
+	if (config && config->fragment_size)
+		data->fragment_size = config->fragment_size;
+	else
+		data->fragment_size = 1300;
 	data->tncc = tncc_init();
 	if (data->tncc == NULL) {
 		os_free(data);
@@ -344,11 +349,6 @@ static struct wpabuf * eap_tnc_process(struct eap_sm *sm, void *priv,
 	ret->methodState = METHOD_MAY_CONT;
 	ret->decision = DECISION_UNCOND_SUCC;
 	ret->allowNotifications = TRUE;
-
-	if (data->out_buf) {
-		data->state = PROC_MSG;
-		return eap_tnc_build_msg(data, ret, id);
-	}
 
 	if (tncs_done) {
 		resp = eap_msg_alloc(EAP_VENDOR_IETF, EAP_TYPE_TNC, 1,
