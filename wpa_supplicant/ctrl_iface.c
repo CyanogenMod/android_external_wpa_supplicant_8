@@ -371,6 +371,20 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 		wps_corrupt_pkhash = atoi(value);
 		wpa_printf(MSG_DEBUG, "WPS: Testing - wps_corrupt_pkhash=%d",
 			   wps_corrupt_pkhash);
+	} else if (os_strcasecmp(cmd, "wps_force_auth_types") == 0) {
+		if (value[0] == '\0') {
+			wps_force_auth_types_in_use = 0;
+		} else {
+			wps_force_auth_types = strtol(value, NULL, 0);
+			wps_force_auth_types_in_use = 1;
+		}
+	} else if (os_strcasecmp(cmd, "wps_force_encr_types") == 0) {
+		if (value[0] == '\0') {
+			wps_force_encr_types_in_use = 0;
+		} else {
+			wps_force_encr_types = strtol(value, NULL, 0);
+			wps_force_encr_types_in_use = 1;
+		}
 #endif /* CONFIG_WPS_TESTING */
 	} else if (os_strcasecmp(cmd, "ampdu") == 0) {
 		if (wpa_drv_ampdu(wpa_s, atoi(value)) < 0)
@@ -4911,6 +4925,8 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	int freq = 0;
 	int pd;
 	int ht40, vht, max_oper_chwidth, chwidth = 0, freq2 = 0;
+	u8 _group_ssid[SSID_MAX_LEN], *group_ssid = NULL;
+	size_t group_ssid_len = 0;
 
 	if (!wpa_s->global->p2p_init_wpa_s)
 		return -1;
@@ -4923,7 +4939,7 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	/* <addr> <"pbc" | "pin" | PIN> [label|display|keypad|p2ps]
 	 * [persistent|persistent=<network id>]
 	 * [join] [auth] [go_intent=<0..15>] [freq=<in MHz>] [provdisc]
-	 * [ht40] [vht] [auto] */
+	 * [ht40] [vht] [auto] [ssid=<hexdump>] */
 
 	if (hwaddr_aton(cmd, addr))
 		return -1;
@@ -4983,6 +4999,22 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	if (max_oper_chwidth < 0)
 		return -1;
 
+	pos2 = os_strstr(pos, " ssid=");
+	if (pos2) {
+		char *end;
+
+		pos2 += 6;
+		end = os_strchr(pos2, ' ');
+		if (!end)
+			group_ssid_len = os_strlen(pos2) / 2;
+		else
+			group_ssid_len = (end - pos2) / 2;
+		if (group_ssid_len == 0 || group_ssid_len > SSID_MAX_LEN ||
+		    hexstr2bin(pos2, _group_ssid, group_ssid_len) < 0)
+			return -1;
+		group_ssid = _group_ssid;
+	}
+
 	if (os_strncmp(pos, "pin", 3) == 0) {
 		/* Request random PIN (to be displayed) and enable the PIN */
 		wps_method = WPS_PIN_DISPLAY;
@@ -5008,7 +5040,8 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	new_pin = wpas_p2p_connect(wpa_s, addr, pin, wps_method,
 				   persistent_group, automatic, join,
 				   auth, go_intent, freq, freq2, persistent_id,
-				   pd, ht40, vht, max_oper_chwidth);
+				   pd, ht40, vht, max_oper_chwidth,
+				   group_ssid, group_ssid_len);
 	if (new_pin == -2) {
 		os_memcpy(buf, "FAIL-CHANNEL-UNAVAILABLE\n", 25);
 		return 25;
@@ -6940,10 +6973,18 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 
 	wpas_abort_ongoing_scan(wpa_s);
 
+	if (wpa_s->wpa_state >= WPA_AUTHENTICATING) {
+		/*
+		 * Avoid possible auto connect re-connection on getting
+		 * disconnected due to state flush.
+		 */
+		wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
+	}
+
 #ifdef CONFIG_P2P
+	wpas_p2p_group_remove(p2p_wpa_s, "*");
 	wpas_p2p_cancel(p2p_wpa_s);
 	p2p_ctrl_flush(p2p_wpa_s);
-	wpas_p2p_group_remove(p2p_wpa_s, "*");
 	wpas_p2p_service_flush(p2p_wpa_s);
 	p2p_wpa_s->global->p2p_disabled = 0;
 	p2p_wpa_s->global->p2p_per_sta_psk = 0;
@@ -6960,6 +7001,8 @@ static void wpa_supplicant_ctrl_iface_flush(struct wpa_supplicant *wpa_s)
 	wps_version_number = 0x20;
 	wps_testing_dummy_cred = 0;
 	wps_corrupt_pkhash = 0;
+	wps_force_auth_types_in_use = 0;
+	wps_force_encr_types_in_use = 0;
 #endif /* CONFIG_WPS_TESTING */
 #ifdef CONFIG_WPS
 	wpa_s->wps_fragment_size = 0;
