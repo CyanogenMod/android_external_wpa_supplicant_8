@@ -1737,7 +1737,7 @@ static void send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 #endif /* CONFIG_WPS */
 
 #ifdef CONFIG_P2P
-	if (sta->p2p_ie) {
+	if (sta->p2p_ie && hapd->p2p_group) {
 		struct wpabuf *p2p_resp_ie;
 		enum p2p_status_code status;
 		switch (status_code) {
@@ -2010,7 +2010,7 @@ static void handle_disassoc(struct hostapd_data *hapd,
 	/* Stop Accounting and IEEE 802.1X sessions, but leave the STA
 	 * authenticated. */
 	accounting_sta_stop(hapd, sta);
-	ieee802_1x_free_station(sta);
+	ieee802_1x_free_station(hapd, sta);
 	if (sta->ipaddr)
 		hostapd_drv_br_delete_ip_neigh(hapd, 4, (u8 *) &sta->ipaddr);
 	ap_sta_ip6addr_del(hapd, sta);

@@ -1,6 +1,6 @@
 /*
  * Wi-Fi Protected Setup - Registrar
- * Copyright (c) 2008-2013, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2008-2016, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -1606,6 +1606,9 @@ int wps_build_cred(struct wps_data *wps, struct wpabuf *msg)
 	wps->cred.ssid_len = wps->wps->ssid_len;
 
 	/* Select the best authentication and encryption type */
+	wpa_printf(MSG_DEBUG,
+		   "WPS: Own auth types 0x%x - masked Enrollee auth types 0x%x",
+		   wps->wps->auth_types, wps->auth_type);
 	if (wps->auth_type & WPS_AUTH_WPA2PSK)
 		wps->auth_type = WPS_AUTH_WPA2PSK;
 	else if (wps->auth_type & WPS_AUTH_WPAPSK)
@@ -1619,6 +1622,14 @@ int wps_build_cred(struct wps_data *wps, struct wpabuf *msg)
 	}
 	wps->cred.auth_type = wps->auth_type;
 
+	wpa_printf(MSG_DEBUG,
+		   "WPS: Own encr types 0x%x (rsn: 0x%x, wpa: 0x%x) - masked Enrollee encr types 0x%x",
+		   wps->wps->encr_types, wps->wps->encr_types_rsn,
+		   wps->wps->encr_types_wpa, wps->encr_type);
+	if (wps->wps->ap && wps->auth_type == WPS_AUTH_WPA2PSK)
+		wps->encr_type &= wps->wps->encr_types_rsn;
+	else if (wps->wps->ap && wps->auth_type == WPS_AUTH_WPAPSK)
+		wps->encr_type &= wps->wps->encr_types_wpa;
 	if (wps->auth_type == WPS_AUTH_WPA2PSK ||
 	    wps->auth_type == WPS_AUTH_WPAPSK) {
 		if (wps->encr_type & WPS_ENCR_AES)
@@ -2343,6 +2354,23 @@ static int wps_process_auth_type_flags(struct wps_data *wps, const u8 *auth)
 
 	wpa_printf(MSG_DEBUG, "WPS: Enrollee Authentication Type flags 0x%x",
 		   auth_types);
+#ifdef WPS_WORKAROUNDS
+	/*
+	 * Some deployed implementations seem to advertise incorrect information
+	 * in this attribute. A value of 0x1b (WPA2 + WPA + WPAPSK + OPEN, but
+	 * no WPA2PSK) has been reported to be used. Add WPA2PSK to the list to
+	 * avoid issues with building Credentials that do not use the strongest
+	 * actually supported authentication option (that device does support
+	 * WPA2PSK even when it does not claim it here).
+	 */
+	if ((auth_types &
+	     (WPS_AUTH_WPA2 | WPS_AUTH_WPA2PSK | WPS_AUTH_WPAPSK)) ==
+	    (WPS_AUTH_WPA2 | WPS_AUTH_WPAPSK)) {
+		wpa_printf(MSG_DEBUG,
+			   "WPS: Workaround - assume Enrollee supports WPA2PSK based on claimed WPA2 support");
+		auth_types |= WPS_AUTH_WPA2PSK;
+	}
+#endif /* WPS_WORKAROUNDS */
 	wps->auth_type = wps->wps->auth_types & auth_types;
 	if (wps->auth_type == 0) {
 		wpa_printf(MSG_DEBUG, "WPS: No match in supported "
