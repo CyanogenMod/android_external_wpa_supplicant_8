@@ -31,6 +31,50 @@
 #include "sha384.h"
 #include "crypto.h"
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
+/* Compatibility wrappers for older versions. */
+
+static int EVP_CIPHER_CTX_reset(EVP_CIPHER_CTX *ctx)
+{
+	return EVP_CIPHER_CTX_cleanup(ctx);
+}
+
+
+static HMAC_CTX * HMAC_CTX_new(void)
+{
+	HMAC_CTX *ctx;
+
+	ctx = os_zalloc(sizeof(*ctx));
+	if (ctx)
+		HMAC_CTX_init(ctx);
+	return ctx;
+}
+
+
+static void HMAC_CTX_free(HMAC_CTX *ctx)
+{
+	bin_clear_free(ctx, sizeof(*ctx));
+}
+
+
+static EVP_MD_CTX * EVP_MD_CTX_new(void)
+{
+	EVP_MD_CTX *ctx;
+
+	ctx = os_zalloc(sizeof(*ctx));
+	if (ctx)
+		EVP_MD_CTX_init(ctx);
+	return ctx;
+}
+
+
+static void EVP_MD_CTX_free(EVP_MD_CTX *ctx)
+{
+	bin_clear_free(ctx, sizeof(*ctx));
+}
+
+#endif /* OpenSSL version < 1.1.0 */
+
 static BIGNUM * get_group5_prime(void)
 {
 #ifdef OPENSSL_IS_BORINGSSL
@@ -65,7 +109,6 @@ static BIGNUM * get_group5_prime(void)
 static int openssl_digest_vector(const EVP_MD *type, size_t num_elem,
 				 const u8 *addr[], const size_t *len, u8 *mac)
 {
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	EVP_MD_CTX *ctx;
 	size_t i;
 	unsigned int mac_len;
@@ -100,36 +143,6 @@ static int openssl_digest_vector(const EVP_MD *type, size_t num_elem,
 	EVP_MD_CTX_free(ctx);
 
 	return 0;
-#else
-	EVP_MD_CTX ctx;
-	size_t i;
-	unsigned int mac_len;
-
-	if (TEST_FAIL())
-		return -1;
-
-	EVP_MD_CTX_init(&ctx);
-	if (!EVP_DigestInit_ex(&ctx, type, NULL)) {
-		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DigestInit_ex failed: %s",
-			   ERR_error_string(ERR_get_error(), NULL));
-		return -1;
-	}
-	for (i = 0; i < num_elem; i++) {
-		if (!EVP_DigestUpdate(&ctx, addr[i], len[i])) {
-			wpa_printf(MSG_ERROR, "OpenSSL: EVP_DigestUpdate "
-				   "failed: %s",
-				   ERR_error_string(ERR_get_error(), NULL));
-			return -1;
-		}
-	}
-	if (!EVP_DigestFinal(&ctx, mac, &mac_len)) {
-		wpa_printf(MSG_ERROR, "OpenSSL: EVP_DigestFinal failed: %s",
-			   ERR_error_string(ERR_get_error(), NULL));
-		return -1;
-	}
-
-	return 0;
-#endif
 }
 
 
@@ -169,32 +182,34 @@ int rc4_skip(const u8 *key, size_t keylen, size_t skip,
 #ifdef OPENSSL_NO_RC4
 	return -1;
 #else /* OPENSSL_NO_RC4 */
-	EVP_CIPHER_CTX ctx;
+	EVP_CIPHER_CTX *ctx;
 	int outl;
 	int res = -1;
 	unsigned char skip_buf[16];
 
-	EVP_CIPHER_CTX_init(&ctx);
-	if (!EVP_CIPHER_CTX_set_padding(&ctx, 0) ||
-	    !EVP_CipherInit_ex(&ctx, EVP_rc4(), NULL, NULL, NULL, 1) ||
-	    !EVP_CIPHER_CTX_set_key_length(&ctx, keylen) ||
-	    !EVP_CipherInit_ex(&ctx, NULL, NULL, key, NULL, 1))
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx ||
+	    !EVP_CIPHER_CTX_set_padding(ctx, 0) ||
+	    !EVP_CipherInit_ex(ctx, EVP_rc4(), NULL, NULL, NULL, 1) ||
+	    !EVP_CIPHER_CTX_set_key_length(ctx, keylen) ||
+	    !EVP_CipherInit_ex(ctx, NULL, NULL, key, NULL, 1))
 		goto out;
 
 	while (skip >= sizeof(skip_buf)) {
 		size_t len = skip;
 		if (len > sizeof(skip_buf))
 			len = sizeof(skip_buf);
-		if (!EVP_CipherUpdate(&ctx, skip_buf, &outl, skip_buf, len))
+		if (!EVP_CipherUpdate(ctx, skip_buf, &outl, skip_buf, len))
 			goto out;
 		skip -= len;
 	}
 
-	if (EVP_CipherUpdate(&ctx, data, &outl, data, data_len))
+	if (EVP_CipherUpdate(ctx, data, &outl, data, data_len))
 		res = 0;
 
 out:
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	if (ctx)
+		EVP_CIPHER_CTX_reset(ctx);
 	return res;
 #endif /* OPENSSL_NO_RC4 */
 }
@@ -246,14 +261,16 @@ void * aes_encrypt_init(const u8 *key, size_t len)
 	EVP_CIPHER_CTX *ctx;
 	const EVP_CIPHER *type;
 
+	if (TEST_FAIL())
+		return NULL;
+
 	type = aes_get_evp_cipher(len);
 	if (type == NULL)
 		return NULL;
 
-	ctx = os_malloc(sizeof(*ctx));
+	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL)
 		return NULL;
-	EVP_CIPHER_CTX_init(ctx);
 	if (EVP_EncryptInit_ex(ctx, type, NULL, key, NULL) != 1) {
 		os_free(ctx);
 		return NULL;
@@ -287,8 +304,8 @@ void aes_encrypt_deinit(void *ctx)
 		wpa_printf(MSG_ERROR, "OpenSSL: Unexpected padding length %d "
 			   "in AES encrypt", len);
 	}
-	EVP_CIPHER_CTX_cleanup(c);
-	bin_clear_free(c, sizeof(*c));
+	EVP_CIPHER_CTX_reset(c);
+	EVP_CIPHER_CTX_free(c);
 }
 
 
@@ -297,16 +314,18 @@ void * aes_decrypt_init(const u8 *key, size_t len)
 	EVP_CIPHER_CTX *ctx;
 	const EVP_CIPHER *type;
 
+	if (TEST_FAIL())
+		return NULL;
+
 	type = aes_get_evp_cipher(len);
 	if (type == NULL)
 		return NULL;
 
-	ctx = os_malloc(sizeof(*ctx));
+	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL)
 		return NULL;
-	EVP_CIPHER_CTX_init(ctx);
 	if (EVP_DecryptInit_ex(ctx, type, NULL, key, NULL) != 1) {
-		os_free(ctx);
+		EVP_CIPHER_CTX_free(ctx);
 		return NULL;
 	}
 	EVP_CIPHER_CTX_set_padding(ctx, 0);
@@ -338,8 +357,8 @@ void aes_decrypt_deinit(void *ctx)
 		wpa_printf(MSG_ERROR, "OpenSSL: Unexpected padding length %d "
 			   "in AES decrypt", len);
 	}
-	EVP_CIPHER_CTX_cleanup(c);
-	bin_clear_free(c, sizeof(*c));
+	EVP_CIPHER_CTX_reset(c);
+	EVP_CIPHER_CTX_free(c);
 }
 
 
@@ -378,57 +397,56 @@ int aes_unwrap(const u8 *kek, size_t kek_len, int n, const u8 *cipher,
 
 int aes_128_cbc_encrypt(const u8 *key, const u8 *iv, u8 *data, size_t data_len)
 {
-	EVP_CIPHER_CTX ctx;
+	EVP_CIPHER_CTX *ctx;
 	int clen, len;
 	u8 buf[16];
+	int res = -1;
 
 	if (TEST_FAIL())
 		return -1;
 
-	EVP_CIPHER_CTX_init(&ctx);
-	if (EVP_EncryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key, iv) != 1)
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
 		return -1;
-	EVP_CIPHER_CTX_set_padding(&ctx, 0);
-
 	clen = data_len;
-	if (EVP_EncryptUpdate(&ctx, data, &clen, data, data_len) != 1 ||
-	    clen != (int) data_len)
-		return -1;
-
 	len = sizeof(buf);
-	if (EVP_EncryptFinal_ex(&ctx, buf, &len) != 1 || len != 0)
-		return -1;
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) == 1 &&
+	    EVP_CIPHER_CTX_set_padding(ctx, 0) == 1 &&
+	    EVP_EncryptUpdate(ctx, data, &clen, data, data_len) == 1 &&
+	    clen == (int) data_len &&
+	    EVP_EncryptFinal_ex(ctx, buf, &len) == 1 && len == 0)
+		res = 0;
+	EVP_CIPHER_CTX_reset(ctx);
 
-	return 0;
+	return res;
 }
 
 
 int aes_128_cbc_decrypt(const u8 *key, const u8 *iv, u8 *data, size_t data_len)
 {
-	EVP_CIPHER_CTX ctx;
+	EVP_CIPHER_CTX *ctx;
 	int plen, len;
 	u8 buf[16];
+	int res = -1;
 
 	if (TEST_FAIL())
 		return -1;
 
-	EVP_CIPHER_CTX_init(&ctx);
-	if (EVP_DecryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key, iv) != 1)
+	ctx = EVP_CIPHER_CTX_new();
+	if (!ctx)
 		return -1;
-	EVP_CIPHER_CTX_set_padding(&ctx, 0);
-
 	plen = data_len;
-	if (EVP_DecryptUpdate(&ctx, data, &plen, data, data_len) != 1 ||
-	    plen != (int) data_len)
-		return -1;
-
 	len = sizeof(buf);
-	if (EVP_DecryptFinal_ex(&ctx, buf, &len) != 1 || len != 0)
-		return -1;
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) == 1 &&
+	    EVP_CIPHER_CTX_set_padding(ctx, 0) == 1 &&
+	    EVP_DecryptUpdate(ctx, data, &plen, data, data_len) == 1 &&
+	    plen == (int) data_len &&
+	    EVP_DecryptFinal_ex(ctx, buf, &len) == 1 && len == 0)
+		res = 0;
+	EVP_CIPHER_CTX_reset(ctx);
 
-	return 0;
+	return res;
+
 }
 
 
@@ -471,8 +489,8 @@ error:
 
 
 struct crypto_cipher {
-	EVP_CIPHER_CTX enc;
-	EVP_CIPHER_CTX dec;
+	EVP_CIPHER_CTX *enc;
+	EVP_CIPHER_CTX *dec;
 };
 
 
@@ -533,23 +551,25 @@ struct crypto_cipher * crypto_cipher_init(enum crypto_cipher_alg alg,
 		return NULL;
 	}
 
-	EVP_CIPHER_CTX_init(&ctx->enc);
-	EVP_CIPHER_CTX_set_padding(&ctx->enc, 0);
-	if (!EVP_EncryptInit_ex(&ctx->enc, cipher, NULL, NULL, NULL) ||
-	    !EVP_CIPHER_CTX_set_key_length(&ctx->enc, key_len) ||
-	    !EVP_EncryptInit_ex(&ctx->enc, NULL, NULL, key, iv)) {
-		EVP_CIPHER_CTX_cleanup(&ctx->enc);
+	if (!(ctx->enc = EVP_CIPHER_CTX_new()) ||
+	    !EVP_CIPHER_CTX_set_padding(ctx->enc, 0) ||
+	    !EVP_EncryptInit_ex(ctx->enc, cipher, NULL, NULL, NULL) ||
+	    !EVP_CIPHER_CTX_set_key_length(ctx->enc, key_len) ||
+	    !EVP_EncryptInit_ex(ctx->enc, NULL, NULL, key, iv)) {
+		if (ctx->enc)
+			EVP_CIPHER_CTX_reset(ctx->enc);
 		os_free(ctx);
 		return NULL;
 	}
 
-	EVP_CIPHER_CTX_init(&ctx->dec);
-	EVP_CIPHER_CTX_set_padding(&ctx->dec, 0);
-	if (!EVP_DecryptInit_ex(&ctx->dec, cipher, NULL, NULL, NULL) ||
-	    !EVP_CIPHER_CTX_set_key_length(&ctx->dec, key_len) ||
-	    !EVP_DecryptInit_ex(&ctx->dec, NULL, NULL, key, iv)) {
-		EVP_CIPHER_CTX_cleanup(&ctx->enc);
-		EVP_CIPHER_CTX_cleanup(&ctx->dec);
+	if (!(ctx->dec = EVP_CIPHER_CTX_new()) ||
+	    !EVP_CIPHER_CTX_set_padding(ctx->dec, 0) ||
+	    !EVP_DecryptInit_ex(ctx->dec, cipher, NULL, NULL, NULL) ||
+	    !EVP_CIPHER_CTX_set_key_length(ctx->dec, key_len) ||
+	    !EVP_DecryptInit_ex(ctx->dec, NULL, NULL, key, iv)) {
+		EVP_CIPHER_CTX_reset(ctx->enc);
+		if (ctx->dec)
+			EVP_CIPHER_CTX_reset(ctx->dec);
 		os_free(ctx);
 		return NULL;
 	}
@@ -562,7 +582,7 @@ int crypto_cipher_encrypt(struct crypto_cipher *ctx, const u8 *plain,
 			  u8 *crypt, size_t len)
 {
 	int outl;
-	if (!EVP_EncryptUpdate(&ctx->enc, crypt, &outl, plain, len))
+	if (!EVP_EncryptUpdate(ctx->enc, crypt, &outl, plain, len))
 		return -1;
 	return 0;
 }
@@ -573,7 +593,7 @@ int crypto_cipher_decrypt(struct crypto_cipher *ctx, const u8 *crypt,
 {
 	int outl;
 	outl = len;
-	if (!EVP_DecryptUpdate(&ctx->dec, plain, &outl, crypt, len))
+	if (!EVP_DecryptUpdate(ctx->dec, plain, &outl, crypt, len))
 		return -1;
 	return 0;
 }
@@ -581,8 +601,8 @@ int crypto_cipher_decrypt(struct crypto_cipher *ctx, const u8 *crypt,
 
 void crypto_cipher_deinit(struct crypto_cipher *ctx)
 {
-	EVP_CIPHER_CTX_cleanup(&ctx->enc);
-	EVP_CIPHER_CTX_cleanup(&ctx->dec);
+	EVP_CIPHER_CTX_reset(ctx->enc);
+	EVP_CIPHER_CTX_reset(ctx->dec);
 	os_free(ctx);
 }
 
@@ -718,11 +738,7 @@ void dh5_free(void *ctx)
 
 
 struct crypto_hash {
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	HMAC_CTX *ctx;
-#else
-	HMAC_CTX ctx;
-#endif
 };
 
 
@@ -757,7 +773,6 @@ struct crypto_hash * crypto_hash_init(enum crypto_hash_alg alg, const u8 *key,
 	ctx = os_zalloc(sizeof(*ctx));
 	if (ctx == NULL)
 		return NULL;
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	ctx->ctx = HMAC_CTX_new();
 	if (!ctx->ctx) {
 		os_free(ctx);
@@ -769,14 +784,6 @@ struct crypto_hash * crypto_hash_init(enum crypto_hash_alg alg, const u8 *key,
 		bin_clear_free(ctx, sizeof(*ctx));
 		return NULL;
 	}
-#else
-	HMAC_CTX_init(&ctx->ctx);
-
-	if (HMAC_Init_ex(&ctx->ctx, key, key_len, md, NULL) != 1) {
-		bin_clear_free(ctx, sizeof(*ctx));
-		return NULL;
-	}
-#endif
 
 	return ctx;
 }
@@ -786,11 +793,7 @@ void crypto_hash_update(struct crypto_hash *ctx, const u8 *data, size_t len)
 {
 	if (ctx == NULL)
 		return;
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	HMAC_Update(ctx->ctx, data, len);
-#else
-	HMAC_Update(&ctx->ctx, data, len);
-#endif
 }
 
 
@@ -803,21 +806,14 @@ int crypto_hash_finish(struct crypto_hash *ctx, u8 *mac, size_t *len)
 		return -2;
 
 	if (mac == NULL || len == NULL) {
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 		HMAC_CTX_free(ctx->ctx);
-#endif
 		bin_clear_free(ctx, sizeof(*ctx));
 		return 0;
 	}
 
 	mdlen = *len;
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	res = HMAC_Final(ctx->ctx, mac, &mdlen);
 	HMAC_CTX_free(ctx->ctx);
-#else
-	res = HMAC_Final(&ctx->ctx, mac, &mdlen);
-	HMAC_CTX_cleanup(&ctx->ctx);
-#endif
 	bin_clear_free(ctx, sizeof(*ctx));
 
 	if (res == 1) {
@@ -834,7 +830,6 @@ static int openssl_hmac_vector(const EVP_MD *type, const u8 *key,
 			       const u8 *addr[], const size_t *len, u8 *mac,
 			       unsigned int mdlen)
 {
-#if OPENSSL_VERSION_NUMBER >= 0x10100000L
 	HMAC_CTX *ctx;
 	size_t i;
 	int res;
@@ -857,26 +852,6 @@ done:
 	HMAC_CTX_free(ctx);
 
 	return res == 1 ? 0 : -1;
-#else
-	HMAC_CTX ctx;
-	size_t i;
-	int res;
-
-	if (TEST_FAIL())
-		return -1;
-
-	HMAC_CTX_init(&ctx);
-	if (HMAC_Init_ex(&ctx, key, key_len, type, NULL) != 1)
-		return -1;
-
-	for (i = 0; i < num_elem; i++)
-		HMAC_Update(&ctx, addr[i], len[i]);
-
-	res = HMAC_Final(&ctx, mac, &mdlen);
-	HMAC_CTX_cleanup(&ctx);
-
-	return res == 1 ? 0 : -1;
-#endif
 }
 
 

@@ -2634,6 +2634,7 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	}
 
 	hostapd_prune_associations(hapd, sta->addr);
+	ap_sta_clear_disconnect_timeouts(hapd, sta);
 
 	/* IEEE 802.11F (IAPP) */
 	if (hapd->conf->ieee802_11f)
@@ -2667,9 +2668,10 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 		wpa_auth_sta_associated(hapd->wpa_auth, sta->wpa_sm);
 
 	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_INACTIVITY_TIMER)) {
-		wpa_printf(MSG_DEBUG, "%s: reschedule ap_handle_timer timeout "
-			   "for " MACSTR " (%d seconds - ap_max_inactivity)",
-			   __func__, MAC2STR(sta->addr),
+		wpa_printf(MSG_DEBUG,
+			   "%s: %s: reschedule ap_handle_timer timeout for "
+			   MACSTR " (%d seconds - ap_max_inactivity)",
+			   hapd->conf->iface, __func__, MAC2STR(sta->addr),
 			   hapd->conf->ap_max_inactivity);
 		eloop_cancel_timeout(ap_handle_timer, hapd, sta);
 		eloop_register_timeout(hapd->conf->ap_max_inactivity, 0,
