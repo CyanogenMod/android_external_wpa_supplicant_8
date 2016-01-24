@@ -754,6 +754,8 @@ grp_owner:
 
 		if (!s && !owner && p2p_no_group_iface) {
 			p2p_set_intended_addr(wpa_s->global->p2p,
+					      wpa_s->p2p_mgmt ?
+					      wpa_s->parent->own_addr :
 					      wpa_s->own_addr);
 		} else if (!s && !owner) {
 			if (wpas_p2p_add_group_interface(wpa_s,
@@ -899,6 +901,12 @@ static int wpas_p2p_group_delete(struct wpa_supplicant *wpa_s,
 		os_free(ifname);
 		return 1;
 	}
+
+	/*
+	 * The primary interface was used for P2P group operations, so
+	 * need to reset its p2pdev.
+	 */
+	wpa_s->p2pdev = wpa_s->parent;
 
 	if (!wpa_s->p2p_go_group_formation_completed) {
 		wpa_s->global->p2p_group_formation = NULL;
@@ -1886,6 +1894,23 @@ static void wpas_p2p_clone_config(struct wpa_supplicant *dst,
 }
 
 
+static void wpas_p2p_clone_config_dh(struct wpa_supplicant *dst,
+				     const struct wpa_supplicant *src)
+{
+	struct wpa_config *d;
+	const struct wpa_config *s;
+
+	d = dst->conf;
+	s = src->conf;
+
+	if (s->wps_nfc_dh_privkey && s->wps_nfc_dh_pubkey &&
+	    !d->wps_nfc_dh_privkey && !d->wps_nfc_dh_pubkey) {
+		d->wps_nfc_dh_privkey = wpabuf_dup(s->wps_nfc_dh_privkey);
+		d->wps_nfc_dh_pubkey = wpabuf_dup(s->wps_nfc_dh_pubkey);
+	}
+}
+
+
 static void wpas_p2p_get_group_ifname(struct wpa_supplicant *wpa_s,
 				      char *ifname, size_t len)
 {
@@ -2069,6 +2094,7 @@ void wpas_p2p_ap_setup_failed(struct wpa_supplicant *wpa_s)
 static void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res)
 {
 	struct wpa_supplicant *wpa_s = ctx;
+	struct wpa_supplicant *group_wpa_s;
 
 	if (wpa_s->off_channel_freq || wpa_s->roc_waiting_drv_freq) {
 		wpa_drv_cancel_remain_on_channel(wpa_s);
@@ -2121,7 +2147,7 @@ static void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res)
 	}
 
 	if (wpa_s->create_p2p_iface) {
-		struct wpa_supplicant *group_wpa_s =
+		group_wpa_s =
 			wpas_p2p_init_group_interface(wpa_s, res->role_go);
 		if (group_wpa_s == NULL) {
 			wpas_p2p_remove_pending_group_interface(wpa_s);
@@ -2130,31 +2156,27 @@ static void wpas_go_neg_completed(void *ctx, struct p2p_go_neg_results *res)
 			wpas_p2p_group_formation_failed(wpa_s, 1);
 			return;
 		}
-		if (group_wpa_s != wpa_s) {
-			os_memcpy(group_wpa_s->p2p_pin, wpa_s->p2p_pin,
-				  sizeof(group_wpa_s->p2p_pin));
-			group_wpa_s->p2p_wps_method = wpa_s->p2p_wps_method;
-		}
 		os_memset(wpa_s->pending_interface_addr, 0, ETH_ALEN);
 		wpa_s->pending_interface_name[0] = '\0';
-		group_wpa_s->p2p_in_provisioning = 1;
-
-		if (res->role_go) {
-			wpas_start_wps_go(group_wpa_s, res, 1);
-		} else {
-			os_get_reltime(&group_wpa_s->scan_min_time);
-			wpas_start_wps_enrollee(group_wpa_s, res);
-		}
 	} else {
-		wpa_s->p2p_in_provisioning = 1;
-		wpa_s->global->p2p_group_formation = wpa_s;
+		group_wpa_s = wpa_s->parent;
+		wpa_s->global->p2p_group_formation = group_wpa_s;
+		if (group_wpa_s != wpa_s)
+			wpas_p2p_clone_config_dh(group_wpa_s, wpa_s);
+	}
 
-		if (res->role_go) {
-			wpas_start_wps_go(wpa_s, res, 1);
-		} else {
-			os_get_reltime(&wpa_s->scan_min_time);
-			wpas_start_wps_enrollee(ctx, res);
-		}
+	group_wpa_s->p2p_in_provisioning = 1;
+	group_wpa_s->p2pdev = wpa_s;
+	if (group_wpa_s != wpa_s) {
+		os_memcpy(group_wpa_s->p2p_pin, wpa_s->p2p_pin,
+			  sizeof(group_wpa_s->p2p_pin));
+		group_wpa_s->p2p_wps_method = wpa_s->p2p_wps_method;
+	}
+	if (res->role_go) {
+		wpas_start_wps_go(group_wpa_s, res, 1);
+	} else {
+		os_get_reltime(&group_wpa_s->scan_min_time);
+		wpas_start_wps_enrollee(group_wpa_s, res);
 	}
 
 	wpa_s->p2p_long_listen = 0;
@@ -2728,7 +2750,11 @@ static u8 wpas_invitation_process(void *ctx, const u8 *sa, const u8 *bssid,
 				   "invitation");
 			return P2P_SC_FAIL_UNABLE_TO_ACCOMMODATE;
 		}
-		os_memcpy(group_bssid, wpa_s->own_addr, ETH_ALEN);
+		if (wpa_s->p2p_mgmt)
+			os_memcpy(group_bssid, wpa_s->parent->own_addr,
+				  ETH_ALEN);
+		else
+			os_memcpy(group_bssid, wpa_s->own_addr, ETH_ALEN);
 	} else if (s->mode == WPAS_MODE_P2P_GO) {
 		*go = 1;
 		if (wpas_p2p_add_group_interface(wpa_s, WPA_IF_P2P_GO) < 0)
@@ -3579,6 +3605,7 @@ int wpas_p2p_add_p2pdev_interface(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+	p2pdev_wpa_s->p2pdev = p2pdev_wpa_s;
 	wpa_s->pending_interface_name[0] = '\0';
 	return 0;
 }
@@ -4256,8 +4283,7 @@ static void wpas_p2p_deinit_global(struct wpa_global *global)
 
 static int wpas_p2p_create_iface(struct wpa_supplicant *wpa_s)
 {
-	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
-	    wpa_s->conf->p2p_no_group_iface)
+	if (wpa_s->conf->p2p_no_group_iface)
 		return 0; /* separate interface disabled per configuration */
 	if (wpa_s->drv_flags &
 	    (WPA_DRIVER_FLAGS_P2P_DEDICATED_INTERFACE |
@@ -5114,8 +5140,12 @@ int wpas_p2p_connect(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 		}
 
 		if_addr = wpa_s->pending_interface_addr;
-	} else
-		if_addr = wpa_s->own_addr;
+	} else {
+		if (wpa_s->p2p_mgmt)
+			if_addr = wpa_s->parent->own_addr;
+		else
+			if_addr = wpa_s->own_addr;
+	}
 
 	if (auth) {
 		if (wpas_p2p_auth_go_neg(wpa_s, peer_addr, wps_method,
@@ -5568,9 +5598,20 @@ wpas_p2p_get_group_iface(struct wpa_supplicant *wpa_s, int addr_allocated,
 	struct wpa_supplicant *group_wpa_s;
 
 	if (!wpas_p2p_create_iface(wpa_s)) {
-		wpa_dbg(wpa_s, MSG_DEBUG, "P2P: Use same interface for group "
-			"operations");
+		if (wpa_s->p2p_mgmt) {
+			/*
+			 * We may be called on the p2p_dev interface which
+			 * cannot be used for group operations, so always use
+			 * the primary interface.
+			 */
+			wpa_s->parent->p2pdev = wpa_s;
+			wpa_s = wpa_s->parent;
+		}
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"P2P: Use primary interface for group operations");
 		wpa_s->p2p_first_connection_timeout = 0;
+		if (wpa_s != wpa_s->p2pdev)
+			wpas_p2p_clone_config_dh(wpa_s, wpa_s->p2pdev);
 		return wpa_s;
 	}
 
@@ -6359,7 +6400,9 @@ int wpas_p2p_invite(struct wpa_supplicant *wpa_s, const u8 *peer_addr,
 				return -1;
 			}
 			bssid = wpa_s->pending_interface_addr;
-		} else
+		} else if (wpa_s->p2p_mgmt)
+			bssid = wpa_s->parent->own_addr;
+		else
 			bssid = wpa_s->own_addr;
 	} else {
 		role = P2P_INVITE_ROLE_CLIENT;
@@ -8273,7 +8316,9 @@ int wpas_p2p_nfc_tag_enabled(struct wpa_supplicant *wpa_s, int enabled)
 		}
 
 		if_addr = wpa_s->pending_interface_addr;
-	} else
+	} else if (wpa_s->p2p_mgmt)
+		if_addr = wpa_s->parent->own_addr;
+	else
 		if_addr = wpa_s->own_addr;
 
 	wpa_s->p2p_nfc_tag_enabled = enabled;
