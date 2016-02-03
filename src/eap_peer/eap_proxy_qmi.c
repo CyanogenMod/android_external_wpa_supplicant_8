@@ -1431,25 +1431,30 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 	}
 	wpa_printf(MSG_ERROR, "eap_proxy: User selected sim = %d\n", sim_num + 1);
 
-	for (idx = 0; m[idx].vendor != EAP_VENDOR_IETF ||
-			 m[idx].method != EAP_TYPE_NONE; idx++) {
-		if (m[idx].method == EAP_TYPE_AKA) {
-			akaEnabled = TRUE;
-			eap_auth_start.eap_method_mask_valid = 1;
-			eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_AKA_V01;
-			wpa_printf(MSG_ERROR, "eap_proxy: AKA Enabled\n");
-		} else if (m[idx].method == EAP_TYPE_SIM) {
-			simEnabled = TRUE;
-			eap_auth_start.eap_method_mask_valid = 1;
-			eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_SIM_V01;
-			wpa_printf(MSG_ERROR, "eap_proxy: SIM Enabled\n");
+	if (m != NULL) {
+		for (idx = 0; m[idx].vendor != EAP_VENDOR_IETF ||
+				m[idx].method != EAP_TYPE_NONE; idx++) {
+			if (m[idx].method == EAP_TYPE_AKA) {
+				akaEnabled = TRUE;
+				eap_auth_start.eap_method_mask_valid = 1;
+				eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_AKA_V01;
+				wpa_printf(MSG_ERROR, "eap_proxy: AKA Enabled\n");
+			} else if (m[idx].method == EAP_TYPE_SIM) {
+				simEnabled = TRUE;
+				eap_auth_start.eap_method_mask_valid = 1;
+				eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_SIM_V01;
+				wpa_printf(MSG_ERROR, "eap_proxy: SIM Enabled\n");
 #ifdef CONFIG_EAP_PROXY_AKA_PRIME
-		} else if (m[idx].method == EAP_TYPE_AKA_PRIME) {
-			eap_auth_start.eap_method_mask_valid = 1;
-			eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_AKA_PRIME_V01;
-			wpa_printf(MSG_ERROR, "eap_proxy: AKA Prime Enabled\n");
+			} else if (m[idx].method == EAP_TYPE_AKA_PRIME) {
+				eap_auth_start.eap_method_mask_valid = 1;
+				eap_auth_start.eap_method_mask |= QMI_AUTH_EAP_METHOD_MASK_AKA_PRIME_V01;
+				wpa_printf(MSG_ERROR, "eap_proxy: AKA Prime Enabled\n");
 #endif /* CONFIG_EAP_PROXY_AKA_PRIME */
+			}
 		}
+	} else {
+		wpa_printf(MSG_ERROR, "eap_proxy: eap_methods is NULL!\n");
+		return FALSE;
 	}
 
 	eap_auth_start.eap_method_mask_valid = 1;
