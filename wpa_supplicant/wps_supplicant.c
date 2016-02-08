@@ -1137,6 +1137,10 @@ int wpas_wps_start_pbc(struct wpa_supplicant *wpa_s, const u8 *bssid,
 			ssid->ssid_len = wpa_s->go_params->ssid_len;
 			os_memcpy(ssid->ssid, wpa_s->go_params->ssid,
 				  ssid->ssid_len);
+			if (wpa_s->go_params->freq > 56160) {
+				/* P2P in 60 GHz uses PBSS */
+				ssid->pbss = 1;
+			}
 			wpa_hexdump_ascii(MSG_DEBUG, "WPS: Use specific AP "
 					  "SSID", ssid->ssid, ssid->ssid_len);
 		}
@@ -1204,6 +1208,10 @@ static int wpas_wps_start_dev_pw(struct wpa_supplicant *wpa_s,
 			ssid->ssid_len = wpa_s->go_params->ssid_len;
 			os_memcpy(ssid->ssid, wpa_s->go_params->ssid,
 				  ssid->ssid_len);
+			if (wpa_s->go_params->freq > 56160) {
+				/* P2P in 60 GHz uses PBSS */
+				ssid->pbss = 1;
+			}
 			wpa_hexdump_ascii(MSG_DEBUG, "WPS: Use specific AP "
 					  "SSID", ssid->ssid, ssid->ssid_len);
 		}
