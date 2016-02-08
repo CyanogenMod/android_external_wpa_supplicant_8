@@ -138,7 +138,7 @@ struct hostapd_data {
 	void *msg_ctx_parent; /* parent interface ctx for wpa_msg() calls */
 
 	struct radius_client_data *radius;
-	u32 acct_session_id_hi, acct_session_id_lo;
+	u64 acct_session_id;
 	struct radius_das_data *radius_das;
 
 	struct iapp_data *iapp;
@@ -258,7 +258,8 @@ struct hostapd_data {
 #ifdef CONFIG_MESH
 	int num_plinks;
 	int max_plinks;
-	void (*mesh_sta_free_cb)(struct sta_info *sta);
+	void (*mesh_sta_free_cb)(struct hostapd_data *hapd,
+				 struct sta_info *sta);
 	struct wpabuf *mesh_pending_auth;
 	struct os_reltime mesh_pending_auth_time;
 #endif /* CONFIG_MESH */
