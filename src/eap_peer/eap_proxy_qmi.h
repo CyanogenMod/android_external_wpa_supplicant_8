@@ -113,6 +113,7 @@ struct eap_proxy_sm {
    int eap_type;
    int user_selected_sim;
    int eap_auth_session_flag[MAX_NO_OF_SIM_SUPPORTED];
+   pthread_t thread_id;
 };
 
 int eap_proxy_allowed_method(struct eap_peer_config *config, int vendor,

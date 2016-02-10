@@ -48,6 +48,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/system_properties.h>
 #endif
 #endif
+#include <pthread.h>
 
 #define IMSI_LENGTH 15
 #define WPA_UIM_QMI_EVENT_MASK_CARD_STATUS        \
@@ -550,18 +551,22 @@ static int eap_modem_compatible(struct dev_info *mdm_detect_info)
 }
 #endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
+static void exit_proxy_init(int signum)
+{
+       pthread_exit(NULL);
+}
 
-static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
+static void eap_proxy_post_init(struct eap_proxy_sm *eap_proxy)
 {
 	int qmiErrorCode;
 	int qmiRetCode;
-	struct eap_proxy_sm *eap_proxy = eloop_ctx;
 	qmi_idl_service_object_type qmi_client_service_obj[MAX_NO_OF_SIM_SUPPORTED];
 	int index;
 	static Boolean flag = FALSE;
+	struct sigaction    actions;
+	int ret = 0;
 #ifdef CONFIG_EAP_PROXY_MDM_DETECT
 	struct dev_info mdm_detect_info;
-	int ret = 0;
 
 	/* Call ESOC API to get the number of modems.
 	 * If the number of modems is not zero, only then proceed
@@ -572,6 +577,7 @@ static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
 		wpa_printf(MSG_ERROR, "eap_proxy: Failed to get system info, ret %d", ret);
 
 	if (mdm_detect_info.num_modems == 0) {
+		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: No Modem support for this target"
 			   " number of modems is %d", mdm_detect_info.num_modems);
 		return NULL;
@@ -579,11 +585,18 @@ static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
 	wpa_printf(MSG_DEBUG, "eap_proxy: num_modems = %d", mdm_detect_info.num_modems);
 
 	if(eap_modem_compatible(&mdm_detect_info) == FALSE) {
+		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: build does not support EAP-SIM feature");
 		return NULL;
 	}
 #endif /* CONFIG_EAP_PROXY_MDM_DETECT */
 
+        sigemptyset(&actions.sa_mask);
+        actions.sa_flags = 0;
+        actions.sa_handler = exit_proxy_init;
+        ret = sigaction(SIGUSR1,&actions,NULL);
+	if(ret < 0)
+		wpa_printf(MSG_DEBUG, "sigaction\n");
 	eap_proxy->proxy_state = EAP_PROXY_INITIALIZE;
 	eap_proxy->qmi_state = QMI_STATE_IDLE;
 	eap_proxy->key = NULL;
@@ -661,9 +674,8 @@ static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
 	}
 
 	if ( flag == FALSE ) {
+		eap_proxy->proxy_state = EAP_PROXY_DISABLED;
 		wpa_printf(MSG_ERROR, "eap_proxy: flag = %d proxy init failed\n", flag);
-		os_free(eap_proxy);
-		eap_proxy = NULL;
 		return NULL;
 	}
 
@@ -677,6 +689,7 @@ static void eap_proxy_post_init(void *eloop_ctx, void *timeout_ctx)
 	wpa_printf (MSG_DEBUG,
 		"eap_proxy: %s: eap_proxy_init_counter %d\n", __func__, eap_proxy_init_counter);
 	wpa_printf (MSG_ERROR, "eap_proxy: Eap_proxy initialized successfully\n");
+	return NULL;
 
 }
 
@@ -723,6 +736,8 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
 	int qmiRetCode;
 	struct eap_proxy_sm *eap_proxy;
 	qmi_idl_service_object_type    qmi_client_service_obj;
+        pthread_attr_t attr;
+        int ret = -1;
 
 	eap_proxy =  os_malloc(sizeof(struct eap_proxy_sm));
 	if (NULL == eap_proxy) {
@@ -747,7 +762,12 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
 	* in order to avoid the case of daemonize enabled, which exits the
 	* parent process that created the qmi client context.
 	*/
-	eloop_register_timeout(0, 0, eap_proxy_post_init, eap_proxy, NULL);
+
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	ret = pthread_create(&eap_proxy->thread_id, &attr, eap_proxy_post_init, eap_proxy);
+	if(ret < 0)
+	       wpa_printf(MSG_ERROR, "eap_proxy: starting thread is failed %d\n", ret);
 
 	return eap_proxy;
 }
@@ -762,6 +782,7 @@ void eap_proxy_deinit(struct eap_proxy_sm *eap_proxy)
 	if (NULL == eap_proxy)
 		return;
 
+	pthread_kill(eap_proxy->thread_id, SIGUSR1);
 	eap_proxy_init_counter--;
 	wpa_printf (MSG_DEBUG,
 		"eap_proxy: %s: eap_proxy_init_counter %d\n", __func__, eap_proxy_init_counter);
@@ -1918,6 +1939,11 @@ int eap_proxy_get_imsi(struct eap_proxy_sm *eap_proxy, char *imsi_buf,
 	int mnc_len;
 	int sim_num = eap_proxy->user_selected_sim;
 
+	if ((eap_proxy->proxy_state == EAP_PROXY_DISABLED) ||
+	    (eap_proxy->proxy_state == EAP_PROXY_INITIALIZE)) {
+		wpa_printf(MSG_ERROR, "eap_proxy:%s: Not initialized\n", __func__);
+		return FALSE;
+	}
 	if (!wpa_qmi_read_card_status(sim_num)) {
 	wpa_printf(MSG_INFO, "eap_proxy: Card not ready");
 		return -1;
@@ -1952,7 +1978,13 @@ int eap_proxy_notify_config(struct eap_proxy_sm *eap_proxy,
 	wpa_printf(MSG_ERROR, "eap_proxy: eap_proxy_notify_config\n");
 	if (!eap_proxy) {
 		wpa_printf(MSG_ERROR, "eap_proxy: is NULL");
-		return -1;
+		return FALSE;
+	}
+
+	if ((eap_proxy->proxy_state == EAP_PROXY_DISABLED) ||
+	    (eap_proxy->proxy_state == EAP_PROXY_INITIALIZE)) {
+		wpa_printf(MSG_ERROR, "eap_proxy: Not initialized\n");
+		return FALSE;
 	}
 
 	if ( config && eap_proxy_allowed_method(config, EAP_VENDOR_IETF,
