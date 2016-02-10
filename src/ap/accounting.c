@@ -41,6 +41,7 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 	size_t len;
 	int i;
 	struct wpabuf *b;
+	struct os_time now;
 
 	msg = radius_msg_new(RADIUS_CODE_ACCOUNTING_REQUEST,
 			     radius_client_get_id(hapd->radius));
@@ -49,25 +50,9 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		return NULL;
 	}
 
-	if (sta) {
-		radius_msg_make_authenticator(msg, (u8 *) sta, sizeof(*sta));
-
-		if ((hapd->conf->wpa & 2) &&
-		    !hapd->conf->disable_pmksa_caching &&
-		    sta->eapol_sm && sta->eapol_sm->acct_multi_session_id_hi) {
-			os_snprintf(buf, sizeof(buf), "%08X+%08X",
-				    sta->eapol_sm->acct_multi_session_id_hi,
-				    sta->eapol_sm->acct_multi_session_id_lo);
-			if (!radius_msg_add_attr(
-				    msg, RADIUS_ATTR_ACCT_MULTI_SESSION_ID,
-				    (u8 *) buf, os_strlen(buf))) {
-				wpa_printf(MSG_INFO,
-					   "Could not add Acct-Multi-Session-Id");
-				goto fail;
-			}
-		}
-	} else {
-		radius_msg_make_authenticator(msg, (u8 *) hapd, sizeof(*hapd));
+	if (radius_msg_make_authenticator(msg) < 0) {
+		wpa_printf(MSG_INFO, "Could not make Request Authenticator");
+		goto fail;
 	}
 
 	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_STATUS_TYPE,
@@ -76,17 +61,18 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		goto fail;
 	}
 
-	if (!hostapd_config_get_radius_attr(hapd->conf->radius_acct_req_attr,
-					    RADIUS_ATTR_ACCT_AUTHENTIC) &&
-	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_AUTHENTIC,
-				       hapd->conf->ieee802_1x ?
-				       RADIUS_ACCT_AUTHENTIC_RADIUS :
-				       RADIUS_ACCT_AUTHENTIC_LOCAL)) {
-		wpa_printf(MSG_INFO, "Could not add Acct-Authentic");
-		goto fail;
-	}
-
 	if (sta) {
+		if (!hostapd_config_get_radius_attr(
+			    hapd->conf->radius_acct_req_attr,
+			    RADIUS_ATTR_ACCT_AUTHENTIC) &&
+		    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_AUTHENTIC,
+					       hapd->conf->ieee802_1x ?
+					       RADIUS_ACCT_AUTHENTIC_RADIUS :
+					       RADIUS_ACCT_AUTHENTIC_LOCAL)) {
+			wpa_printf(MSG_INFO, "Could not add Acct-Authentic");
+			goto fail;
+		}
+
 		/* Use 802.1X identity if available */
 		val = ieee802_1x_get_identity(sta->eapol_sm, &len);
 
@@ -158,6 +144,14 @@ static struct radius_msg * accounting_msg(struct hostapd_data *hapd,
 		}
 	}
 
+	os_get_time(&now);
+	if (now.sec > 1000000000 &&
+	    !radius_msg_add_attr_int32(msg, RADIUS_ATTR_EVENT_TIMESTAMP,
+				       now.sec)) {
+		wpa_printf(MSG_INFO, "Could not add Event-Timestamp");
+		goto fail;
+	}
+
 	return msg;
 
  fail:
@@ -226,8 +220,8 @@ void accounting_sta_start(struct hostapd_data *hapd, struct sta_info *sta)
 
 	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
 		       HOSTAPD_LEVEL_INFO,
-		       "starting accounting session %08X-%08X",
-		       sta->acct_session_id_hi, sta->acct_session_id_lo);
+		       "starting accounting session %016lX",
+		       (long unsigned int) sta->acct_session_id);
 
 	os_get_reltime(&sta->acct_session_start);
 	sta->last_rx_bytes = sta->last_tx_bytes = 0;
@@ -260,7 +254,6 @@ static void accounting_sta_report(struct hostapd_data *hapd,
 	int cause = sta->acct_terminate_cause;
 	struct hostap_sta_driver_data data;
 	struct os_reltime now_r, diff;
-	struct os_time now;
 	u32 gigawords;
 
 	if (!hapd->conf->radius->acct_server)
@@ -275,7 +268,6 @@ static void accounting_sta_report(struct hostapd_data *hapd,
 	}
 
 	os_get_reltime(&now_r);
-	os_get_time(&now);
 	os_reltime_sub(&now_r, &sta->acct_session_start, &diff);
 	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_SESSION_TIME,
 				       diff.sec)) {
@@ -332,12 +324,6 @@ static void accounting_sta_report(struct hostapd_data *hapd,
 		}
 	}
 
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_EVENT_TIMESTAMP,
-				       now.sec)) {
-		wpa_printf(MSG_INFO, "Could not add Event-Timestamp");
-		goto fail;
-	}
-
 	if (eloop_terminated())
 		cause = RADIUS_ACCT_TERMINATE_CAUSE_ADMIN_REBOOT;
 
@@ -384,22 +370,17 @@ void accounting_sta_stop(struct hostapd_data *hapd, struct sta_info *sta)
 		eloop_cancel_timeout(accounting_interim_update, hapd, sta);
 		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
 			       HOSTAPD_LEVEL_INFO,
-			       "stopped accounting session %08X-%08X",
-			       sta->acct_session_id_hi,
-			       sta->acct_session_id_lo);
+			       "stopped accounting session %016lX",
+			       (long unsigned int) sta->acct_session_id);
 		sta->acct_session_started = 0;
 	}
 }
 
 
-void accounting_sta_get_id(struct hostapd_data *hapd,
-				  struct sta_info *sta)
+int accounting_sta_get_id(struct hostapd_data *hapd, struct sta_info *sta)
 {
-	sta->acct_session_id_lo = hapd->acct_session_id_lo++;
-	if (hapd->acct_session_id_lo == 0) {
-		hapd->acct_session_id_hi++;
-	}
-	sta->acct_session_id_hi = hapd->acct_session_id_hi;
+	return radius_gen_session_id((u8 *) &sta->acct_session_id,
+				     sizeof(sta->acct_session_id));
 }
 
 
@@ -446,12 +427,14 @@ static void accounting_report_state(struct hostapd_data *hapd, int on)
 	if (!msg)
 		return;
 
-	if (!radius_msg_add_attr_int32(msg, RADIUS_ATTR_ACCT_TERMINATE_CAUSE,
-				       RADIUS_ACCT_TERMINATE_CAUSE_NAS_REBOOT))
-	{
-		wpa_printf(MSG_INFO, "Could not add Acct-Terminate-Cause");
-		radius_msg_free(msg);
-		return;
+	if (hapd->acct_session_id) {
+		char buf[20];
+
+		os_snprintf(buf, sizeof(buf), "%016lX",
+			    (long unsigned int) hapd->acct_session_id);
+		if (!radius_msg_add_attr(msg, RADIUS_ATTR_ACCT_SESSION_ID,
+					 (u8 *) buf, os_strlen(buf)))
+			wpa_printf(MSG_ERROR, "Could not add Acct-Session-Id");
 	}
 
 	if (radius_client_send(hapd->radius, msg, RADIUS_ACCT, NULL) < 0)
@@ -466,16 +449,9 @@ static void accounting_report_state(struct hostapd_data *hapd, int on)
  */
 int accounting_init(struct hostapd_data *hapd)
 {
-	struct os_time now;
-
-	/* Acct-Session-Id should be unique over reboots. Using a random number
-	 * is preferred. If that is not available, take the current time. Mix
-	 * in microseconds to make this more likely to be unique. */
-	os_get_time(&now);
-	if (os_get_random((u8 *) &hapd->acct_session_id_hi,
-			  sizeof(hapd->acct_session_id_hi)) < 0)
-		hapd->acct_session_id_hi = now.sec;
-	hapd->acct_session_id_hi ^= now.usec;
+	if (radius_gen_session_id((u8 *) &hapd->acct_session_id,
+				  sizeof(hapd->acct_session_id)) < 0)
+		return -1;
 
 	if (radius_client_register(hapd->radius, RADIUS_ACCT,
 				   accounting_receive, hapd))

@@ -238,7 +238,7 @@ void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta)
 
 #ifdef CONFIG_MESH
 	if (hapd->mesh_sta_free_cb)
-		hapd->mesh_sta_free_cb(sta);
+		hapd->mesh_sta_free_cb(hapd, sta);
 #endif /* CONFIG_MESH */
 
 	if (set_beacon)
@@ -625,7 +625,10 @@ struct sta_info * ap_sta_add(struct hostapd_data *hapd, const u8 *addr)
 		return NULL;
 	}
 	sta->acct_interim_interval = hapd->conf->acct_interim_interval;
-	accounting_sta_get_id(hapd, sta);
+	if (accounting_sta_get_id(hapd, sta) < 0) {
+		os_free(sta);
+		return NULL;
+	}
 
 	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_INACTIVITY_TIMER)) {
 		wpa_printf(MSG_DEBUG, "%s: register ap_handle_timer timeout "

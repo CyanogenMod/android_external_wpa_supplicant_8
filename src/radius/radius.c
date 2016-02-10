@@ -893,25 +893,11 @@ int radius_msg_copy_attr(struct radius_msg *dst, struct radius_msg *src,
 
 /* Create Request Authenticator. The value should be unique over the lifetime
  * of the shared secret between authenticator and authentication server.
- * Use one-way MD5 hash calculated from current timestamp and some data given
- * by the caller. */
-void radius_msg_make_authenticator(struct radius_msg *msg,
-				   const u8 *data, size_t len)
+ */
+int radius_msg_make_authenticator(struct radius_msg *msg)
 {
-	struct os_time tv;
-	long int l;
-	const u8 *addr[3];
-	size_t elen[3];
-
-	os_get_time(&tv);
-	l = os_random();
-	addr[0] = (u8 *) &tv;
-	elen[0] = sizeof(tv);
-	addr[1] = data;
-	elen[1] = len;
-	addr[2] = (u8 *) &l;
-	elen[2] = sizeof(l);
-	md5_vector(3, addr, elen, msg->hdr->authenticator);
+	return os_get_random((u8 *) &msg->hdr->authenticator,
+			     sizeof(msg->hdr->authenticator));
 }
 
 
@@ -1211,7 +1197,9 @@ int radius_msg_add_mppe_keys(struct radius_msg *msg,
 	vhdr = (struct radius_attr_vendor *) pos;
 	vhdr->vendor_type = RADIUS_VENDOR_ATTR_MS_MPPE_SEND_KEY;
 	pos = (u8 *) (vhdr + 1);
-	salt = os_random() | 0x8000;
+	if (os_get_random((u8 *) &salt, sizeof(salt)) < 0)
+		return 0;
+	salt |= 0x8000;
 	WPA_PUT_BE16(pos, salt);
 	pos += 2;
 	encrypt_ms_key(send_key, send_key_len, salt, req_authenticator, secret,
@@ -1669,4 +1657,15 @@ u8 radius_msg_find_unlisted_attr(struct radius_msg *msg, u8 *attrs)
 	}
 
 	return 0;
+}
+
+
+int radius_gen_session_id(u8 *id, size_t len)
+{
+	/*
+	 * Acct-Session-Id and Acct-Multi-Session-Id should be globally and
+	 * temporarily unique. A high quality random number is required
+	 * therefore. This could be be improved by switching to a GUID.
+	 */
+	return os_get_random(id, len);
 }

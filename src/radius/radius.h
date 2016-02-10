@@ -251,8 +251,7 @@ int radius_msg_verify_msg_auth(struct radius_msg *msg, const u8 *secret,
 			       size_t secret_len, const u8 *req_auth);
 int radius_msg_copy_attr(struct radius_msg *dst, struct radius_msg *src,
 			 u8 type);
-void radius_msg_make_authenticator(struct radius_msg *msg,
-				   const u8 *data, size_t len);
+int radius_msg_make_authenticator(struct radius_msg *msg);
 struct radius_ms_mppe_keys *
 radius_msg_get_ms_keys(struct radius_msg *msg, struct radius_msg *sent_msg,
 		       const u8 *secret, size_t secret_len);
@@ -319,5 +318,7 @@ int radius_copy_class(struct radius_class_data *dst,
 		      const struct radius_class_data *src);
 
 u8 radius_msg_find_unlisted_attr(struct radius_msg *msg, u8 *attrs);
+
+int radius_gen_session_id(u8 *id, size_t len);
 
 #endif /* RADIUS_H */

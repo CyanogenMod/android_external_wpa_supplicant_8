@@ -438,12 +438,27 @@ static int add_common_radius_sta_attr(struct hostapd_data *hapd,
 		return -1;
 	}
 
-	if (sta->acct_session_id_hi || sta->acct_session_id_lo) {
-		os_snprintf(buf, sizeof(buf), "%08X-%08X",
-			    sta->acct_session_id_hi, sta->acct_session_id_lo);
+	if (sta->acct_session_id) {
+		os_snprintf(buf, sizeof(buf), "%016lX",
+			    (long unsigned int) sta->acct_session_id);
 		if (!radius_msg_add_attr(msg, RADIUS_ATTR_ACCT_SESSION_ID,
 					 (u8 *) buf, os_strlen(buf))) {
 			wpa_printf(MSG_ERROR, "Could not add Acct-Session-Id");
+			return -1;
+		}
+	}
+
+	if ((hapd->conf->wpa & 2) &&
+	    !hapd->conf->disable_pmksa_caching &&
+	    sta->eapol_sm && sta->eapol_sm->acct_multi_session_id) {
+		os_snprintf(buf, sizeof(buf), "%016lX",
+			    (long unsigned int)
+			    sta->eapol_sm->acct_multi_session_id);
+		if (!radius_msg_add_attr(
+			    msg, RADIUS_ATTR_ACCT_MULTI_SESSION_ID,
+			    (u8 *) buf, os_strlen(buf))) {
+			wpa_printf(MSG_INFO,
+				   "Could not add Acct-Multi-Session-Id");
 			return -1;
 		}
 	}
@@ -587,7 +602,10 @@ static void ieee802_1x_encapsulate_radius(struct hostapd_data *hapd,
 		return;
 	}
 
-	radius_msg_make_authenticator(msg, (u8 *) sta, sizeof(*sta));
+	if (radius_msg_make_authenticator(msg) < 0) {
+		wpa_printf(MSG_INFO, "Could not make Request Authenticator");
+		goto fail;
+	}
 
 	if (sm->identity &&
 	    !radius_msg_add_attr(msg, RADIUS_ATTR_USER_NAME,
@@ -1165,10 +1183,8 @@ void ieee802_1x_free_station(struct hostapd_data *hapd, struct sta_info *sta)
 #ifndef CONFIG_NO_RADIUS
 	radius_msg_free(sm->last_recv_radius);
 	radius_free_class(&sm->radius_class);
-	wpabuf_free(sm->radius_cui);
 #endif /* CONFIG_NO_RADIUS */
 
-	os_free(sm->identity);
 	eapol_auth_free(sm);
 }
 
@@ -2495,12 +2511,12 @@ int ieee802_1x_get_mib_sta(struct hostapd_data *hapd, struct sta_info *sta,
 			  /* TODO: dot1xAuthSessionOctetsTx */
 			  /* TODO: dot1xAuthSessionFramesRx */
 			  /* TODO: dot1xAuthSessionFramesTx */
-			  "dot1xAuthSessionId=%08X-%08X\n"
+			  "dot1xAuthSessionId=%016lX\n"
 			  "dot1xAuthSessionAuthenticMethod=%d\n"
 			  "dot1xAuthSessionTime=%u\n"
 			  "dot1xAuthSessionTerminateCause=999\n"
 			  "dot1xAuthSessionUserName=%s\n",
-			  sta->acct_session_id_hi, sta->acct_session_id_lo,
+			  (long unsigned int) sta->acct_session_id,
 			  (wpa_key_mgmt_wpa_ieee8021x(
 				   wpa_auth_sta_key_mgmt(sta->wpa_sm))) ?
 			  1 : 2,
@@ -2510,11 +2526,11 @@ int ieee802_1x_get_mib_sta(struct hostapd_data *hapd, struct sta_info *sta,
 		return len;
 	len += ret;
 
-	if (sm->acct_multi_session_id_hi) {
+	if (sm->acct_multi_session_id) {
 		ret = os_snprintf(buf + len, buflen - len,
-				  "authMultiSessionId=%08X+%08X\n",
-				  sm->acct_multi_session_id_hi,
-				  sm->acct_multi_session_id_lo);
+				  "authMultiSessionId=%016lX\n",
+				  (long unsigned int)
+				  sm->acct_multi_session_id);
 		if (os_snprintf_error(buflen - len, ret))
 			return len;
 		len += ret;
