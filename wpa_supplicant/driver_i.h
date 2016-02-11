@@ -893,4 +893,11 @@ static inline int wpa_drv_setband(struct wpa_supplicant *wpa_s,
 	return wpa_s->driver->set_band(wpa_s->drv_priv, band);
 }
 
+static inline int wpa_drv_abort_scan(struct wpa_supplicant *wpa_s)
+{
+	if (!wpa_s->driver->abort_scan)
+		return -1;
+	return wpa_s->driver->abort_scan(wpa_s->drv_priv);
+}
+
 #endif /* DRIVER_I_H */
