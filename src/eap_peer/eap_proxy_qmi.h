@@ -35,6 +35,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "eap_config.h"
 #include "eloop.h"
 #include "eapol_supp/eapol_supp_sm.h"
+#include "user_identity_module_v01.h"
 
 /*msec Response Timeout*/
 #define QMI_RESP_TIME_OUT 2000
@@ -94,6 +95,20 @@ typedef union
 
 }qmi_eap_sync_rsp_data_type;
 
+typedef struct {
+  uim_card_state_enum_v01                      card_state;
+  uim_card_error_code_enum_v01                 card_error_code;
+  u8                                           app_state;
+  u8                                           app_type;
+} wpa_uim_card_info_type;
+
+typedef struct {
+  int                                   card_ready_idx;
+  wpa_uim_card_info_type                card_info[QMI_UIM_CARDS_MAX_V01];
+  qmi_client_type                       qmi_uim_svc_client_ptr;
+  int                                   qmi_msg_lib_handle;
+} wpa_uim_struct_type;
+
 
 struct eap_proxy_sm {
    qmi_client_type qmi_auth_svc_client_ptr[MAX_NO_OF_SIM_SUPPORTED];
@@ -114,6 +129,8 @@ struct eap_proxy_sm {
    int user_selected_sim;
    int eap_auth_session_flag[MAX_NO_OF_SIM_SUPPORTED];
    pthread_t thread_id;
+   wpa_uim_struct_type   wpa_uim[MAX_NO_OF_SIM_SUPPORTED];
+   Boolean qmi_uim_svc_client_initialized[MAX_NO_OF_SIM_SUPPORTED];
 };
 
 int eap_proxy_allowed_method(struct eap_peer_config *config, int vendor,
