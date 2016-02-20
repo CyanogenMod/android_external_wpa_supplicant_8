@@ -3896,7 +3896,7 @@ static int wpas_set_wowlan_triggers(struct wpa_supplicant *wpa_s,
 }
 
 
-static enum wpa_radio_work_band wpas_freq_to_band(int freq)
+enum wpa_radio_work_band wpas_freq_to_band(int freq)
 {
 	if (freq < 3000)
 		return BAND_2_4_GHZ;
@@ -3906,8 +3906,7 @@ static enum wpa_radio_work_band wpas_freq_to_band(int freq)
 }
 
 
-static unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s,
-				   const int *freqs)
+unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s, const int *freqs)
 {
 	int i;
 	unsigned int band = 0;
