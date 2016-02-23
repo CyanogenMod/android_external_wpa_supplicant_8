@@ -397,6 +397,18 @@ void free_hw_features(struct wpa_supplicant *wpa_s)
 }
 
 
+static void free_bss_tmp_disallowed(struct wpa_supplicant *wpa_s)
+{
+	struct wpa_bss_tmp_disallowed *bss, *prev;
+
+	dl_list_for_each_safe(bss, prev, &wpa_s->bss_tmp_disallowed,
+			      struct wpa_bss_tmp_disallowed, list) {
+		dl_list_del(&bss->list);
+		os_free(bss);
+	}
+}
+
+
 static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 {
 	int i;
@@ -549,6 +561,14 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_s->sched_scan_plans_num = 0;
 	os_free(wpa_s->sched_scan_plans);
 	wpa_s->sched_scan_plans = NULL;
+
+#ifdef CONFIG_MBO
+	wpa_s->non_pref_chan_num = 0;
+	os_free(wpa_s->non_pref_chan);
+	wpa_s->non_pref_chan = NULL;
+#endif /* CONFIG_MBO */
+
+	free_bss_tmp_disallowed(wpa_s);
 }
 
 
@@ -1293,7 +1313,8 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 		int psk_set = 0;
 
 		if (ssid->psk_set) {
-			wpa_sm_set_pmk(wpa_s->wpa, ssid->psk, PMK_LEN, NULL);
+			wpa_sm_set_pmk(wpa_s->wpa, ssid->psk, PMK_LEN, NULL,
+				       NULL);
 			psk_set = 1;
 		}
 #ifndef CONFIG_NO_PBKDF2
@@ -1304,7 +1325,7 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 				    4096, psk, PMK_LEN);
 		        wpa_hexdump_key(MSG_MSGDUMP, "PSK (from passphrase)",
 					psk, PMK_LEN);
-			wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL);
+			wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL, NULL);
 			psk_set = 1;
 			os_memset(psk, 0, sizeof(psk));
 		}
@@ -1342,7 +1363,8 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 				wpa_hexdump_key(MSG_MSGDUMP, "PSK (from "
 						"external passphrase)",
 						psk, PMK_LEN);
-				wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL);
+				wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL,
+					       NULL);
 				psk_set = 1;
 				os_memset(psk, 0, sizeof(psk));
 			} else
@@ -1355,7 +1377,8 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 					ext_password_free(pw);
 					return -1;
 				}
-				wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL);
+				wpa_sm_set_pmk(wpa_s->wpa, psk, PMK_LEN, NULL,
+					       NULL);
 				psk_set = 1;
 				os_memset(psk, 0, sizeof(psk));
 			} else {
@@ -1418,6 +1441,9 @@ static void wpas_ext_capab_byte(struct wpa_supplicant *wpa_s, u8 *pos, int idx)
 		if (wpa_s->conf->hs20)
 			*pos |= 0x40; /* Bit 46 - WNM-Notification */
 #endif /* CONFIG_HS20 */
+#ifdef CONFIG_MBO
+		*pos |= 0x40; /* Bit 46 - WNM-Notification */
+#endif /* CONFIG_MBO */
 		break;
 	case 6: /* Bits 48-55 */
 		break;
@@ -2041,6 +2067,9 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
        struct ieee80211_vht_capabilities vhtcaps;
        struct ieee80211_vht_capabilities vhtcaps_mask;
 #endif /* CONFIG_VHT_OVERRIDES */
+#ifdef CONFIG_MBO
+	const u8 *mbo = NULL;
+#endif /* CONFIG_MBO */
 
 	if (deinit) {
 		if (work->started) {
@@ -2225,25 +2254,21 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 	os_memset(wpa_s->p2p_ip_addr_info, 0, sizeof(wpa_s->p2p_ip_addr_info));
 #endif /* CONFIG_P2P */
 
-#ifdef CONFIG_HS20
-	if (is_hs20_network(wpa_s, ssid, bss)) {
-		struct wpabuf *hs20;
-		hs20 = wpabuf_alloc(20);
-		if (hs20) {
-			int pps_mo_id = hs20_get_pps_mo_id(wpa_s, ssid);
-			size_t len;
+#ifdef CONFIG_MBO
+	if (bss) {
+		mbo = wpa_bss_get_vendor_ie(bss, MBO_IE_VENDOR_TYPE);
+		if (mbo) {
+			int len;
 
-			wpas_hs20_add_indication(hs20, pps_mo_id);
-			len = sizeof(wpa_ie) - wpa_ie_len;
-			if (wpabuf_len(hs20) <= len) {
-				os_memcpy(wpa_ie + wpa_ie_len,
-					  wpabuf_head(hs20), wpabuf_len(hs20));
-				wpa_ie_len += wpabuf_len(hs20);
-			}
-			wpabuf_free(hs20);
+			len = wpas_mbo_supp_op_class_ie(wpa_s, bss->freq,
+							wpa_ie + wpa_ie_len,
+							sizeof(wpa_ie) -
+							wpa_ie_len);
+			if (len > 0)
+				wpa_ie_len += len;
 		}
 	}
-#endif /* CONFIG_HS20 */
+#endif /* CONFIG_MBO */
 
 	/*
 	 * Workaround: Add Extended Capabilities element only if the AP
@@ -2269,6 +2294,27 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		}
 	}
 
+#ifdef CONFIG_HS20
+	if (is_hs20_network(wpa_s, ssid, bss)) {
+		struct wpabuf *hs20;
+
+		hs20 = wpabuf_alloc(20);
+		if (hs20) {
+			int pps_mo_id = hs20_get_pps_mo_id(wpa_s, ssid);
+			size_t len;
+
+			wpas_hs20_add_indication(hs20, pps_mo_id);
+			len = sizeof(wpa_ie) - wpa_ie_len;
+			if (wpabuf_len(hs20) <= len) {
+				os_memcpy(wpa_ie + wpa_ie_len,
+					  wpabuf_head(hs20), wpabuf_len(hs20));
+				wpa_ie_len += wpabuf_len(hs20);
+			}
+			wpabuf_free(hs20);
+		}
+	}
+#endif /* CONFIG_HS20 */
+
 	if (wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ]) {
 		struct wpabuf *buf = wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ];
 		size_t len;
@@ -2292,6 +2338,17 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		}
 	}
 #endif /* CONFIG_FST */
+
+#ifdef CONFIG_MBO
+	if (mbo) {
+		int len;
+
+		len = wpas_mbo_ie(wpa_s, wpa_ie + wpa_ie_len,
+				  sizeof(wpa_ie) - wpa_ie_len);
+		if (len >= 0)
+			wpa_ie_len += len;
+	}
+#endif /* CONFIG_MBO */
 
 	wpa_clear_keys(wpa_s, bss ? bss->bssid : NULL);
 	use_crypt = 1;
@@ -2345,9 +2402,11 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		}
 		params.bssid_hint = bss->bssid;
 		params.freq_hint = bss->freq;
+		params.pbss = bss_is_pbss(bss);
 	} else {
 		params.ssid = ssid->ssid;
 		params.ssid_len = ssid->ssid_len;
+		params.pbss = ssid->pbss;
 	}
 
 	if (ssid->mode == WPAS_MODE_IBSS && ssid->bssid_set &&
@@ -3452,6 +3511,8 @@ wpa_supplicant_alloc(struct wpa_supplicant *parent)
 	wpa_s->new_connection = 1;
 	wpa_s->parent = parent ? parent : wpa_s;
 	wpa_s->sched_scanning = 0;
+
+	dl_list_init(&wpa_s->bss_tmp_disallowed);
 
 	return wpa_s;
 }
@@ -4759,6 +4820,9 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 #ifdef CONFIG_HS20
 	hs20_init(wpa_s);
 #endif /* CONFIG_HS20 */
+#ifdef CONFIG_MBO
+	wpas_mbo_update_non_pref_chan(wpa_s, wpa_s->conf->non_pref_chan);
+#endif /* CONFIG_MBO */
 
 	return 0;
 }
@@ -6246,4 +6310,93 @@ int wpas_vendor_elem_remove(struct wpa_supplicant *wpa_s, int frame,
 	}
 
 	return -1;
+}
+
+
+struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
+				   u16 num_modes, enum hostapd_hw_mode mode)
+{
+	u16 i;
+
+	for (i = 0; i < num_modes; i++) {
+		if (modes[i].mode == mode)
+			return &modes[i];
+	}
+
+	return NULL;
+}
+
+
+static struct
+wpa_bss_tmp_disallowed * wpas_get_disallowed_bss(struct wpa_supplicant *wpa_s,
+						 const u8 *bssid)
+{
+	struct wpa_bss_tmp_disallowed *bss;
+
+	dl_list_for_each(bss, &wpa_s->bss_tmp_disallowed,
+			 struct wpa_bss_tmp_disallowed, list) {
+		if (os_memcmp(bssid, bss->bssid, ETH_ALEN) == 0)
+			return bss;
+	}
+
+	return NULL;
+}
+
+
+void wpa_bss_tmp_disallow(struct wpa_supplicant *wpa_s, const u8 *bssid,
+			  unsigned int sec)
+{
+	struct wpa_bss_tmp_disallowed *bss;
+	struct os_reltime until;
+
+	os_get_reltime(&until);
+	until.sec += sec;
+
+	bss = wpas_get_disallowed_bss(wpa_s, bssid);
+	if (bss) {
+		bss->disallowed_until = until;
+		return;
+	}
+
+	bss = os_malloc(sizeof(*bss));
+	if (!bss) {
+		wpa_printf(MSG_DEBUG,
+			   "Failed to allocate memory for temp disallow BSS");
+		return;
+	}
+
+	bss->disallowed_until = until;
+	os_memcpy(bss->bssid, bssid, ETH_ALEN);
+	dl_list_add(&wpa_s->bss_tmp_disallowed, &bss->list);
+}
+
+
+int wpa_is_bss_tmp_disallowed(struct wpa_supplicant *wpa_s, const u8 *bssid)
+{
+	struct wpa_bss_tmp_disallowed *bss = NULL, *tmp, *prev;
+	struct os_reltime now, age;
+
+	os_get_reltime(&now);
+
+	dl_list_for_each_safe(tmp, prev, &wpa_s->bss_tmp_disallowed,
+			 struct wpa_bss_tmp_disallowed, list) {
+		if (!os_reltime_before(&now, &tmp->disallowed_until)) {
+			/* This BSS is not disallowed anymore */
+			dl_list_del(&tmp->list);
+			os_free(tmp);
+			continue;
+		}
+		if (os_memcmp(bssid, tmp->bssid, ETH_ALEN) == 0) {
+			bss = tmp;
+			break;
+		}
+	}
+	if (!bss)
+		return 0;
+
+	os_reltime_sub(&bss->disallowed_until, &now, &age);
+	wpa_printf(MSG_DEBUG,
+		   "BSS " MACSTR " disabled for %ld.%0ld seconds",
+		   MAC2STR(bss->bssid), age.sec, age.usec);
+	return 1;
 }

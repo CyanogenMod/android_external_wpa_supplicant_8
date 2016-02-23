@@ -490,6 +490,12 @@ static int wpa_supplicant_ctrl_iface_set(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 	} else if (os_strcasecmp(cmd, "setband") == 0) {
 		ret = wpas_ctrl_set_band(wpa_s, value);
+#ifdef CONFIG_MBO
+	} else if (os_strcasecmp(cmd, "non_pref_chan") == 0) {
+		ret = wpas_mbo_update_non_pref_chan(wpa_s, value);
+	} else if (os_strcasecmp(cmd, "mbo_cell_capa") == 0) {
+		wpas_mbo_update_cell_capa(wpa_s, atoi(value));
+#endif /* CONFIG_MBO */
 	} else {
 		value[-1] = '=';
 		ret = wpa_config_process_global(wpa_s->conf, cmd, -1);
@@ -956,7 +962,8 @@ static int wpa_supplicant_ctrl_iface_wps_pin(struct wpa_supplicant *wpa_s,
 	if (os_strcmp(cmd, "any") == 0)
 		_bssid = NULL;
 	else if (os_strcmp(cmd, "get") == 0) {
-		ret = wps_generate_pin();
+		if (wps_generate_pin((unsigned int *) &ret) < 0)
+			return -1;
 		goto done;
 	} else if (hwaddr_aton(cmd, bssid)) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE WPS_PIN: invalid BSSID '%s'",
@@ -4712,7 +4719,7 @@ static int p2ps_ctrl_parse_cpt_priority(const char *pos, u8 *cpt)
 			return -1;
 		}
 
-		if (isblank(*last)) {
+		if (isblank((unsigned char) *last)) {
 			i++;
 			break;
 		}
@@ -6719,14 +6726,27 @@ static int wpas_ctrl_iface_wnm_sleep(struct wpa_supplicant *wpa_s, char *cmd)
 
 static int wpas_ctrl_iface_wnm_bss_query(struct wpa_supplicant *wpa_s, char *cmd)
 {
-	int query_reason;
+	int query_reason, list = 0;
 
 	query_reason = atoi(cmd);
 
-	wpa_printf(MSG_DEBUG, "CTRL_IFACE: WNM_BSS_QUERY query_reason=%d",
-		   query_reason);
+	cmd = os_strchr(cmd, ' ');
+	if (cmd) {
+		cmd++;
+		if (os_strncmp(cmd, "list", 4) == 0) {
+			list = 1;
+		} else {
+			wpa_printf(MSG_DEBUG, "WNM Query: Invalid option %s",
+				   cmd);
+			return -1;
+		}
+	}
 
-	return wnm_send_bss_transition_mgmt_query(wpa_s, query_reason);
+	wpa_printf(MSG_DEBUG,
+		   "CTRL_IFACE: WNM_BSS_QUERY query_reason=%d%s",
+		   query_reason, list ? " candidate list" : "");
+
+	return wnm_send_bss_transition_mgmt_query(wpa_s, query_reason, list);
 }
 
 #endif /* CONFIG_WNM */
@@ -6917,13 +6937,13 @@ static int wpa_supplicant_vendor_cmd(struct wpa_supplicant *wpa_s, char *cmd,
 
 	/* cmd: <vendor id> <subcommand id> [<hex formatted data>] */
 	vendor_id = strtoul(cmd, &pos, 16);
-	if (!isblank(*pos))
+	if (!isblank((unsigned char) *pos))
 		return -EINVAL;
 
 	subcmd = strtoul(pos, &pos, 10);
 
 	if (*pos != '\0') {
-		if (!isblank(*pos++))
+		if (!isblank((unsigned char) *pos++))
 			return -EINVAL;
 		data_len = os_strlen(pos);
 	}
@@ -7729,6 +7749,8 @@ static int wpas_ctrl_iface_data_test_config(struct wpa_supplicant *wpa_s,
 					    char *cmd)
 {
 	int enabled = atoi(cmd);
+	char *pos;
+	const char *ifname;
 
 	if (!enabled) {
 		if (wpa_s->l2_test) {
@@ -7742,7 +7764,13 @@ static int wpas_ctrl_iface_data_test_config(struct wpa_supplicant *wpa_s,
 	if (wpa_s->l2_test)
 		return 0;
 
-	wpa_s->l2_test = l2_packet_init(wpa_s->ifname, wpa_s->own_addr,
+	pos = os_strstr(cmd, " ifname=");
+	if (pos)
+		ifname = pos + 8;
+	else
+		ifname = wpa_s->ifname;
+
+	wpa_s->l2_test = l2_packet_init(ifname, wpa_s->own_addr,
 					ETHERTYPE_IP, wpas_data_test_rx,
 					wpa_s, 1);
 	if (wpa_s->l2_test == NULL)

@@ -434,6 +434,12 @@ struct icon_entry {
 	size_t image_len;
 };
 
+struct wpa_bss_tmp_disallowed {
+	struct dl_list list;
+	u8 bssid[ETH_ALEN];
+	struct os_reltime disallowed_until;
+};
+
 /**
  * struct wpa_supplicant - Internal data for wpa_supplicant interface
  *
@@ -1016,6 +1022,25 @@ struct wpa_supplicant {
 	const struct wpabuf *fst_ies;
 	struct wpabuf *received_mb_ies;
 #endif /* CONFIG_FST */
+
+#ifdef CONFIG_MBO
+	/* Multiband operation non-preferred channel */
+	struct wpa_mbo_non_pref_channel {
+		enum mbo_non_pref_chan_reason reason;
+		u8 oper_class;
+		u8 chan;
+		u8 reason_detail;
+		u8 preference;
+	} *non_pref_chan;
+	size_t non_pref_chan_num;
+	u8 mbo_wnm_token;
+#endif /* CONFIG_MBO */
+
+	/*
+	 * This should be under CONFIG_MBO, but it is left out to allow using
+	 * the bss_temp_disallowed list for other purposes as well.
+	 */
+	struct dl_list bss_tmp_disallowed;
 };
 
 
@@ -1128,6 +1153,22 @@ void wpas_rrm_handle_link_measurement_request(struct wpa_supplicant *wpa_s,
 					      const u8 *frame, size_t len,
 					      int rssi);
 
+
+/* MBO functions */
+int wpas_mbo_ie(struct wpa_supplicant *wpa_s, u8 *buf, size_t len);
+const u8 * wpas_mbo_get_bss_attr(struct wpa_bss *bss, enum mbo_attr_id attr);
+int wpas_mbo_update_non_pref_chan(struct wpa_supplicant *wpa_s,
+				  const char *non_pref_chan);
+void wpas_mbo_scan_ie(struct wpa_supplicant *wpa_s, struct wpabuf *ie);
+int wpas_mbo_supp_op_class_ie(struct wpa_supplicant *wpa_s, int freq, u8 *pos,
+			      size_t len);
+void wpas_mbo_ie_trans_req(struct wpa_supplicant *wpa_s, const u8 *ie,
+			   size_t len);
+size_t wpas_mbo_ie_bss_trans_reject(struct wpa_supplicant *wpa_s, u8 *pos,
+				    size_t len,
+				    enum mbo_transition_reject_reason reason);
+void wpas_mbo_update_cell_capa(struct wpa_supplicant *wpa_s, u8 mbo_cell_capa);
+
 /**
  * wpa_supplicant_ctrl_iface_ctrl_rsp_handle - Handle a control response
  * @wpa_s: Pointer to wpa_supplicant data
@@ -1205,5 +1246,17 @@ void fst_wpa_supplicant_fill_iface_obj(struct wpa_supplicant *wpa_s,
 #endif /* CONFIG_FST */
 
 int wpas_sched_scan_plans_set(struct wpa_supplicant *wpa_s, const char *cmd);
+
+struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
+				   u16 num_modes, enum hostapd_hw_mode mode);
+
+void wpa_bss_tmp_disallow(struct wpa_supplicant *wpa_s, const u8 *bssid,
+			  unsigned int sec);
+int wpa_is_bss_tmp_disallowed(struct wpa_supplicant *wpa_s, const u8 *bssid);
+
+struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
+				     int i, struct wpa_bss *bss,
+				     struct wpa_ssid *group,
+				     int only_first_ssid);
 
 #endif /* WPA_SUPPLICANT_I_H */

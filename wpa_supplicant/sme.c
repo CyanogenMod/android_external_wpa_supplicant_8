@@ -208,6 +208,9 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	u8 ext_capab[18];
 	int ext_capab_len;
 	int skip_auth;
+#ifdef CONFIG_MBO
+	const u8 *mbo;
+#endif /* CONFIG_MBO */
 
 	if (bss == NULL) {
 		wpa_msg(wpa_s, MSG_ERROR, "SME: No scan result available for "
@@ -416,9 +419,55 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_P2P */
 
+#ifdef CONFIG_FST
+	if (wpa_s->fst_ies) {
+		int fst_ies_len = wpabuf_len(wpa_s->fst_ies);
+
+		if (wpa_s->sme.assoc_req_ie_len + fst_ies_len <=
+		    sizeof(wpa_s->sme.assoc_req_ie)) {
+			os_memcpy(wpa_s->sme.assoc_req_ie +
+				  wpa_s->sme.assoc_req_ie_len,
+				  wpabuf_head(wpa_s->fst_ies),
+				  fst_ies_len);
+			wpa_s->sme.assoc_req_ie_len += fst_ies_len;
+		}
+	}
+#endif /* CONFIG_FST */
+
+	sme_auth_handle_rrm(wpa_s, bss);
+
+#ifdef CONFIG_MBO
+	mbo = wpa_bss_get_vendor_ie(bss, MBO_IE_VENDOR_TYPE);
+	if (mbo) {
+		int len;
+
+		len = wpas_mbo_supp_op_class_ie(
+			wpa_s, bss->freq,
+			wpa_s->sme.assoc_req_ie + wpa_s->sme.assoc_req_ie_len,
+			sizeof(wpa_s->sme.assoc_req_ie) -
+			wpa_s->sme.assoc_req_ie_len);
+		if (len > 0)
+			wpa_s->sme.assoc_req_ie_len += len;
+	}
+#endif /* CONFIG_MBO */
+
+	ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab,
+					     sizeof(ext_capab));
+	if (ext_capab_len > 0) {
+		u8 *pos = wpa_s->sme.assoc_req_ie;
+		if (wpa_s->sme.assoc_req_ie_len > 0 && pos[0] == WLAN_EID_RSN)
+			pos += 2 + pos[1];
+		os_memmove(pos + ext_capab_len, pos,
+			   wpa_s->sme.assoc_req_ie_len -
+			   (pos - wpa_s->sme.assoc_req_ie));
+		wpa_s->sme.assoc_req_ie_len += ext_capab_len;
+		os_memcpy(pos, ext_capab, ext_capab_len);
+	}
+
 #ifdef CONFIG_HS20
 	if (is_hs20_network(wpa_s, ssid, bss)) {
 		struct wpabuf *hs20;
+
 		hs20 = wpabuf_alloc(20);
 		if (hs20) {
 			int pps_mo_id = hs20_get_pps_mo_id(wpa_s, ssid);
@@ -438,34 +487,6 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_HS20 */
 
-#ifdef CONFIG_FST
-	if (wpa_s->fst_ies) {
-		int fst_ies_len = wpabuf_len(wpa_s->fst_ies);
-
-		if (wpa_s->sme.assoc_req_ie_len + fst_ies_len <=
-		    sizeof(wpa_s->sme.assoc_req_ie)) {
-			os_memcpy(wpa_s->sme.assoc_req_ie +
-				  wpa_s->sme.assoc_req_ie_len,
-				  wpabuf_head(wpa_s->fst_ies),
-				  fst_ies_len);
-			wpa_s->sme.assoc_req_ie_len += fst_ies_len;
-		}
-	}
-#endif /* CONFIG_FST */
-
-	ext_capab_len = wpas_build_ext_capab(wpa_s, ext_capab,
-					     sizeof(ext_capab));
-	if (ext_capab_len > 0) {
-		u8 *pos = wpa_s->sme.assoc_req_ie;
-		if (wpa_s->sme.assoc_req_ie_len > 0 && pos[0] == WLAN_EID_RSN)
-			pos += 2 + pos[1];
-		os_memmove(pos + ext_capab_len, pos,
-			   wpa_s->sme.assoc_req_ie_len -
-			   (pos - wpa_s->sme.assoc_req_ie));
-		wpa_s->sme.assoc_req_ie_len += ext_capab_len;
-		os_memcpy(pos, ext_capab, ext_capab_len);
-	}
-
 	if (wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ]) {
 		struct wpabuf *buf = wpa_s->vendor_elem[VENDOR_ELEM_ASSOC_REQ];
 		size_t len;
@@ -480,7 +501,18 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 		}
 	}
 
-	sme_auth_handle_rrm(wpa_s, bss);
+#ifdef CONFIG_MBO
+	if (mbo) {
+		int len;
+
+		len = wpas_mbo_ie(wpa_s, wpa_s->sme.assoc_req_ie +
+				  wpa_s->sme.assoc_req_ie_len,
+				  sizeof(wpa_s->sme.assoc_req_ie) -
+				  wpa_s->sme.assoc_req_ie_len);
+		if (len >= 0)
+			wpa_s->sme.assoc_req_ie_len += len;
+	}
+#endif /* CONFIG_MBO */
 
 #ifdef CONFIG_SAE
 	if (!skip_auth && params.auth_alg == WPA_AUTH_ALG_SAE &&
@@ -814,7 +846,7 @@ void sme_event_auth(struct wpa_supplicant *wpa_s, union wpa_event_data *data)
 		wpa_printf(MSG_DEBUG, "SME: SAE completed - setting PMK for "
 			   "4-way handshake");
 		wpa_sm_set_pmk(wpa_s->wpa, wpa_s->sme.sae.pmk, PMK_LEN,
-			       wpa_s->pending_bssid);
+			       wpa_s->sme.sae.pmkid, wpa_s->pending_bssid);
 	}
 #endif /* CONFIG_SAE */
 
@@ -1319,21 +1351,6 @@ int sme_proc_obss_scan(struct wpa_supplicant *wpa_s)
 
 	sme_send_2040_bss_coex(wpa_s, chan_list, num_channels, num_intol);
 	return 1;
-}
-
-
-static struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
-					  u16 num_modes,
-					  enum hostapd_hw_mode mode)
-{
-	u16 i;
-
-	for (i = 0; i < num_modes; i++) {
-		if (modes[i].mode == mode)
-			return &modes[i];
-	}
-
-	return NULL;
 }
 
 

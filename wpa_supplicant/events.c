@@ -574,6 +574,16 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_supplicant *wpa_s,
 				"   skip RSN IE - no mgmt frame protection enabled but AP requires it");
 			break;
 		}
+#ifdef CONFIG_MBO
+		if (!(ie.capabilities & WPA_CAPABILITY_MFPC) &&
+		    wpas_mbo_get_bss_attr(bss, MBO_ATTR_ID_AP_CAPA_IND) &&
+		    wpas_get_ssid_pmf(wpa_s, ssid) !=
+		    NO_MGMT_FRAME_PROTECTION) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"   skip RSN IE - no mgmt frame protection enabled on MBO AP");
+			break;
+		}
+#endif /* CONFIG_MBO */
 
 		wpa_dbg(wpa_s, MSG_DEBUG, "   selected based on RSN IE");
 		return 1;
@@ -816,10 +826,10 @@ static int addr_in_list(const u8 *addr, const u8 *list, size_t num)
 }
 
 
-static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
-					    int i, struct wpa_bss *bss,
-					    struct wpa_ssid *group,
-					    int only_first_ssid)
+struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
+				     int i, struct wpa_bss *bss,
+				     struct wpa_ssid *group,
+				     int only_first_ssid)
 {
 	u8 wpa_ie_len, rsn_ie_len;
 	int wpa;
@@ -827,6 +837,9 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 	const u8 *ie;
 	struct wpa_ssid *ssid;
 	int osen;
+#ifdef CONFIG_MBO
+	const u8 *assoc_disallow;
+#endif /* CONFIG_MBO */
 
 	ie = wpa_bss_get_vendor_ie(bss, WPA_IE_VENDOR_TYPE);
 	wpa_ie_len = ie ? ie[1] : 0;
@@ -988,8 +1001,14 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 			continue;
 		}
 
-		if (!bss_is_ess(bss)) {
-			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - not ESS network");
+		if (!bss_is_ess(bss) && !bss_is_pbss(bss)) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - neither ESS nor PBSS network");
+			continue;
+		}
+
+		if (ssid->pbss != bss_is_pbss(bss)) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - PBSS mismatch (ssid %d bss %d)",
+				ssid->pbss, bss_is_pbss(bss));
 			continue;
 		}
 
@@ -1058,6 +1077,22 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 				(unsigned int) diff.usec);
 			continue;
 		}
+#ifdef CONFIG_MBO
+		assoc_disallow = wpas_mbo_get_bss_attr(
+			bss, MBO_ATTR_ID_ASSOC_DISALLOW);
+		if (assoc_disallow && assoc_disallow[1] >= 1) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"   skip - MBO association disallowed (reason %u)",
+				assoc_disallow[2]);
+			continue;
+		}
+
+		if (wpa_is_bss_tmp_disallowed(wpa_s, bss->bssid)) {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"   skip - MBO retry delay has not passed yet");
+			continue;
+		}
+#endif /* CONFIG_MBO */
 
 		/* Matching configuration found */
 		return ssid;
@@ -2526,7 +2561,8 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 	    !disallowed_bssid(wpa_s, fast_reconnect->bssid) &&
 	    !disallowed_ssid(wpa_s, fast_reconnect->ssid,
 			     fast_reconnect->ssid_len) &&
-	    !wpas_temp_disabled(wpa_s, fast_reconnect_ssid)) {
+	    !wpas_temp_disabled(wpa_s, fast_reconnect_ssid) &&
+	    !wpa_is_bss_tmp_disallowed(wpa_s, fast_reconnect->bssid)) {
 #ifndef CONFIG_NO_SCAN_PROCESSING
 		wpa_dbg(wpa_s, MSG_DEBUG, "Try to reconnect to the same BSS");
 		if (wpa_supplicant_connect(wpa_s, fast_reconnect,

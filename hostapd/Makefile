@@ -194,6 +194,7 @@ ifdef CONFIG_NO_VLAN
 CFLAGS += -DCONFIG_NO_VLAN
 else
 OBJS += ../src/ap/vlan_init.o
+OBJS += ../src/ap/vlan.o
 ifdef CONFIG_VLAN_NETLINK
 ifdef CONFIG_FULL_DYNAMIC_VLAN
 OBJS += ../src/ap/vlan_util.o
@@ -279,6 +280,11 @@ endif
 
 ifdef CONFIG_IEEE80211AC
 CFLAGS += -DCONFIG_IEEE80211AC
+endif
+
+ifdef CONFIG_MBO
+CFLAGS += -DCONFIG_MBO
+OBJS += ../src/ap/mbo_ap.o
 endif
 
 include ../src/drivers/drivers.mak

@@ -490,6 +490,12 @@ static struct wpabuf * wpa_supplicant_extra_ies(struct wpa_supplicant *wpa_s)
 		wpabuf_put_buf(extra_ie, wpa_s->fst_ies);
 #endif /* CONFIG_FST */
 
+#ifdef CONFIG_MBO
+	/* Send cellular capabilities for potential MBO STAs */
+	if (wpabuf_resize(&extra_ie, 9) == 0)
+		wpas_mbo_scan_ie(wpa_s, extra_ie);
+#endif /* CONFIG_MBO */
+
 	return extra_ie;
 }
 
@@ -519,21 +525,6 @@ static int non_p2p_network_enabled(struct wpa_supplicant *wpa_s)
 }
 
 #endif /* CONFIG_P2P */
-
-
-static struct hostapd_hw_modes * get_mode(struct hostapd_hw_modes *modes,
-					  u16 num_modes,
-					  enum hostapd_hw_mode mode)
-{
-	u16 i;
-
-	for (i = 0; i < num_modes; i++) {
-		if (modes[i].mode == mode)
-			return &modes[i];
-	}
-
-	return NULL;
-}
 
 
 static void wpa_setband_scan_freqs_list(struct wpa_supplicant *wpa_s,
@@ -1550,20 +1541,7 @@ static int wpa_scan_get_max_rate(const struct wpa_scan_res *res)
  */
 const u8 * wpa_scan_get_ie(const struct wpa_scan_res *res, u8 ie)
 {
-	const u8 *end, *pos;
-
-	pos = (const u8 *) (res + 1);
-	end = pos + res->ie_len;
-
-	while (end - pos > 1) {
-		if (2 + pos[1] > end - pos)
-			break;
-		if (pos[0] == ie)
-			return pos;
-		pos += 2 + pos[1];
-	}
-
-	return NULL;
+	return get_ie((const u8 *) (res + 1), res->ie_len, ie);
 }
 
 

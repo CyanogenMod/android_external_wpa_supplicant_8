@@ -3584,6 +3584,12 @@ static int wpa_driver_nl80211_set_ap(void *priv,
 	}
 #endif /* CONFIG_P2P */
 
+	if (params->pbss) {
+		wpa_printf(MSG_DEBUG, "nl80211: PBSS");
+		if (nla_put_flag(msg, NL80211_ATTR_PBSS))
+			goto fail;
+	}
+
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
 	if (ret) {
 		wpa_printf(MSG_DEBUG, "nl80211: Beacon set failed: %d (%s)",
@@ -3742,6 +3748,8 @@ static u32 sta_flags_nl80211(int flags)
 		f |= BIT(NL80211_STA_FLAG_TDLS_PEER);
 	if (flags & WPA_STA_AUTHENTICATED)
 		f |= BIT(NL80211_STA_FLAG_AUTHENTICATED);
+	if (flags & WPA_STA_ASSOCIATED)
+		f |= BIT(NL80211_STA_FLAG_ASSOCIATED);
 
 	return f;
 }
@@ -3794,7 +3802,17 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	if (!msg || nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, params->addr))
 		goto fail;
 
-	if (!params->set || (params->flags & WPA_STA_TDLS_PEER)) {
+	/*
+	 * Set the below properties only in one of the following cases:
+	 * 1. New station is added, already associated.
+	 * 2. Set WPA_STA_TDLS_PEER station.
+	 * 3. Set an already added unassociated station, if driver supports
+	 * full AP client state. (Set these properties after station became
+	 * associated will be rejected by the driver).
+	 */
+	if (!params->set || (params->flags & WPA_STA_TDLS_PEER) ||
+	    (params->set && FULL_AP_CLIENT_STATE_SUPP(drv->capa.flags) &&
+	     (params->flags & WPA_STA_ASSOCIATED))) {
 		wpa_hexdump(MSG_DEBUG, "  * supported rates",
 			    params->supp_rates, params->supp_rates_len);
 		wpa_printf(MSG_DEBUG, "  * capability=0x%x",
@@ -3842,9 +3860,12 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 			/*
 			 * cfg80211 validates that AID is non-zero, so we have
 			 * to make this a non-zero value for the TDLS case where
-			 * a dummy STA entry is used for now.
+			 * a dummy STA entry is used for now and for a station
+			 * that is still not associated.
 			 */
-			wpa_printf(MSG_DEBUG, "  * aid=1 (TDLS workaround)");
+			wpa_printf(MSG_DEBUG, "  * aid=1 (%s workaround)",
+				   (params->flags & WPA_STA_TDLS_PEER) ?
+				   "TDLS" : "UNASSOC_STA");
 			if (nla_put_u16(msg, NL80211_ATTR_STA_AID, 1))
 				goto fail;
 		}
@@ -3856,6 +3877,15 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	} else if (params->aid && (params->flags & WPA_STA_TDLS_PEER)) {
 		wpa_printf(MSG_DEBUG, "  * peer_aid=%u", params->aid);
 		if (nla_put_u16(msg, NL80211_ATTR_PEER_AID, params->aid))
+			goto fail;
+	} else if (FULL_AP_CLIENT_STATE_SUPP(drv->capa.flags) &&
+		   (params->flags & WPA_STA_ASSOCIATED)) {
+		wpa_printf(MSG_DEBUG, "  * aid=%u", params->aid);
+		wpa_printf(MSG_DEBUG, "  * listen_interval=%u",
+			   params->listen_interval);
+		if (nla_put_u16(msg, NL80211_ATTR_STA_AID, params->aid) ||
+		    nla_put_u16(msg, NL80211_ATTR_STA_LISTEN_INTERVAL,
+				params->listen_interval))
 			goto fail;
 	}
 
@@ -3887,6 +3917,36 @@ static int wpa_driver_nl80211_sta_add(void *priv,
 	os_memset(&upd, 0, sizeof(upd));
 	upd.set = sta_flags_nl80211(params->flags);
 	upd.mask = upd.set | sta_flags_nl80211(params->flags_mask);
+
+	/*
+	 * If the driver doesn't support full AP client state, ignore ASSOC/AUTH
+	 * flags, as nl80211 driver moves a new station, by default, into
+	 * associated state.
+	 *
+	 * On the other hand, if the driver supports that feature and the
+	 * station is added in unauthenticated state, set the
+	 * authenticated/associated bits in the mask to prevent moving this
+	 * station to associated state before it is actually associated.
+	 *
+	 * This is irrelevant for mesh mode where the station is added to the
+	 * driver as authenticated already, and ASSOCIATED isn't part of the
+	 * nl80211 API.
+	 */
+	if (!is_mesh_interface(drv->nlmode)) {
+		if (!FULL_AP_CLIENT_STATE_SUPP(drv->capa.flags)) {
+			wpa_printf(MSG_DEBUG,
+				   "nl80211: Ignore ASSOC/AUTH flags since driver doesn't support full AP client state");
+			upd.mask &= ~(BIT(NL80211_STA_FLAG_ASSOCIATED) |
+				      BIT(NL80211_STA_FLAG_AUTHENTICATED));
+		} else if (!params->set &&
+			   !(params->flags & WPA_STA_TDLS_PEER)) {
+			if (!(params->flags & WPA_STA_AUTHENTICATED))
+				upd.mask |= BIT(NL80211_STA_FLAG_AUTHENTICATED);
+			if (!(params->flags & WPA_STA_ASSOCIATED))
+				upd.mask |= BIT(NL80211_STA_FLAG_ASSOCIATED);
+		}
+	}
+
 	wpa_printf(MSG_DEBUG, "  * flags set=0x%x mask=0x%x",
 		   upd.set, upd.mask);
 	if (nla_put(msg, NL80211_ATTR_STA_FLAGS2, sizeof(upd), &upd))
@@ -4744,6 +4804,12 @@ static int nl80211_connect_common(struct wpa_driver_nl80211_data *drv,
 	if (params->p2p)
 		wpa_printf(MSG_DEBUG, "  * P2P group");
 
+	if (params->pbss) {
+		wpa_printf(MSG_DEBUG, "  * PBSS");
+		if (nla_put_flag(msg, NL80211_ATTR_PBSS))
+			return -1;
+	}
+
 	return 0;
 }
 
@@ -5315,6 +5381,8 @@ static int get_sta_handler(struct nl_msg *msg, void *arg)
 		[NL80211_STA_INFO_RX_PACKETS] = { .type = NLA_U32 },
 		[NL80211_STA_INFO_TX_PACKETS] = { .type = NLA_U32 },
 		[NL80211_STA_INFO_TX_FAILED] = { .type = NLA_U32 },
+		[NL80211_STA_INFO_RX_BYTES64] = { .type = NLA_U64 },
+		[NL80211_STA_INFO_TX_BYTES64] = { .type = NLA_U64 },
 	};
 
 	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
@@ -5340,10 +5408,23 @@ static int get_sta_handler(struct nl_msg *msg, void *arg)
 	if (stats[NL80211_STA_INFO_INACTIVE_TIME])
 		data->inactive_msec =
 			nla_get_u32(stats[NL80211_STA_INFO_INACTIVE_TIME]);
+	/* For backwards compatibility, fetch the 32-bit counters first. */
 	if (stats[NL80211_STA_INFO_RX_BYTES])
 		data->rx_bytes = nla_get_u32(stats[NL80211_STA_INFO_RX_BYTES]);
 	if (stats[NL80211_STA_INFO_TX_BYTES])
 		data->tx_bytes = nla_get_u32(stats[NL80211_STA_INFO_TX_BYTES]);
+	if (stats[NL80211_STA_INFO_RX_BYTES64] &&
+	    stats[NL80211_STA_INFO_TX_BYTES64]) {
+		/*
+		 * The driver supports 64-bit counters, so use them to override
+		 * the 32-bit values.
+		 */
+		data->rx_bytes =
+			nla_get_u64(stats[NL80211_STA_INFO_RX_BYTES64]);
+		data->tx_bytes =
+			nla_get_u64(stats[NL80211_STA_INFO_TX_BYTES64]);
+		data->bytes_64bit = 1;
+	}
 	if (stats[NL80211_STA_INFO_RX_PACKETS])
 		data->rx_packets =
 			nla_get_u32(stats[NL80211_STA_INFO_RX_PACKETS]);
@@ -6679,9 +6760,9 @@ static int nl80211_send_frame(void *priv, const u8 *data, size_t data_len,
 
 static int nl80211_set_param(void *priv, const char *param)
 {
-	wpa_printf(MSG_DEBUG, "nl80211: driver param='%s'", param);
 	if (param == NULL)
 		return 0;
+	wpa_printf(MSG_DEBUG, "nl80211: driver param='%s'", param);
 
 #ifdef CONFIG_P2P
 	if (os_strstr(param, "use_p2p_group_interface=1")) {
