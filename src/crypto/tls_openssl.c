@@ -900,6 +900,7 @@ void * tls_init(const struct tls_config *conf)
 		}
 #endif /* OPENSSL_FIPS */
 #endif /* CONFIG_FIPS */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		SSL_load_error_strings();
 		SSL_library_init();
 #ifndef OPENSSL_NO_SHA256
@@ -921,6 +922,7 @@ void * tls_init(const struct tls_config *conf)
 #endif /* OPENSSL_NO_RC2 */
 		PKCS12_PBE_add();
 #endif  /* PKCS12_FUNCS */
+#endif /* < 1.1.0 */
 	} else {
 		context = tls_context_new(conf);
 		if (context == NULL)
@@ -941,6 +943,7 @@ void * tls_init(const struct tls_config *conf)
 			os_free(tls_global);
 			tls_global = NULL;
 		}
+		os_free(data);
 		return NULL;
 	}
 	data->ssl = ssl;
@@ -1021,6 +1024,7 @@ void tls_deinit(void *ssl_ctx)
 
 	tls_openssl_ref_count--;
 	if (tls_openssl_ref_count == 0) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 #ifndef OPENSSL_NO_ENGINE
 		ENGINE_cleanup();
 #endif /* OPENSSL_NO_ENGINE */
@@ -1028,6 +1032,7 @@ void tls_deinit(void *ssl_ctx)
 		ERR_remove_thread_state(NULL);
 		ERR_free_strings();
 		EVP_cleanup();
+#endif /* < 1.1.0 */
 		os_free(tls_global->ocsp_stapling_response);
 		tls_global->ocsp_stapling_response = NULL;
 		os_free(tls_global);
@@ -1419,6 +1424,8 @@ static int tls_match_altsubject_component(X509 *cert, int type,
 			found++;
 	}
 
+	sk_GENERAL_NAME_pop_free(ext, GENERAL_NAME_free);
+
 	return found;
 }
 
@@ -1531,9 +1538,11 @@ static int tls_match_suffix(X509 *cert, const char *match, int full)
 		    1) {
 			wpa_printf(MSG_DEBUG, "TLS: %s in dNSName found",
 				   full ? "Match" : "Suffix match");
+			sk_GENERAL_NAME_pop_free(ext, GENERAL_NAME_free);
 			return 1;
 		}
 	}
+	sk_GENERAL_NAME_pop_free(ext, GENERAL_NAME_free);
 
 	if (dns_name) {
 		wpa_printf(MSG_DEBUG, "TLS: None of the dNSName(s) matched");
@@ -1730,6 +1739,7 @@ static void openssl_tls_cert_event(struct tls_connection *conn,
 		pos += gen->d.ia5->length;
 		*pos = '\0';
 	}
+	sk_GENERAL_NAME_pop_free(ext, GENERAL_NAME_free);
 
 	for (alt = 0; alt < num_altsubject; alt++)
 		ev.peer_cert.altsubject[alt] = altsubject[alt];
@@ -2478,13 +2488,15 @@ static int tls_parse_pkcs12(struct tls_data *data, SSL *ssl, PKCS12 *p12,
 				tls_show_errors(MSG_DEBUG, __func__,
 						"Failed to add additional certificate");
 				res = -1;
+				X509_free(cert);
 				break;
 			}
+			X509_free(cert);
 		}
 		if (!res) {
 			/* Try to continue anyway */
 		}
-		sk_X509_free(certs);
+		sk_X509_pop_free(certs, X509_free);
 #ifndef OPENSSL_IS_BORINGSSL
 		if (ssl)
 			res = SSL_build_cert_chain(
@@ -2522,11 +2534,12 @@ static int tls_parse_pkcs12(struct tls_data *data, SSL *ssl, PKCS12 *p12,
 			 */
 			if (SSL_CTX_add_extra_chain_cert(data->ssl, cert) != 1)
 			{
+				X509_free(cert);
 				res = -1;
 				break;
 			}
 		}
-		sk_X509_free(certs);
+		sk_X509_pop_free(certs, X509_free);
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10002000L */
 	}
 
@@ -3842,10 +3855,12 @@ static int ocsp_resp_cb(SSL *s, void *arg)
 		wpa_printf(MSG_INFO, "OpenSSL: Could not find current server certificate from OCSP response%s",
 			   (conn->flags & TLS_CONN_REQUIRE_OCSP) ? "" :
 			   " (OCSP not required)");
+		OCSP_CERTID_free(id);
 		OCSP_BASICRESP_free(basic);
 		OCSP_RESPONSE_free(rsp);
 		return (conn->flags & TLS_CONN_REQUIRE_OCSP) ? 0 : 1;
 	}
+	OCSP_CERTID_free(id);
 
 	if (!OCSP_check_validity(this_update, next_update, 5 * 60, -1)) {
 		tls_show_errors(MSG_INFO, __func__,

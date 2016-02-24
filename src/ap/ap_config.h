@@ -17,6 +17,7 @@
 #include "common/ieee802_11_common.h"
 #include "wps/wps.h"
 #include "fst/fst.h"
+#include "vlan.h"
 
 /**
  * mesh_conf - local MBSS state and settings
@@ -53,7 +54,7 @@ typedef u8 macaddr[ETH_ALEN];
 
 struct mac_acl_entry {
 	macaddr addr;
-	int vlan_id;
+	struct vlan_description vlan_id;
 };
 
 struct hostapd_radius_servers;
@@ -103,6 +104,7 @@ struct hostapd_ssid {
 #define DYNAMIC_VLAN_NAMING_WITH_DEVICE 1
 #define DYNAMIC_VLAN_NAMING_END 2
 	int vlan_naming;
+	int per_sta_vif;
 #ifdef CONFIG_FULL_DYNAMIC_VLAN
 	char *vlan_tagged_interface;
 #endif /* CONFIG_FULL_DYNAMIC_VLAN */
@@ -114,6 +116,7 @@ struct hostapd_ssid {
 struct hostapd_vlan {
 	struct hostapd_vlan *next;
 	int vlan_id; /* VLAN ID or -1 (VLAN_ID_WILDCARD) for wildcard entry */
+	struct vlan_description vlan_desc;
 	char ifname[IFNAMSIZ + 1];
 	int configured;
 	int dynamic_vlan;
@@ -570,6 +573,12 @@ struct hostapd_bss_config {
 
 	char *no_probe_resp_if_seen_on;
 	char *no_auth_if_seen_on;
+
+	int pbss;
+
+#ifdef CONFIG_MBO
+	int mbo_enabled;
+#endif /* CONFIG_MBO */
 };
 
 
@@ -688,13 +697,14 @@ void hostapd_config_clear_wpa_psk(struct hostapd_wpa_psk **p);
 void hostapd_config_free_bss(struct hostapd_bss_config *conf);
 void hostapd_config_free(struct hostapd_config *conf);
 int hostapd_maclist_found(struct mac_acl_entry *list, int num_entries,
-			  const u8 *addr, int *vlan_id);
+			  const u8 *addr, struct vlan_description *vlan_id);
 int hostapd_rate_found(int *list, int rate);
 const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
 			   const u8 *addr, const u8 *p2p_dev_addr,
 			   const u8 *prev_psk);
 int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
-int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id);
+int hostapd_vlan_valid(struct hostapd_vlan *vlan,
+		       struct vlan_description *vlan_desc);
 const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 					int vlan_id);
 struct hostapd_radius_attr *

@@ -15,6 +15,7 @@
 #endif /* CONFIG_MESH */
 
 #include "list.h"
+#include "vlan.h"
 
 /* STA flags */
 #define WLAN_STA_AUTH BIT(0)
@@ -44,6 +45,16 @@
  * Supported Rates IEs). */
 #define WLAN_SUPP_RATES_MAX 32
 
+
+struct mbo_non_pref_chan_info {
+	struct mbo_non_pref_chan_info *next;
+	u8 op_class;
+	u8 pref;
+	u8 reason_code;
+	u8 reason_detail;
+	u8 num_channels;
+	u8 channels[];
+};
 
 struct sta_info {
 	struct sta_info *next; /* next entry in sta list */
@@ -87,6 +98,7 @@ struct sta_info {
 	unsigned int session_timeout_set:1;
 	unsigned int radius_das_match:1;
 	unsigned int ecsa_supported:1;
+	unsigned int added_unassoc:1;
 
 	u16 auth_alg;
 
@@ -107,10 +119,11 @@ struct sta_info {
 	int acct_terminate_cause; /* Acct-Terminate-Cause */
 	int acct_interim_interval; /* Acct-Interim-Interval */
 
-	unsigned long last_rx_bytes;
-	unsigned long last_tx_bytes;
-	u32 acct_input_gigawords; /* Acct-Input-Gigawords */
-	u32 acct_output_gigawords; /* Acct-Output-Gigawords */
+	/* For extending 32-bit driver counters to 64-bit counters */
+	u32 last_rx_bytes_hi;
+	u32 last_rx_bytes_lo;
+	u32 last_tx_bytes_hi;
+	u32 last_tx_bytes_lo;
 
 	u8 *challenge; /* IEEE 802.11 Shared Key Authentication Challenge */
 
@@ -118,6 +131,7 @@ struct sta_info {
 	struct rsn_preauth_interface *preauth_iface;
 
 	int vlan_id; /* 0: none, >0: VID */
+	struct vlan_description *vlan_desc;
 	int vlan_id_bound; /* updated by ap_sta_bind_vlan() */
 	 /* PSKs from RADIUS authentication server */
 	struct hostapd_sta_wpa_psk_short *psk;
@@ -170,6 +184,12 @@ struct sta_info {
 	u16 last_seq_ctrl;
 	/* Last Authentication/(Re)Association Request/Action frame subtype */
 	u8 last_subtype;
+
+#ifdef CONFIG_MBO
+	u8 cell_capa; /* 0 = unknown (not an MBO STA); otherwise,
+		       * enum mbo_cellular_capa values */
+	struct mbo_non_pref_chan_info *non_pref_chan;
+#endif /* CONFIG_MBO */
 };
 
 
@@ -220,6 +240,8 @@ int ap_sta_wps_cancel(struct hostapd_data *hapd,
 		      struct sta_info *sta, void *ctx);
 #endif /* CONFIG_WPS */
 int ap_sta_bind_vlan(struct hostapd_data *hapd, struct sta_info *sta);
+int ap_sta_set_vlan(struct hostapd_data *hapd, struct sta_info *sta,
+		    struct vlan_description *vlan_desc);
 void ap_sta_start_sa_query(struct hostapd_data *hapd, struct sta_info *sta);
 void ap_sta_stop_sa_query(struct hostapd_data *hapd, struct sta_info *sta);
 int ap_check_sa_query_timeout(struct hostapd_data *hapd, struct sta_info *sta);

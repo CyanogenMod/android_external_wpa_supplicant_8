@@ -33,7 +33,33 @@ u32 hostapd_sta_flags_to_drv(u32 flags)
 		res |= WPA_STA_SHORT_PREAMBLE;
 	if (flags & WLAN_STA_MFP)
 		res |= WPA_STA_MFP;
+	if (flags & WLAN_STA_AUTH)
+		res |= WPA_STA_AUTHENTICATED;
+	if (flags & WLAN_STA_ASSOC)
+		res |= WPA_STA_ASSOCIATED;
 	return res;
+}
+
+
+static int add_buf(struct wpabuf **dst, const struct wpabuf *src)
+{
+	if (!src)
+		return 0;
+	if (wpabuf_resize(dst, wpabuf_len(src)) != 0)
+		return -1;
+	wpabuf_put_buf(*dst, src);
+	return 0;
+}
+
+
+static int add_buf_data(struct wpabuf **dst, const u8 *data, size_t len)
+{
+	if (!data || !len)
+		return 0;
+	if (wpabuf_resize(dst, len) != 0)
+		return -1;
+	wpabuf_put_data(*dst, data, len);
+	return 0;
 }
 
 
@@ -49,82 +75,38 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 
 	pos = buf;
 	pos = hostapd_eid_time_adv(hapd, pos);
-	if (pos != buf) {
-		if (wpabuf_resize(&beacon, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(beacon, buf, pos - buf);
-	}
+	if (add_buf_data(&beacon, buf, pos - buf) < 0)
+		goto fail;
 	pos = hostapd_eid_time_zone(hapd, pos);
-	if (pos != buf) {
-		if (wpabuf_resize(&proberesp, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(proberesp, buf, pos - buf);
-	}
+	if (add_buf_data(&proberesp, buf, pos - buf) < 0)
+		goto fail;
 
 	pos = buf;
 	pos = hostapd_eid_ext_capab(hapd, pos);
-	if (pos != buf) {
-		if (wpabuf_resize(&assocresp, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(assocresp, buf, pos - buf);
-	}
+	if (add_buf_data(&assocresp, buf, pos - buf) < 0)
+		goto fail;
 	pos = hostapd_eid_interworking(hapd, pos);
 	pos = hostapd_eid_adv_proto(hapd, pos);
 	pos = hostapd_eid_roaming_consortium(hapd, pos);
-	if (pos != buf) {
-		if (wpabuf_resize(&beacon, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(beacon, buf, pos - buf);
-
-		if (wpabuf_resize(&proberesp, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(proberesp, buf, pos - buf);
-	}
+	if (add_buf_data(&beacon, buf, pos - buf) < 0 ||
+	    add_buf_data(&proberesp, buf, pos - buf) < 0)
+		goto fail;
 
 #ifdef CONFIG_FST
-	if (hapd->iface->fst_ies) {
-		size_t add = wpabuf_len(hapd->iface->fst_ies);
-
-		if (wpabuf_resize(&beacon, add) < 0)
-			goto fail;
-		wpabuf_put_buf(beacon, hapd->iface->fst_ies);
-		if (wpabuf_resize(&proberesp, add) < 0)
-			goto fail;
-		wpabuf_put_buf(proberesp, hapd->iface->fst_ies);
-		if (wpabuf_resize(&assocresp, add) < 0)
-			goto fail;
-		wpabuf_put_buf(assocresp, hapd->iface->fst_ies);
-	}
+	if (add_buf(&beacon, hapd->iface->fst_ies) < 0 ||
+	    add_buf(&proberesp, hapd->iface->fst_ies) < 0 ||
+	    add_buf(&assocresp, hapd->iface->fst_ies) < 0)
+		goto fail;
 #endif /* CONFIG_FST */
 
-	if (hapd->wps_beacon_ie) {
-		if (wpabuf_resize(&beacon, wpabuf_len(hapd->wps_beacon_ie)) <
-		    0)
-			goto fail;
-		wpabuf_put_buf(beacon, hapd->wps_beacon_ie);
-	}
-
-	if (hapd->wps_probe_resp_ie) {
-		if (wpabuf_resize(&proberesp,
-				  wpabuf_len(hapd->wps_probe_resp_ie)) < 0)
-			goto fail;
-		wpabuf_put_buf(proberesp, hapd->wps_probe_resp_ie);
-	}
+	if (add_buf(&beacon, hapd->wps_beacon_ie) < 0 ||
+	    add_buf(&proberesp, hapd->wps_probe_resp_ie) < 0)
+		goto fail;
 
 #ifdef CONFIG_P2P
-	if (hapd->p2p_beacon_ie) {
-		if (wpabuf_resize(&beacon, wpabuf_len(hapd->p2p_beacon_ie)) <
-		    0)
-			goto fail;
-		wpabuf_put_buf(beacon, hapd->p2p_beacon_ie);
-	}
-
-	if (hapd->p2p_probe_resp_ie) {
-		if (wpabuf_resize(&proberesp,
-				  wpabuf_len(hapd->p2p_probe_resp_ie)) < 0)
-			goto fail;
-		wpabuf_put_buf(proberesp, hapd->p2p_probe_resp_ie);
-	}
+	if (add_buf(&beacon, hapd->p2p_beacon_ie) < 0 ||
+	    add_buf(&proberesp, hapd->p2p_probe_resp_ie) < 0)
+		goto fail;
 #endif /* CONFIG_P2P */
 
 #ifdef CONFIG_P2P_MANAGER
@@ -148,8 +130,7 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 #ifdef CONFIG_WPS
 	if (hapd->conf->wps_state) {
 		struct wpabuf *a = wps_build_assoc_resp_ie();
-		if (a && wpabuf_resize(&assocresp, wpabuf_len(a)) == 0)
-			wpabuf_put_buf(assocresp, a);
+		add_buf(&assocresp, a);
 		wpabuf_free(a);
 	}
 #endif /* CONFIG_WPS */
@@ -169,44 +150,35 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 	if (hapd->p2p_group) {
 		struct wpabuf *a;
 		a = p2p_group_assoc_resp_ie(hapd->p2p_group, P2P_SC_SUCCESS);
-		if (a && wpabuf_resize(&assocresp, wpabuf_len(a)) == 0)
-			wpabuf_put_buf(assocresp, a);
+		add_buf(&assocresp, a);
 		wpabuf_free(a);
 	}
 #endif /* CONFIG_WIFI_DISPLAY */
 
 #ifdef CONFIG_HS20
-	pos = buf;
-	pos = hostapd_eid_hs20_indication(hapd, pos);
-	if (pos != buf) {
-		if (wpabuf_resize(&beacon, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(beacon, buf, pos - buf);
-
-		if (wpabuf_resize(&proberesp, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(proberesp, buf, pos - buf);
-	}
+	pos = hostapd_eid_hs20_indication(hapd, buf);
+	if (add_buf_data(&beacon, buf, pos - buf) < 0 ||
+	    add_buf_data(&proberesp, buf, pos - buf) < 0)
+		goto fail;
 
 	pos = hostapd_eid_osen(hapd, buf);
-	if (pos != buf) {
-		if (wpabuf_resize(&beacon, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(beacon, buf, pos - buf);
-
-		if (wpabuf_resize(&proberesp, pos - buf) != 0)
-			goto fail;
-		wpabuf_put_data(proberesp, buf, pos - buf);
-	}
+	if (add_buf_data(&beacon, buf, pos - buf) < 0 ||
+	    add_buf_data(&proberesp, buf, pos - buf) < 0)
+		goto fail;
 #endif /* CONFIG_HS20 */
 
-	if (hapd->conf->vendor_elements) {
-		size_t add = wpabuf_len(hapd->conf->vendor_elements);
-		if (wpabuf_resize(&beacon, add) == 0)
-			wpabuf_put_buf(beacon, hapd->conf->vendor_elements);
-		if (wpabuf_resize(&proberesp, add) == 0)
-			wpabuf_put_buf(proberesp, hapd->conf->vendor_elements);
+#ifdef CONFIG_MBO
+	if (hapd->conf->mbo_enabled) {
+		pos = hostapd_eid_mbo(hapd, buf, sizeof(buf));
+		if (add_buf_data(&beacon, buf, pos - buf) < 0 ||
+		    add_buf_data(&proberesp, buf, pos - buf) < 0 ||
+		    add_buf_data(&assocresp, buf, pos - buf) < 0)
+			goto fail;
 	}
+#endif /* CONFIG_MBO */
+
+	add_buf(&beacon, hapd->conf->vendor_elements);
+	add_buf(&proberesp, hapd->conf->vendor_elements);
 
 	*beacon_ret = beacon;
 	*proberesp_ret = proberesp;
@@ -390,7 +362,7 @@ int hostapd_sta_add(struct hostapd_data *hapd,
 		    u16 listen_interval,
 		    const struct ieee80211_ht_capabilities *ht_capab,
 		    const struct ieee80211_vht_capabilities *vht_capab,
-		    u32 flags, u8 qosinfo, u8 vht_opmode)
+		    u32 flags, u8 qosinfo, u8 vht_opmode, int set)
 {
 	struct hostapd_sta_add_params params;
 
@@ -412,6 +384,7 @@ int hostapd_sta_add(struct hostapd_data *hapd,
 	params.vht_opmode = vht_opmode;
 	params.flags = hostapd_sta_flags_to_drv(flags);
 	params.qosinfo = qosinfo;
+	params.set = set;
 	return hapd->driver->sta_add(hapd->drv_priv, &params);
 }
 

@@ -805,6 +805,9 @@ endif
 ifdef CONFIG_WNM
 OBJS += src/ap/wnm_ap.c
 endif
+ifdef CONFIG_MBO
+OBJS += src/ap/mbo_ap.c
+endif
 ifdef CONFIG_CTRL_IFACE
 OBJS += src/ap/ctrl_iface_ap.c
 endif
@@ -819,6 +822,11 @@ L_CFLAGS += -DCONFIG_IEEE80211N
 ifdef CONFIG_IEEE80211AC
 L_CFLAGS += -DCONFIG_IEEE80211AC
 endif
+endif
+
+ifdef CONFIG_MBO
+OBJS += mbo.c
+L_CFLAGS += -DCONFIG_MBO
 endif
 
 ifdef NEED_AP_MLME

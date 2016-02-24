@@ -1612,7 +1612,7 @@ static const char *network_fields[] = {
 #ifdef CONFIG_HS20
 	"update_identifier",
 #endif /* CONFIG_HS20 */
-	"mac_addr"
+	"mac_addr", "pbss"
 };
 
 
@@ -3418,7 +3418,7 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "wnm_sleep", wpa_cli_cmd_wnm_sleep, NULL, cli_cmd_flag_none,
 	  "<enter/exit> [interval=#] = enter/exit WNM-Sleep mode" },
 	{ "wnm_bss_query", wpa_cli_cmd_wnm_bss_query, NULL, cli_cmd_flag_none,
-	  "<query reason> = Send BSS Transition Management Query" },
+	  "<query reason> [list] = Send BSS Transition Management Query" },
 #endif /* CONFIG_WNM */
 	{ "raw", wpa_cli_cmd_raw, NULL, cli_cmd_flag_sensitive,
 	  "<params..> = Sent unprocessed command" },
@@ -4152,7 +4152,7 @@ static void try_connection(void *eloop_ctx, void *timeout_ctx)
 	if (ctrl_ifname == NULL)
 		ctrl_ifname = wpa_cli_get_default_ifname();
 
-	if (!wpa_cli_open_connection(ctrl_ifname, 1) == 0) {
+	if (wpa_cli_open_connection(ctrl_ifname, 1)) {
 		if (!warning_displayed) {
 			printf("Could not connect to wpa_supplicant: "
 			       "%s - re-trying\n",

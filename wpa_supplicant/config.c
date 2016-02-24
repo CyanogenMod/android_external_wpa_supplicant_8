@@ -1980,6 +1980,7 @@ static const struct parse_data ssid_fields[] = {
 	{ INT(update_identifier) },
 #endif /* CONFIG_HS20 */
 	{ INT_RANGE(mac_addr, 0, 2) },
+	{ INT_RANGE(pbss, 0, 1) },
 };
 
 #undef OFFSET
@@ -2285,6 +2286,9 @@ void wpa_config_free(struct wpa_config *config)
 	os_free(config->wowlan_triggers);
 	os_free(config->fst_group_id);
 	os_free(config->sched_scan_plans);
+#ifdef CONFIG_MBO
+	os_free(config->non_pref_chan);
+#endif /* CONFIG_MBO */
 
 	os_free(config);
 }
@@ -3557,6 +3561,10 @@ struct wpa_config * wpa_config_alloc_empty(const char *ctrl_interface,
 	config->cert_in_cb = DEFAULT_CERT_IN_CB;
 	config->wpa_rsc_relaxation = DEFAULT_WPA_RSC_RELAXATION;
 
+#ifdef CONFIG_MBO
+	config->mbo_cell_capa = DEFAULT_MBO_CELL_CAPA;
+#endif /* CONFIG_MBO */
+
 	if (ctrl_interface)
 		config->ctrl_interface = os_strdup(ctrl_interface);
 	if (driver_param)
@@ -4264,6 +4272,11 @@ static const struct global_parse_data global_fields[] = {
 #endif /* CONFIG_FST */
 	{ INT_RANGE(wpa_rsc_relaxation, 0, 1), 0 },
 	{ STR(sched_scan_plans), CFG_CHANGED_SCHED_SCAN_PLANS },
+#ifdef CONFIG_MBO
+	{ STR(non_pref_chan), 0 },
+	{ INT_RANGE(mbo_cell_capa, MBO_CELL_CAPA_AVAILABLE,
+		    MBO_CELL_CAPA_NOT_SUPPORTED), 0 },
+#endif /*CONFIG_MBO */
 };
 
 #undef FUNC
