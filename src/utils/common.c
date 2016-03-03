@@ -696,6 +696,15 @@ int is_hex(const u8 *data, size_t len)
 	return 0;
 }
 
+int has_newline(const char *str)
+{
+	while (*str) {
+		if (*str == '\n' || *str == '\r')
+			return 1;
+		str++;
+	}
+	return 0;
+}
 
 int has_ctrl_char(const u8 *data, size_t len)
 {

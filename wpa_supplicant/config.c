@@ -2701,14 +2701,15 @@ char * wpa_config_get(struct wpa_ssid *ssid, const char *var)
 		const struct parse_data *field = &ssid_fields[i];
 		if (os_strcmp(var, field->name) == 0) {
 			char *ret = field->writer(field, ssid);
-			if (ret != NULL && (os_strchr(ret, '\r') != NULL ||
-				os_strchr(ret, '\n') != NULL)) {
+
+			if (ret && has_newline(ret)) {
 				wpa_printf(MSG_ERROR,
-					"Found newline in value for %s; "
-					"not returning it", var);
+					   "Found newline in value for %s; not returning it",
+					   var);
 				os_free(ret);
 				ret = NULL;
 			}
+
 			return ret;
 		}
 	}
