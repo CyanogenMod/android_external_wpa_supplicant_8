@@ -226,6 +226,16 @@ struct radius_client_data {
 	 * next_radius_identifier - Next RADIUS message identifier to use
 	 */
 	u8 next_radius_identifier;
+
+	/**
+	 * interim_error_cb - Interim accounting error callback
+	 */
+	void (*interim_error_cb)(const u8 *addr, void *ctx);
+
+	/**
+	 * interim_error_cb_ctx - interim_error_cb() context data
+	 */
+	void *interim_error_cb_ctx;
 };
 
 
@@ -297,6 +307,25 @@ int radius_client_register(struct radius_client_data *radius,
 }
 
 
+/**
+ * radius_client_set_interim_erro_cb - Register an interim acct error callback
+ * @radius: RADIUS client context from radius_client_init()
+ * @addr: Station address from the failed message
+ * @cb: Handler for interim accounting errors
+ * @ctx: Context pointer for handler callbacks
+ *
+ * This function is used to register a handler for processing failed
+ * transmission attempts of interim accounting update messages.
+ */
+void radius_client_set_interim_error_cb(struct radius_client_data *radius,
+					void (*cb)(const u8 *addr, void *ctx),
+					void *ctx)
+{
+	radius->interim_error_cb = cb;
+	radius->interim_error_cb_ctx = ctx;
+}
+
+
 /*
  * Returns >0 if message queue was flushed (i.e., the message that triggered
  * the error is not available anymore)
@@ -336,6 +365,8 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 	int s;
 	struct wpabuf *buf;
 	size_t prev_num_msgs;
+	u8 *acct_delay_time;
+	size_t acct_delay_time_len;
 
 	if (entry->msg_type == RADIUS_ACCT ||
 	    entry->msg_type == RADIUS_ACCT_INTERIM) {
@@ -371,10 +402,50 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 			conf->auth_server->retransmissions++;
 		}
 	}
+
+	if (entry->msg_type == RADIUS_ACCT_INTERIM) {
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS: Failed to transmit interim accounting update to "
+			   MACSTR " - drop message and request a new update",
+			   MAC2STR(entry->addr));
+		if (radius->interim_error_cb)
+			radius->interim_error_cb(entry->addr,
+						 radius->interim_error_cb_ctx);
+		return 1;
+	}
+
 	if (s < 0) {
 		wpa_printf(MSG_INFO,
 			   "RADIUS: No valid socket for retransmission");
 		return 1;
+	}
+
+	if (entry->msg_type == RADIUS_ACCT &&
+	    radius_msg_get_attr_ptr(entry->msg, RADIUS_ATTR_ACCT_DELAY_TIME,
+				    &acct_delay_time, &acct_delay_time_len,
+				    NULL) == 0 &&
+	    acct_delay_time_len == 4) {
+		struct radius_hdr *hdr;
+		u32 delay_time;
+
+		/*
+		 * Need to assign a new identifier since attribute contents
+		 * changes.
+		 */
+		hdr = radius_msg_get_hdr(entry->msg);
+		hdr->identifier = radius_client_get_id(radius);
+
+		/* Update Acct-Delay-Time to show wait time in queue */
+		delay_time = now - entry->first_try;
+		WPA_PUT_BE32(acct_delay_time, delay_time);
+
+		wpa_printf(MSG_DEBUG,
+			   "RADIUS: Updated Acct-Delay-Time to %u for retransmission",
+			   delay_time);
+		radius_msg_finish_acct(entry->msg, entry->shared_secret,
+				       entry->shared_secret_len);
+		if (radius->conf->msg_dumps)
+			radius_msg_dump(entry->msg);
 	}
 
 	/* retransmit; remove entry if too many attempts */
@@ -624,39 +695,6 @@ static void radius_client_list_add(struct radius_client_data *radius,
 }
 
 
-static void radius_client_list_del(struct radius_client_data *radius,
-				   RadiusType msg_type, const u8 *addr)
-{
-	struct radius_msg_list *entry, *prev, *tmp;
-
-	if (addr == NULL)
-		return;
-
-	entry = radius->msgs;
-	prev = NULL;
-	while (entry) {
-		if (entry->msg_type == msg_type &&
-		    os_memcmp(entry->addr, addr, ETH_ALEN) == 0) {
-			if (prev)
-				prev->next = entry->next;
-			else
-				radius->msgs = entry->next;
-			tmp = entry;
-			entry = entry->next;
-			hostapd_logger(radius->ctx, addr,
-				       HOSTAPD_MODULE_RADIUS,
-				       HOSTAPD_LEVEL_DEBUG,
-				       "Removing matching RADIUS message");
-			radius_client_msg_free(tmp);
-			radius->num_msgs--;
-			continue;
-		}
-		prev = entry;
-		entry = entry->next;
-	}
-}
-
-
 /**
  * radius_client_send - Send a RADIUS request
  * @radius: RADIUS client context from radius_client_init()
@@ -668,16 +706,19 @@ static void radius_client_list_del(struct radius_client_data *radius,
  * This function is used to transmit a RADIUS authentication (RADIUS_AUTH) or
  * accounting request (RADIUS_ACCT or RADIUS_ACCT_INTERIM). The only difference
  * between accounting and interim accounting messages is that the interim
- * message will override any pending interim accounting updates while a new
- * accounting message does not remove any pending messages.
+ * message will not be retransmitted. Instead, a callback is used to indicate
+ * that the transmission failed for the specific station @addr so that a new
+ * interim accounting update message can be generated with up-to-date session
+ * data instead of trying to resend old information.
  *
  * The message is added on the retransmission queue and will be retransmitted
  * automatically until a response is received or maximum number of retries
- * (RADIUS_CLIENT_MAX_RETRIES) is reached.
+ * (RADIUS_CLIENT_MAX_RETRIES) is reached. No such retries are used with
+ * RADIUS_ACCT_INTERIM, i.e., such a pending message is removed from the queue
+ * automatically on transmission failure.
  *
  * The related device MAC address can be used to identify pending messages that
- * can be removed with radius_client_flush_auth() or with interim accounting
- * updates.
+ * can be removed with radius_client_flush_auth().
  */
 int radius_client_send(struct radius_client_data *radius,
 		       struct radius_msg *msg, RadiusType msg_type,
@@ -689,11 +730,6 @@ int radius_client_send(struct radius_client_data *radius,
 	char *name;
 	int s, res;
 	struct wpabuf *buf;
-
-	if (msg_type == RADIUS_ACCT_INTERIM) {
-		/* Remove any pending interim acct update for the same STA. */
-		radius_client_list_del(radius, msg_type, addr);
-	}
 
 	if (msg_type == RADIUS_ACCT || msg_type == RADIUS_ACCT_INTERIM) {
 		if (conf->acct_server && radius->acct_sock < 0)

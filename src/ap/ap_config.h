@@ -128,9 +128,14 @@ struct hostapd_vlan {
 };
 
 #define PMK_LEN 32
+#define MIN_PASSPHRASE_LEN 8
+#define MAX_PASSPHRASE_LEN 63
 struct hostapd_sta_wpa_psk_short {
 	struct hostapd_sta_wpa_psk_short *next;
+	unsigned int is_passphrase:1;
 	u8 psk[PMK_LEN];
+	char passphrase[MAX_PASSPHRASE_LEN + 1];
+	int ref; /* (number of references held) - 1 */
 };
 
 struct hostapd_wpa_psk {
@@ -689,7 +694,6 @@ struct hostapd_config {
 
 
 int hostapd_mac_comp(const void *a, const void *b);
-int hostapd_mac_comp_empty(const void *a);
 struct hostapd_config * hostapd_config_defaults(void);
 void hostapd_config_defaults_bss(struct hostapd_bss_config *bss);
 void hostapd_config_free_eap_user(struct hostapd_eap_user *user);

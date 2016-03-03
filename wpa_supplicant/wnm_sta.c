@@ -1115,11 +1115,22 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 				rep = &wpa_s->wnm_neighbor_report_elements[
 					wpa_s->wnm_num_neighbor_report];
 				wnm_parse_neighbor_report(wpa_s, pos, len, rep);
+				wpa_s->wnm_num_neighbor_report++;
 			}
 
 			pos += len;
-			wpa_s->wnm_num_neighbor_report++;
 		}
+
+		if (!wpa_s->wnm_num_neighbor_report) {
+			wpa_printf(MSG_DEBUG,
+				   "WNM: Candidate list included bit is set, but no candidates found");
+			wnm_send_bss_transition_mgmt_resp(
+				wpa_s, wpa_s->wnm_dialog_token,
+				WNM_BSS_TM_REJECT_NO_SUITABLE_CANDIDATES,
+				0, NULL);
+			return;
+		}
+
 		wnm_sort_cand_list(wpa_s);
 		wnm_dump_cand_list(wpa_s);
 		valid_ms = valid_int * beacon_int * 128 / 125;
@@ -1148,6 +1159,14 @@ static void ieee802_11_rx_bss_trans_mgmt_req(struct wpa_supplicant *wpa_s,
 		}
 
 		wnm_set_scan_freqs(wpa_s);
+		if (wpa_s->wnm_num_neighbor_report == 1) {
+			os_memcpy(wpa_s->next_scan_bssid,
+				  wpa_s->wnm_neighbor_report_elements[0].bssid,
+				  ETH_ALEN);
+			wpa_printf(MSG_DEBUG,
+				   "WNM: Scan only for a specific BSSID since there is only a single candidate "
+				   MACSTR, MAC2STR(wpa_s->next_scan_bssid));
+		}
 		wpa_supplicant_req_scan(wpa_s, 0, 0);
 	} else if (reply) {
 		enum bss_trans_mgmt_status_code status;
