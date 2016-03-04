@@ -10,6 +10,7 @@
 
 #include "common.h"
 #include "eloop.h"
+#include "common/defs.h"
 #include "common/ieee802_11_defs.h"
 #include "common/ieee802_11_common.h"
 #include "common/wpa_ctrl.h"
@@ -2034,8 +2035,23 @@ static void p2p_add_dev_from_probe_req(struct p2p_data *p2p, const u8 *addr,
 
 	dev = p2p_get_device(p2p, addr);
 	if (dev) {
-		if (dev->country[0] == 0 && msg.listen_channel)
-			os_memcpy(dev->country, msg.listen_channel, 3);
+		if (msg.listen_channel) {
+			int freq;
+
+			if (dev->country[0] == 0)
+				os_memcpy(dev->country, msg.listen_channel, 3);
+
+			freq = p2p_channel_to_freq(msg.listen_channel[3],
+						   msg.listen_channel[4]);
+
+			if (freq > 0 && dev->listen_freq != freq) {
+				p2p_dbg(p2p,
+					"Updated peer " MACSTR " Listen channel (Probe Request): %d -> %d MHz",
+					MAC2STR(addr), dev->listen_freq, freq);
+				dev->listen_freq = freq;
+			}
+		}
+
 		os_get_reltime(&dev->last_seen);
 		p2p_parse_free(&msg);
 		return; /* already known */
@@ -3494,7 +3510,8 @@ void p2p_scan_res_handled(struct p2p_data *p2p)
 }
 
 
-void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies, const u8 *dev_id)
+void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies, const u8 *dev_id,
+		 unsigned int bands)
 {
 	u8 dev_capab;
 	u8 *len;
@@ -3527,6 +3544,9 @@ void p2p_scan_ie(struct p2p_data *p2p, struct wpabuf *ies, const u8 *dev_id)
 	if (p2p->ext_listen_interval)
 		p2p_buf_add_ext_listen_timing(ies, p2p->ext_listen_period,
 					      p2p->ext_listen_interval);
+
+	if (bands & BAND_60_GHZ)
+		p2p_buf_add_device_info(ies, p2p, NULL);
 
 	if (p2p->p2ps_seek && p2p->p2ps_seek_count)
 		p2p_buf_add_service_hash(ies, p2p);

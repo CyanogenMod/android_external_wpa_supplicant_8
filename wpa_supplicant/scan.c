@@ -1006,6 +1006,27 @@ ssid_list_set:
 		}
 	}
 
+	if (!is_zero_ether_addr(wpa_s->next_scan_bssid)) {
+		struct wpa_bss *bss;
+
+		params.bssid = wpa_s->next_scan_bssid;
+		bss = wpa_bss_get_bssid_latest(wpa_s, params.bssid);
+		if (bss && bss->ssid_len && params.num_ssids == 1 &&
+		    params.ssids[0].ssid_len == 0) {
+			params.ssids[0].ssid = bss->ssid;
+			params.ssids[0].ssid_len = bss->ssid_len;
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Scan a previously specified BSSID " MACSTR
+				" and SSID %s",
+				MAC2STR(params.bssid),
+				wpa_ssid_txt(bss->ssid, bss->ssid_len));
+		} else {
+			wpa_dbg(wpa_s, MSG_DEBUG,
+				"Scan a previously specified BSSID " MACSTR,
+				MAC2STR(params.bssid));
+		}
+	}
+
 	scan_params = &params;
 
 scan:
@@ -1066,6 +1087,8 @@ scan:
 #ifdef CONFIG_INTERWORKING
 		wpa_s->interworking_fast_assoc_tried = 0;
 #endif /* CONFIG_INTERWORKING */
+		if (params.bssid)
+			os_memset(wpa_s->next_scan_bssid, 0, ETH_ALEN);
 	}
 }
 
@@ -2259,6 +2282,17 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 			params->mac_addr_mask = mac_addr + ETH_ALEN;
 		}
 	}
+
+	if (src->bssid) {
+		u8 *bssid;
+
+		bssid = os_malloc(ETH_ALEN);
+		if (!bssid)
+			goto failed;
+		os_memcpy(bssid, src->bssid, ETH_ALEN);
+		params->bssid = bssid;
+	}
+
 	return params;
 
 failed:
@@ -2286,6 +2320,8 @@ void wpa_scan_free_params(struct wpa_driver_scan_params *params)
 	 * must not be freed separately.
 	 */
 	os_free((u8 *) params->mac_addr);
+
+	os_free((u8 *) params->bssid);
 
 	os_free(params);
 }
@@ -2508,7 +2544,13 @@ int wpas_mac_addr_rand_scan_set(struct wpa_supplicant *wpa_s,
 
 int wpas_abort_ongoing_scan(struct wpa_supplicant *wpa_s)
 {
-	if (wpa_s->scan_work && wpa_s->own_scan_running) {
+	int scan_work = !!wpa_s->scan_work;
+
+#ifdef CONFIG_P2P
+	scan_work |= !!wpa_s->p2p_scan_work;
+#endif /* CONFIG_P2P */
+
+	if (scan_work && wpa_s->own_scan_running) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "Abort an ongoing scan");
 		return wpa_drv_abort_scan(wpa_s);
 	}

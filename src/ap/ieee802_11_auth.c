@@ -15,7 +15,6 @@
 
 #include "utils/common.h"
 #include "utils/eloop.h"
-#include "crypto/sha1.h"
 #include "radius/radius.h"
 #include "radius/radius_client.h"
 #include "hostapd.h"
@@ -77,23 +76,13 @@ static void hostapd_acl_cache_free(struct hostapd_cached_radius_acl *acl_cache)
 static void copy_psk_list(struct hostapd_sta_wpa_psk_short **psk,
 			  struct hostapd_sta_wpa_psk_short *src)
 {
-	struct hostapd_sta_wpa_psk_short **copy_to;
-	struct hostapd_sta_wpa_psk_short *copy_from;
+	if (!psk)
+		return;
 
-	/* Copy PSK linked list */
-	copy_to = psk;
-	copy_from = src;
-	while (copy_from && copy_to) {
-		*copy_to = os_zalloc(sizeof(struct hostapd_sta_wpa_psk_short));
-		if (*copy_to == NULL)
-			break;
-		os_memcpy(*copy_to, copy_from,
-			  sizeof(struct hostapd_sta_wpa_psk_short));
-		copy_from = copy_from->next;
-		copy_to = &((*copy_to)->next);
-	}
-	if (copy_to)
-		*copy_to = NULL;
+	if (src)
+		src->ref++;
+
+	*psk = src;
 }
 
 
@@ -443,7 +432,7 @@ static void decode_tunnel_passwords(struct hostapd_data *hapd,
 				    struct hostapd_cached_radius_acl *cache)
 {
 	int passphraselen;
-	char *passphrase, *strpassphrase;
+	char *passphrase;
 	size_t i;
 	struct hostapd_sta_wpa_psk_short *psk;
 
@@ -460,23 +449,40 @@ static void decode_tunnel_passwords(struct hostapd_data *hapd,
 		 */
 		if (passphrase == NULL)
 			break;
+
+		/*
+		 * Passphase should be 8..63 chars (to be hashed with SSID)
+		 * or 64 chars hex string (no separate hashing with SSID).
+		 */
+
+		if (passphraselen < MIN_PASSPHRASE_LEN ||
+		    passphraselen > MAX_PASSPHRASE_LEN + 1)
+			continue;
+
 		/*
 		 * passphrase does not contain the NULL termination.
 		 * Add it here as pbkdf2_sha1() requires it.
 		 */
-		strpassphrase = os_zalloc(passphraselen + 1);
 		psk = os_zalloc(sizeof(struct hostapd_sta_wpa_psk_short));
-		if (strpassphrase && psk) {
-			os_memcpy(strpassphrase, passphrase, passphraselen);
-			pbkdf2_sha1(strpassphrase,
-				    hapd->conf->ssid.ssid,
-				    hapd->conf->ssid.ssid_len, 4096,
-				    psk->psk, PMK_LEN);
+		if (psk) {
+			if ((passphraselen == MAX_PASSPHRASE_LEN + 1) &&
+			    (hexstr2bin(passphrase, psk->psk, PMK_LEN) < 0)) {
+				hostapd_logger(hapd, cache->addr,
+					       HOSTAPD_MODULE_RADIUS,
+					       HOSTAPD_LEVEL_WARNING,
+					       "invalid hex string (%d chars) in Tunnel-Password",
+					       passphraselen);
+				goto skip;
+			} else if (passphraselen <= MAX_PASSPHRASE_LEN) {
+				os_memcpy(psk->passphrase, passphrase,
+					  passphraselen);
+				psk->is_passphrase = 1;
+			}
 			psk->next = cache->psk;
 			cache->psk = psk;
 			psk = NULL;
 		}
-		os_free(strpassphrase);
+skip:
 		os_free(psk);
 		os_free(passphrase);
 	}
@@ -671,6 +677,12 @@ void hostapd_acl_deinit(struct hostapd_data *hapd)
 
 void hostapd_free_psk_list(struct hostapd_sta_wpa_psk_short *psk)
 {
+	if (psk && psk->ref) {
+		/* This will be freed when the last reference is dropped. */
+		psk->ref--;
+		return;
+	}
+
 	while (psk) {
 		struct hostapd_sta_wpa_psk_short *prev = psk;
 		psk = psk->next;

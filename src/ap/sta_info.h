@@ -118,6 +118,7 @@ struct sta_info {
 	int acct_session_started;
 	int acct_terminate_cause; /* Acct-Terminate-Cause */
 	int acct_interim_interval; /* Acct-Interim-Interval */
+	unsigned int acct_interim_errors;
 
 	/* For extending 32-bit driver counters to 64-bit counters */
 	u32 last_rx_bytes_hi;
@@ -190,6 +191,9 @@ struct sta_info {
 		       * enum mbo_cellular_capa values */
 	struct mbo_non_pref_chan_info *non_pref_chan;
 #endif /* CONFIG_MBO */
+
+	u8 *supp_op_classes; /* Supported Operating Classes element, if
+			      * received, starting from the Length field */
 };
 
 
