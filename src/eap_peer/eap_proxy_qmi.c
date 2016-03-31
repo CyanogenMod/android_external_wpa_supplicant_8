@@ -49,6 +49,8 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 #endif
 #include <pthread.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 
 #define IMSI_LENGTH 15
 #define WPA_UIM_QMI_EVENT_MASK_CARD_STATUS        \
@@ -80,6 +82,21 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif /* CONFIG_EAP_PROXY_MSM8994_TARGET */
 #define EAP_PROXY_TARGET_FUSION4_5_PCIE    "fusion4_5_pcie"
 #define EAP_PROXY_BASEBAND_VALUE_UNDEFINED "undefined"
+
+#ifndef ANDROID
+#ifdef SYS_gettid
+static inline pid_t gettid(void)
+{
+	return syscall(SYS_gettid);
+}
+#else
+static inline pid_t gettid(void)
+{
+	return -1;
+}
+#endif
+#endif
+
 
 static void eap_proxy_eapol_sm_set_bool(struct eap_proxy_sm *sm,
 			 enum eapol_bool_var var, Boolean value);
@@ -1795,6 +1812,10 @@ static Boolean eap_proxy_build_identity(struct eap_proxy_sm *eap_proxy, u8 id, s
 		wpa_printf(MSG_ERROR, " QMI-ERROR Unable to start the EAP session;"
 			   " error_ret=%d; qmi_err=%d\n", qmiRetCode,
 			   eap_auth_start_resp.resp.error);
+		if(eap_auth_start.eap_method_mask == QMI_AUTH_EAP_METHOD_MASK_AKA_PRIME_V01 &&
+		   eap_auth_start_resp.resp.error == QMI_ERR_INVALID_ARG_V01)
+			wpa_printf(MSG_ERROR, "QMI-ERROR AKA' not supported\n");
+
 		return FALSE;
 		}
 		eap_proxy->eap_auth_session_flag[sim_num] = TRUE;
