@@ -268,7 +268,8 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 			       struct nlattr *authorized,
 			       struct nlattr *key_replay_ctr,
 			       struct nlattr *ptk_kck,
-			       struct nlattr *ptk_kek)
+			       struct nlattr *ptk_kek,
+			       struct nlattr *subnet_status)
 {
 	union wpa_event_data event;
 	const u8 *ssid;
@@ -365,6 +366,17 @@ static void mlme_event_connect(struct wpa_driver_nl80211_data *drv,
 	if (ptk_kek) {
 		event.assoc_info.ptk_kek = nla_data(ptk_kek);
 		event.assoc_info.ptk_kek_len = nla_len(ptk_kek);
+	}
+
+	if (subnet_status) {
+		/*
+		 * At least for now, this is only available from
+		 * QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_SUBNET_STATUS and that
+		 * attribute has the same values 0, 1, 2 as are used in the
+		 * variable here, so no mapping between different values are
+		 * needed.
+		 */
+		event.assoc_info.subnet_status = nla_get_u8(subnet_status);
 	}
 
 	wpa_supplicant_event(drv->ctx, EVENT_ASSOC, &event);
@@ -968,7 +980,7 @@ static void mlme_event_ft_event(struct wpa_driver_nl80211_data *drv,
 
 
 static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
-			    struct nlattr *tb[])
+			    struct nlattr *tb[], int external_scan)
 {
 	union wpa_event_data event;
 	struct nlattr *nl;
@@ -978,7 +990,7 @@ static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
 	int freqs[MAX_REPORT_FREQS];
 	int num_freqs = 0;
 
-	if (drv->scan_for_auth) {
+	if (!external_scan && drv->scan_for_auth) {
 		drv->scan_for_auth = 0;
 		wpa_printf(MSG_DEBUG, "nl80211: Scan results for missing "
 			   "cfg80211 BSS entry");
@@ -989,6 +1001,8 @@ static void send_scan_event(struct wpa_driver_nl80211_data *drv, int aborted,
 	os_memset(&event, 0, sizeof(event));
 	info = &event.scan_info;
 	info->aborted = aborted;
+	info->external_scan = external_scan;
+	info->nl_scan_event = 1;
 
 	if (tb[NL80211_ATTR_SCAN_SSIDS]) {
 		nla_for_each_nested(nl, tb[NL80211_ATTR_SCAN_SSIDS], rem) {
@@ -1596,7 +1610,8 @@ static void qca_nl80211_key_mgmt_auth(struct wpa_driver_nl80211_data *drv,
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_AUTHORIZED],
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_KEY_REPLAY_CTR],
 			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KCK],
-			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK]);
+			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_PTK_KEK],
+			   tb[QCA_WLAN_VENDOR_ATTR_ROAM_AUTH_SUBNET_STATUS]);
 }
 
 
@@ -1686,6 +1701,138 @@ static void qca_nl80211_dfs_offload_radar_event(
 }
 
 
+static void qca_nl80211_scan_trigger_event(struct wpa_driver_nl80211_data *drv,
+					   u8 *data, size_t len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1];
+	u64 cookie = 0;
+	union wpa_event_data event;
+	struct scan_info *info;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_SCAN_MAX,
+		      (struct nlattr *) data, len, NULL) ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE])
+		return;
+
+	cookie = nla_get_u64(tb[QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE]);
+	if (cookie != drv->vendor_scan_cookie) {
+		/* External scan trigger event, ignore */
+		return;
+	}
+
+	/* Cookie match, own scan */
+	os_memset(&event, 0, sizeof(event));
+	info = &event.scan_info;
+	info->external_scan = 0;
+	info->nl_scan_event = 0;
+
+	drv->scan_state = SCAN_STARTED;
+	wpa_supplicant_event(drv->ctx, EVENT_SCAN_STARTED, &event);
+}
+
+
+static void send_vendor_scan_event(struct wpa_driver_nl80211_data *drv,
+				   int aborted, struct nlattr *tb[],
+				   int external_scan)
+{
+	union wpa_event_data event;
+	struct nlattr *nl;
+	int rem;
+	struct scan_info *info;
+	int freqs[MAX_REPORT_FREQS];
+	int num_freqs = 0;
+
+	os_memset(&event, 0, sizeof(event));
+	info = &event.scan_info;
+	info->aborted = aborted;
+	info->external_scan = external_scan;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_SSIDS]) {
+		nla_for_each_nested(nl,
+				    tb[QCA_WLAN_VENDOR_ATTR_SCAN_SSIDS], rem) {
+			struct wpa_driver_scan_ssid *s =
+				&info->ssids[info->num_ssids];
+			s->ssid = nla_data(nl);
+			s->ssid_len = nla_len(nl);
+			wpa_printf(MSG_DEBUG,
+				   "nl80211: Scan probed for SSID '%s'",
+				   wpa_ssid_txt(s->ssid, s->ssid_len));
+			info->num_ssids++;
+			if (info->num_ssids == WPAS_MAX_SCAN_SSIDS)
+				break;
+		}
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES]) {
+		char msg[200], *pos, *end;
+		int res;
+
+		pos = msg;
+		end = pos + sizeof(msg);
+		*pos = '\0';
+
+		nla_for_each_nested(nl,
+				    tb[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES],
+				    rem) {
+			freqs[num_freqs] = nla_get_u32(nl);
+			res = os_snprintf(pos, end - pos, " %d",
+					  freqs[num_freqs]);
+			if (!os_snprintf_error(end - pos, res))
+				pos += res;
+			num_freqs++;
+			if (num_freqs == MAX_REPORT_FREQS - 1)
+				break;
+		}
+
+		info->freqs = freqs;
+		info->num_freqs = num_freqs;
+		wpa_printf(MSG_DEBUG, "nl80211: Scan included frequencies:%s",
+			   msg);
+	}
+	wpa_supplicant_event(drv->ctx, EVENT_SCAN_RESULTS, &event);
+}
+
+
+static void qca_nl80211_scan_done_event(struct wpa_driver_nl80211_data *drv,
+					u8 *data, size_t len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1];
+	u64 cookie = 0;
+	enum scan_status status;
+	int external_scan;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_SCAN_MAX,
+		      (struct nlattr *) data, len, NULL) ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_SCAN_STATUS] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE])
+		return;
+
+	status = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCAN_STATUS]);
+	if (status >= VENDOR_SCAN_STATUS_MAX)
+		return; /* invalid status */
+
+	cookie = nla_get_u64(tb[QCA_WLAN_VENDOR_ATTR_SCAN_COOKIE]);
+	if (cookie != drv->vendor_scan_cookie) {
+		/* Event from an external scan, get scan results */
+		external_scan = 1;
+	} else {
+		external_scan = 0;
+		if (status == VENDOR_SCAN_STATUS_NEW_RESULTS)
+			drv->scan_state = SCAN_COMPLETED;
+		else
+			drv->scan_state = SCAN_ABORTED;
+
+		eloop_cancel_timeout(wpa_driver_nl80211_scan_timeout, drv,
+				     drv->ctx);
+		drv->vendor_scan_cookie = 0;
+		drv->last_scan_cmd = 0;
+	}
+
+	send_vendor_scan_event(drv, (status == VENDOR_SCAN_STATUS_ABORTED), tb,
+			       external_scan);
+}
+
+
 static void nl80211_vendor_event_qca(struct wpa_driver_nl80211_data *drv,
 				     u32 subcmd, u8 *data, size_t len)
 {
@@ -1708,6 +1855,12 @@ static void nl80211_vendor_event_qca(struct wpa_driver_nl80211_data *drv,
 	case QCA_NL80211_VENDOR_SUBCMD_DFS_OFFLOAD_CAC_NOP_FINISHED:
 	case QCA_NL80211_VENDOR_SUBCMD_DFS_OFFLOAD_RADAR_DETECTED:
 		qca_nl80211_dfs_offload_radar_event(drv, subcmd, data, len);
+		break;
+	case QCA_NL80211_VENDOR_SUBCMD_TRIGGER_SCAN:
+		qca_nl80211_scan_trigger_event(drv, data, len);
+		break;
+	case QCA_NL80211_VENDOR_SUBCMD_SCAN_DONE:
+		qca_nl80211_scan_done_event(drv, data, len);
 		break;
 	default:
 		wpa_printf(MSG_DEBUG,
@@ -1831,6 +1984,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 {
 	struct wpa_driver_nl80211_data *drv = bss->drv;
 	union wpa_event_data data;
+	int external_scan_event = 0;
 
 	wpa_printf(MSG_DEBUG, "nl80211: Drv Event %d (%s) received for %s",
 		   cmd, nl80211_command_to_string(cmd), bss->ifname);
@@ -1883,28 +2037,38 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 	case NL80211_CMD_NEW_SCAN_RESULTS:
 		wpa_dbg(drv->ctx, MSG_DEBUG,
 			"nl80211: New scan results available");
-		drv->scan_state = SCAN_COMPLETED;
 		drv->scan_complete_events = 1;
-		eloop_cancel_timeout(wpa_driver_nl80211_scan_timeout, drv,
-				     drv->ctx);
-		send_scan_event(drv, 0, tb);
+		if (drv->last_scan_cmd == NL80211_CMD_TRIGGER_SCAN) {
+			drv->scan_state = SCAN_COMPLETED;
+			eloop_cancel_timeout(wpa_driver_nl80211_scan_timeout,
+					     drv, drv->ctx);
+			drv->last_scan_cmd = 0;
+		} else {
+			external_scan_event = 1;
+		}
+		send_scan_event(drv, 0, tb, external_scan_event);
 		break;
 	case NL80211_CMD_SCHED_SCAN_RESULTS:
 		wpa_dbg(drv->ctx, MSG_DEBUG,
 			"nl80211: New sched scan results available");
 		drv->scan_state = SCHED_SCAN_RESULTS;
-		send_scan_event(drv, 0, tb);
+		send_scan_event(drv, 0, tb, 0);
 		break;
 	case NL80211_CMD_SCAN_ABORTED:
 		wpa_dbg(drv->ctx, MSG_DEBUG, "nl80211: Scan aborted");
-		drv->scan_state = SCAN_ABORTED;
-		/*
-		 * Need to indicate that scan results are available in order
-		 * not to make wpa_supplicant stop its scanning.
-		 */
-		eloop_cancel_timeout(wpa_driver_nl80211_scan_timeout, drv,
-				     drv->ctx);
-		send_scan_event(drv, 1, tb);
+		if (drv->last_scan_cmd == NL80211_CMD_TRIGGER_SCAN) {
+			drv->scan_state = SCAN_ABORTED;
+			/*
+			 * Need to indicate that scan results are available in
+			 * order not to make wpa_supplicant stop its scanning.
+			 */
+			eloop_cancel_timeout(wpa_driver_nl80211_scan_timeout,
+					     drv, drv->ctx);
+			drv->last_scan_cmd = 0;
+		} else {
+			external_scan_event = 1;
+		}
+		send_scan_event(drv, 1, tb, external_scan_event);
 		break;
 	case NL80211_CMD_AUTHENTICATE:
 	case NL80211_CMD_ASSOCIATE:
@@ -1927,7 +2091,7 @@ static void do_process_drv_event(struct i802_bss *bss, int cmd,
 				   tb[NL80211_ATTR_MAC],
 				   tb[NL80211_ATTR_REQ_IE],
 				   tb[NL80211_ATTR_RESP_IE],
-				   NULL, NULL, NULL, NULL);
+				   NULL, NULL, NULL, NULL, NULL);
 		break;
 	case NL80211_CMD_CH_SWITCH_NOTIFY:
 		mlme_event_ch_switch(drv,

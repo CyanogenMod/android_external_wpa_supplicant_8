@@ -225,7 +225,7 @@ struct wpa_params {
 	 * This can also be %NULL. In such a case, if a P2P Device dedicated
 	 * interfaces is created, the main configuration file will be used.
 	 */
-	const char *conf_p2p_dev;
+	char *conf_p2p_dev;
 #endif /* CONFIG_P2P */
 
 };
@@ -300,8 +300,17 @@ struct wpa_radio {
 	char name[16]; /* from driver_ops get_radio_name() or empty if not
 			* available */
 	unsigned int external_scan_running:1;
+	unsigned int num_active_works;
 	struct dl_list ifaces; /* struct wpa_supplicant::radio_list entries */
 	struct dl_list work; /* struct wpa_radio_work::list entries */
+};
+
+#define MAX_ACTIVE_WORKS 2
+
+enum wpa_radio_work_band {
+	BAND_2_4_GHZ = BIT(0),
+	BAND_5_GHZ = BIT(1),
+	BAND_60_GHZ = BIT(2),
 };
 
 /**
@@ -316,6 +325,7 @@ struct wpa_radio_work {
 	void *ctx;
 	unsigned int started:1;
 	struct os_reltime time;
+	unsigned int bands;
 };
 
 int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
@@ -845,6 +855,9 @@ struct wpa_supplicant {
 	int *p2p_group_common_freqs;
 	unsigned int p2p_group_common_freqs_num;
 	u8 p2ps_join_addr[ETH_ALEN];
+
+	unsigned int p2p_go_max_oper_chwidth;
+	unsigned int p2p_go_vht_center_freq2;
 #endif /* CONFIG_P2P */
 
 	struct wpa_ssid *bgscan_ssid;

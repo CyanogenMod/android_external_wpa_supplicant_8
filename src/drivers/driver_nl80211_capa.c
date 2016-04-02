@@ -589,12 +589,21 @@ static int wiphy_info_handler(struct nl_msg *msg, void *arg)
 				case QCA_NL80211_VENDOR_SUBCMD_GET_FEATURES:
 					drv->get_features_vendor_cmd_avail = 1;
 					break;
+				case QCA_NL80211_VENDOR_SUBCMD_GET_PREFERRED_FREQ_LIST:
+					drv->get_pref_freq_list = 1;
+					break;
+				case QCA_NL80211_VENDOR_SUBCMD_SET_PROBABLE_OPER_CHANNEL:
+					drv->set_prob_oper_freq = 1;
+					break;
 				case QCA_NL80211_VENDOR_SUBCMD_DO_ACS:
 					drv->capa.flags |=
 						WPA_DRIVER_FLAGS_ACS_OFFLOAD;
 					break;
 				case QCA_NL80211_VENDOR_SUBCMD_SETBAND:
 					drv->setband_vendor_cmd_avail = 1;
+					break;
+				case QCA_NL80211_VENDOR_SUBCMD_TRIGGER_SCAN:
+					drv->scan_vendor_cmd_avail = 1;
 					break;
 				}
 			}
@@ -751,6 +760,7 @@ static void qca_nl80211_check_dfs_capa(struct wpa_driver_nl80211_data *drv)
 struct features_info {
 	u8 *flags;
 	size_t flags_len;
+	struct wpa_driver_capa *capa;
 };
 
 
@@ -776,6 +786,19 @@ static int features_info_handler(struct nl_msg *msg, void *arg)
 			info->flags = nla_data(attr);
 			info->flags_len = nla_len(attr);
 		}
+		attr = tb_vendor[QCA_WLAN_VENDOR_ATTR_CONCURRENCY_CAPA];
+		if (attr)
+			info->capa->conc_capab = nla_get_u32(attr);
+
+		attr = tb_vendor[
+			QCA_WLAN_VENDOR_ATTR_MAX_CONCURRENT_CHANNELS_2_4_BAND];
+		if (attr)
+			info->capa->max_conc_chan_2_4 = nla_get_u32(attr);
+
+		attr = tb_vendor[
+			QCA_WLAN_VENDOR_ATTR_MAX_CONCURRENT_CHANNELS_5_0_BAND];
+		if (attr)
+			info->capa->max_conc_chan_5_0 = nla_get_u32(attr);
 	}
 
 	return NL_SKIP;
@@ -810,6 +833,7 @@ static void qca_nl80211_get_features(struct wpa_driver_nl80211_data *drv)
 	}
 
 	os_memset(&info, 0, sizeof(info));
+	info.capa = &drv->capa;
 	ret = send_and_recv_msgs(drv, msg, features_info_handler, &info);
 	if (ret || !info.flags)
 		return;
@@ -819,6 +843,10 @@ static void qca_nl80211_get_features(struct wpa_driver_nl80211_data *drv)
 
 	if (check_feature(QCA_WLAN_VENDOR_FEATURE_SUPPORT_HW_MODE_ANY, &info))
 		drv->capa.flags |= WPA_DRIVER_FLAGS_SUPPORT_HW_MODE_ANY;
+
+	if (check_feature(QCA_WLAN_VENDOR_FEATURE_OFFCHANNEL_SIMULTANEOUS,
+			  &info))
+		drv->capa.flags |= WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS;
 }
 
 
@@ -903,6 +931,16 @@ int wpa_driver_nl80211_capa(struct wpa_driver_nl80211_data *drv)
 
 	qca_nl80211_check_dfs_capa(drv);
 	qca_nl80211_get_features(drv);
+
+	/*
+	 * To enable offchannel simultaneous support in wpa_supplicant, the
+	 * underlying driver needs to support the same along with offchannel TX.
+	 * Offchannel TX support is needed since remain_on_channel and
+	 * action_tx use some common data structures and hence cannot be
+	 * scheduled simultaneously.
+	 */
+	if (!(drv->capa.flags & WPA_DRIVER_FLAGS_OFFCHANNEL_TX))
+		drv->capa.flags &= ~WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS;
 
 	return 0;
 }
@@ -1360,7 +1398,7 @@ static void nl80211_reg_rule_sec(struct nlattr *tb[],
 
 
 static void nl80211_set_vht_mode(struct hostapd_hw_modes *mode, int start,
-				 int end)
+				 int end, int max_bw)
 {
 	int c;
 
@@ -1377,6 +1415,32 @@ static void nl80211_set_vht_mode(struct hostapd_hw_modes *mode, int start,
 
 		if (chan->freq - 70 >= start && chan->freq + 10 <= end)
 			chan->flag |= HOSTAPD_CHAN_VHT_70_10;
+
+		if (max_bw >= 160) {
+			if (chan->freq - 10 >= start && chan->freq + 150 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_10_150;
+
+			if (chan->freq - 30 >= start && chan->freq + 130 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_30_130;
+
+			if (chan->freq - 50 >= start && chan->freq + 110 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_50_110;
+
+			if (chan->freq - 70 >= start && chan->freq + 90 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_70_90;
+
+			if (chan->freq - 90 >= start && chan->freq + 70 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_90_70;
+
+			if (chan->freq - 110 >= start && chan->freq + 50 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_110_50;
+
+			if (chan->freq - 130 >= start && chan->freq + 30 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_130_30;
+
+			if (chan->freq - 150 >= start && chan->freq + 10 <= end)
+				chan->flag |= HOSTAPD_CHAN_VHT_150_10;
+		}
 	}
 }
 
@@ -1407,7 +1471,7 @@ static void nl80211_reg_rule_vht(struct nlattr *tb[],
 		if (!results->modes[m].vht_capab)
 			continue;
 
-		nl80211_set_vht_mode(&results->modes[m], start, end);
+		nl80211_set_vht_mode(&results->modes[m], start, end, max_bw);
 	}
 }
 

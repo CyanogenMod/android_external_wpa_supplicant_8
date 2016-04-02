@@ -23,9 +23,14 @@
 #define P2P_MAX_QUERY_HASH 6
 
 /**
+ * P2P_MAX_PREF_CHANNELS - Maximum number of preferred channels
+ */
+#define P2P_MAX_PREF_CHANNELS 100
+
+/**
  * P2P_MAX_REG_CLASSES - Maximum number of regulatory classes
  */
-#define P2P_MAX_REG_CLASSES 10
+#define P2P_MAX_REG_CLASSES 15
 
 /**
  * P2P_MAX_REG_CLASS_CHANNELS - Maximum number of channels per regulatory class
@@ -92,6 +97,10 @@ struct p2p_go_neg_results {
 	int ht40;
 
 	int vht;
+
+	u8 max_oper_chwidth;
+
+	unsigned int vht_center_freq2;
 
 	/**
 	 * ssid - SSID of the group
@@ -1029,6 +1038,20 @@ struct p2p_config {
 	 * P2PS_SETUP_* bitmap is used as the parameters and return value.
 	 */
 	u8 (*p2ps_group_capability)(void *ctx, u8 incoming, u8 role);
+
+	/**
+	 * get_pref_freq_list - Get preferred frequency list for an interface
+	 * @ctx: Callback context from cb_ctx
+	 * @go: Whether the use if for GO role
+	 * @len: Length of freq_list in entries (both IN and OUT)
+	 * @freq_list: Buffer for returning the preferred frequencies (MHz)
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function can be used to query the preferred frequency list from
+	 * the driver specific to a particular interface type.
+	 */
+	int (*get_pref_freq_list)(void *ctx, int go,
+				  unsigned int *len, unsigned int *freq_list);
 };
 
 
@@ -2252,5 +2275,9 @@ int p2p_service_add_asp(struct p2p_data *p2p, int auto_accept, u32 adv_id,
 int p2p_service_del_asp(struct p2p_data *p2p, u32 adv_id);
 void p2p_service_flush_asp(struct p2p_data *p2p);
 struct p2ps_advertisement * p2p_get_p2ps_adv_list(struct p2p_data *p2p);
+
+void p2p_set_own_pref_freq_list(struct p2p_data *p2p,
+				const unsigned int *pref_freq_list,
+				unsigned int size);
 
 #endif /* P2P_H */

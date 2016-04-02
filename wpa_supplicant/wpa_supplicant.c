@@ -1729,8 +1729,10 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 	struct hostapd_channel_data *pri_chan = NULL, *sec_chan = NULL;
 	u8 channel;
 	int i, chan_idx, ht40 = -1, res, obss_scan = 1;
-	unsigned int j;
+	unsigned int j, k;
 	struct hostapd_freq_params vht_freq;
+	int chwidth, seg0, seg1;
+	u32 vht_caps = 0;
 
 	freq->freq = ssid->frequency;
 
@@ -1916,12 +1918,45 @@ void ibss_mesh_setup_freq(struct wpa_supplicant *wpa_s,
 			return;
 	}
 
+	chwidth = VHT_CHANWIDTH_80MHZ;
+	seg0 = vht80[j] + 6;
+	seg1 = 0;
+
+	if (ssid->max_oper_chwidth == VHT_CHANWIDTH_80P80MHZ) {
+		/* setup center_freq2, bandwidth */
+		for (k = 0; k < ARRAY_SIZE(vht80); k++) {
+			/* Only accept 80 MHz segments separated by a gap */
+			if (j == k || abs(vht80[j] - vht80[k]) == 16)
+				continue;
+			for (i = vht80[k]; i < vht80[k] + 16; i += 4) {
+				struct hostapd_channel_data *chan;
+
+				chan = hw_get_channel_chan(mode, i, NULL);
+				if (!chan)
+					continue;
+
+				if (chan->flag & (HOSTAPD_CHAN_DISABLED |
+						  HOSTAPD_CHAN_NO_IR |
+						  HOSTAPD_CHAN_RADAR))
+					continue;
+
+				/* Found a suitable second segment for 80+80 */
+				chwidth = VHT_CHANWIDTH_80P80MHZ;
+				vht_caps |=
+					VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ;
+				seg1 = vht80[k] + 6;
+			}
+
+			if (chwidth == VHT_CHANWIDTH_80P80MHZ)
+				break;
+		}
+	}
+
 	if (hostapd_set_freq_params(&vht_freq, mode->mode, freq->freq,
 				    freq->channel, freq->ht_enabled,
 				    vht_freq.vht_enabled,
 				    freq->sec_channel_offset,
-				    VHT_CHANWIDTH_80MHZ,
-				    vht80[j] + 6, 0, 0) != 0)
+				    chwidth, seg0, seg1, vht_caps) != 0)
 		return;
 
 	*freq = vht_freq;
@@ -3858,6 +3893,56 @@ static int wpas_set_wowlan_triggers(struct wpa_supplicant *wpa_s,
 }
 
 
+static enum wpa_radio_work_band wpas_freq_to_band(int freq)
+{
+	if (freq < 3000)
+		return BAND_2_4_GHZ;
+	if (freq > 50000)
+		return BAND_60_GHZ;
+	return BAND_5_GHZ;
+}
+
+
+static unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s,
+				   const int *freqs)
+{
+	int i;
+	unsigned int band = 0;
+
+	if (freqs) {
+		/* freqs are specified for the radio work */
+		for (i = 0; freqs[i]; i++)
+			band |= wpas_freq_to_band(freqs[i]);
+	} else {
+		/*
+		 * freqs are not specified, implies all
+		 * the supported freqs by HW
+		 */
+		for (i = 0; i < wpa_s->hw.num_modes; i++) {
+			if (wpa_s->hw.modes[i].num_channels != 0) {
+				if (wpa_s->hw.modes[i].mode ==
+				    HOSTAPD_MODE_IEEE80211B ||
+				    wpa_s->hw.modes[i].mode ==
+				    HOSTAPD_MODE_IEEE80211G)
+					band |= BAND_2_4_GHZ;
+				else if (wpa_s->hw.modes[i].mode ==
+					 HOSTAPD_MODE_IEEE80211A)
+					band |= BAND_5_GHZ;
+				else if (wpa_s->hw.modes[i].mode ==
+					 HOSTAPD_MODE_IEEE80211AD)
+					band |= BAND_60_GHZ;
+				else if (wpa_s->hw.modes[i].mode ==
+					 HOSTAPD_MODE_IEEE80211ANY)
+					band = BAND_2_4_GHZ | BAND_5_GHZ |
+						BAND_60_GHZ;
+			}
+		}
+	}
+
+	return band;
+}
+
+
 static struct wpa_radio * radio_add_interface(struct wpa_supplicant *wpa_s,
 					      const char *rn)
 {
@@ -3910,8 +3995,100 @@ static void radio_work_free(struct wpa_radio_work *work)
 	}
 #endif /* CONFIG_P2P */
 
+	if (work->started) {
+		work->wpa_s->radio->num_active_works--;
+		wpa_dbg(work->wpa_s, MSG_DEBUG,
+			"radio_work_free('%s'@%p: num_active_works --> %u",
+			work->type, work,
+			work->wpa_s->radio->num_active_works);
+	}
+
 	dl_list_del(&work->list);
 	os_free(work);
+}
+
+
+static struct wpa_radio_work * radio_work_get_next_work(struct wpa_radio *radio)
+{
+	struct wpa_radio_work *active_work = NULL;
+	struct wpa_radio_work *tmp;
+
+	/* Get the active work to know the type and band. */
+	dl_list_for_each(tmp, &radio->work, struct wpa_radio_work, list) {
+		if (tmp->started) {
+			active_work = tmp;
+			break;
+		}
+	}
+
+	if (!active_work) {
+		/* No active work, start one */
+		radio->num_active_works = 0;
+		dl_list_for_each(tmp, &radio->work, struct wpa_radio_work,
+				 list) {
+			if (os_strcmp(tmp->type, "scan") == 0 &&
+			    radio->external_scan_running &&
+			    (((struct wpa_driver_scan_params *)
+			      tmp->ctx)->only_new_results ||
+			     tmp->wpa_s->clear_driver_scan_cache))
+				continue;
+			return tmp;
+		}
+		return NULL;
+	}
+
+	if (os_strcmp(active_work->type, "sme-connect") == 0 ||
+	    os_strcmp(active_work->type, "connect") == 0) {
+		/*
+		 * If the active work is either connect or sme-connect,
+		 * do not parallelize them with other radio works.
+		 */
+		wpa_dbg(active_work->wpa_s, MSG_DEBUG,
+			"Do not parallelize radio work with %s",
+			active_work->type);
+		return NULL;
+	}
+
+	dl_list_for_each(tmp, &radio->work, struct wpa_radio_work, list) {
+		if (tmp->started)
+			continue;
+
+		/*
+		 * If connect or sme-connect are enqueued, parallelize only
+		 * those operations ahead of them in the queue.
+		 */
+		if (os_strcmp(tmp->type, "connect") == 0 ||
+		    os_strcmp(tmp->type, "sme-connect") == 0)
+			break;
+
+		/*
+		 * Check that the radio works are distinct and
+		 * on different bands.
+		 */
+		if (os_strcmp(active_work->type, tmp->type) != 0 &&
+		    (active_work->bands != tmp->bands)) {
+			/*
+			 * If a scan has to be scheduled through nl80211 scan
+			 * interface and if an external scan is already running,
+			 * do not schedule the scan since it is likely to get
+			 * rejected by kernel.
+			 */
+			if (os_strcmp(tmp->type, "scan") == 0 &&
+			    radio->external_scan_running &&
+			    (((struct wpa_driver_scan_params *)
+			      tmp->ctx)->only_new_results ||
+			     tmp->wpa_s->clear_driver_scan_cache))
+				continue;
+
+			wpa_dbg(active_work->wpa_s, MSG_DEBUG,
+				"active_work:%s new_work:%s",
+				active_work->type, tmp->type);
+			return tmp;
+		}
+	}
+
+	/* Did not find a radio work to schedule in parallel. */
+	return NULL;
 }
 
 
@@ -3923,26 +4100,48 @@ static void radio_start_next_work(void *eloop_ctx, void *timeout_ctx)
 	struct wpa_supplicant *wpa_s;
 
 	work = dl_list_first(&radio->work, struct wpa_radio_work, list);
-	if (work == NULL)
-		return;
-
-	if (work->started)
-		return; /* already started and still in progress */
-
-	wpa_s = dl_list_first(&radio->ifaces, struct wpa_supplicant,
-			      radio_list);
-	if (wpa_s && wpa_s->radio->external_scan_running) {
-		wpa_printf(MSG_DEBUG, "Delay radio work start until externally triggered scan completes");
+	if (work == NULL) {
+		radio->num_active_works = 0;
 		return;
 	}
 
+	wpa_s = dl_list_first(&radio->ifaces, struct wpa_supplicant,
+			      radio_list);
+
+	if (!(wpa_s &&
+	      wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS)) {
+		if (work->started)
+			return; /* already started and still in progress */
+
+		if (wpa_s && wpa_s->radio->external_scan_running) {
+			wpa_printf(MSG_DEBUG, "Delay radio work start until externally triggered scan completes");
+			return;
+		}
+	} else {
+		work = NULL;
+		if (radio->num_active_works < MAX_ACTIVE_WORKS) {
+			/* get the work to schedule next */
+			work = radio_work_get_next_work(radio);
+		}
+		if (!work)
+			return;
+	}
+
+	wpa_s = work->wpa_s;
 	os_get_reltime(&now);
 	os_reltime_sub(&now, &work->time, &diff);
-	wpa_dbg(work->wpa_s, MSG_DEBUG, "Starting radio work '%s'@%p after %ld.%06ld second wait",
+	wpa_dbg(wpa_s, MSG_DEBUG,
+		"Starting radio work '%s'@%p after %ld.%06ld second wait",
 		work->type, work, diff.sec, diff.usec);
 	work->started = 1;
 	work->time = now;
+	radio->num_active_works++;
+
 	work->cb(work, 0);
+
+	if ((wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS) &&
+	    radio->num_active_works < MAX_ACTIVE_WORKS)
+		radio_work_check_next(wpa_s);
 }
 
 
@@ -4050,6 +4249,7 @@ int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
 		   void (*cb)(struct wpa_radio_work *work, int deinit),
 		   void *ctx)
 {
+	struct wpa_radio *radio = wpa_s->radio;
 	struct wpa_radio_work *work;
 	int was_empty;
 
@@ -4064,6 +4264,16 @@ int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
 	work->cb = cb;
 	work->ctx = ctx;
 
+	if (freq)
+		work->bands = wpas_freq_to_band(freq);
+	else if (os_strcmp(type, "scan") == 0 ||
+		 os_strcmp(type, "p2p-scan") == 0)
+		work->bands = wpas_get_bands(wpa_s,
+					     ((struct wpa_driver_scan_params *)
+					      ctx)->freqs);
+	else
+		work->bands = wpas_get_bands(wpa_s, NULL);
+
 	was_empty = dl_list_empty(&wpa_s->radio->work);
 	if (next)
 		dl_list_add(&wpa_s->radio->work, &work->list);
@@ -4071,6 +4281,12 @@ int radio_add_work(struct wpa_supplicant *wpa_s, unsigned int freq,
 		dl_list_add_tail(&wpa_s->radio->work, &work->list);
 	if (was_empty) {
 		wpa_dbg(wpa_s, MSG_DEBUG, "First radio work item in the queue - schedule start immediately");
+		radio_work_check_next(wpa_s);
+	} else if ((wpa_s->drv_flags & WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS)
+		   && radio->num_active_works < MAX_ACTIVE_WORKS) {
+		wpa_dbg(wpa_s, MSG_DEBUG,
+			"Try to schedule a radio work (num_active_works=%u)",
+			radio->num_active_works);
 		radio_work_check_next(wpa_s);
 	}
 
@@ -4825,9 +5041,11 @@ struct wpa_global * wpa_supplicant_init(struct wpa_params *params)
 	if (params->override_ctrl_interface)
 		global->params.override_ctrl_interface =
 			os_strdup(params->override_ctrl_interface);
+#ifdef CONFIG_P2P
 	if (params->conf_p2p_dev)
 		global->params.conf_p2p_dev =
 			os_strdup(params->conf_p2p_dev);
+#endif /* CONFIG_P2P */
 	wpa_debug_level = global->params.wpa_debug_level =
 		params->wpa_debug_level;
 	wpa_debug_show_keys = global->params.wpa_debug_show_keys =
@@ -4964,7 +5182,9 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	os_free(global->params.ctrl_interface_group);
 	os_free(global->params.override_driver);
 	os_free(global->params.override_ctrl_interface);
+#ifdef CONFIG_P2P
 	os_free(global->params.conf_p2p_dev);
+#endif /* CONFIG_P2P */
 
 	os_free(global->p2p_disallow_freq.range);
 	os_free(global->p2p_go_avoid_freq.range);

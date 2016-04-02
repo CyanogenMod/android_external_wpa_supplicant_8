@@ -4781,6 +4781,30 @@ static int p2p_ctrl_asp_provision(struct wpa_supplicant *wpa_s, char *cmd)
 }
 
 
+static int parse_freq(int chwidth, int freq2)
+{
+	if (freq2 < 0)
+		return -1;
+	if (freq2)
+		return VHT_CHANWIDTH_80P80MHZ;
+
+	switch (chwidth) {
+	case 0:
+	case 20:
+	case 40:
+		return VHT_CHANWIDTH_USE_HT;
+	case 80:
+		return VHT_CHANWIDTH_80MHZ;
+	case 160:
+		return VHT_CHANWIDTH_160MHZ;
+	default:
+		wpa_printf(MSG_DEBUG, "Unknown max oper bandwidth: %d",
+			   chwidth);
+		return -1;
+	}
+}
+
+
 static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 			    char *buf, size_t buflen)
 {
@@ -4797,7 +4821,7 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 	int go_intent = -1;
 	int freq = 0;
 	int pd;
-	int ht40, vht;
+	int ht40, vht, max_oper_chwidth, chwidth = 0, freq2 = 0;
 
 	if (!wpa_s->global->p2p_init_wpa_s)
 		return -1;
@@ -4858,6 +4882,18 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 			return -1;
 	}
 
+	pos2 = os_strstr(pos, " freq2=");
+	if (pos2)
+		freq2 = atoi(pos2 + 7);
+
+	pos2 = os_strstr(pos, " max_oper_chwidth=");
+	if (pos2)
+		chwidth = atoi(pos2 + 18);
+
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
 	if (os_strncmp(pos, "pin", 3) == 0) {
 		/* Request random PIN (to be displayed) and enable the PIN */
 		wps_method = WPS_PIN_DISPLAY;
@@ -4882,8 +4918,8 @@ static int p2p_ctrl_connect(struct wpa_supplicant *wpa_s, char *cmd,
 
 	new_pin = wpas_p2p_connect(wpa_s, addr, pin, wps_method,
 				   persistent_group, automatic, join,
-				   auth, go_intent, freq, persistent_id, pd,
-				   ht40, vht);
+				   auth, go_intent, freq, freq2, persistent_id,
+				   pd, ht40, vht, max_oper_chwidth);
 	if (new_pin == -2) {
 		os_memcpy(buf, "FAIL-CHANNEL-UNAVAILABLE\n", 25);
 		return 25;
@@ -5423,7 +5459,7 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	struct wpa_ssid *ssid;
 	u8 *_peer = NULL, peer[ETH_ALEN];
 	int freq = 0, pref_freq = 0;
-	int ht40, vht;
+	int ht40, vht, max_oper_chwidth, chwidth = 0, freq2 = 0;
 
 	id = atoi(cmd);
 	pos = os_strstr(cmd, " peer=");
@@ -5461,8 +5497,20 @@ static int p2p_ctrl_invite_persistent(struct wpa_supplicant *wpa_s, char *cmd)
 	ht40 = (os_strstr(cmd, " ht40") != NULL) || wpa_s->conf->p2p_go_ht40 ||
 		vht;
 
-	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, ht40, vht,
-			       pref_freq);
+	pos = os_strstr(cmd, "freq2=");
+	if (pos)
+		freq2 = atoi(pos + 6);
+
+	pos = os_strstr(cmd, " max_oper_chwidth=");
+	if (pos)
+		chwidth = atoi(pos + 18);
+
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
+	return wpas_p2p_invite(wpa_s, _peer, ssid, NULL, freq, freq2, ht40, vht,
+			       max_oper_chwidth, pref_freq);
 }
 
 
@@ -5509,7 +5557,8 @@ static int p2p_ctrl_invite(struct wpa_supplicant *wpa_s, char *cmd)
 
 
 static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
-					 int id, int freq, int ht40, int vht)
+					 int id, int freq, int vht_center_freq2,
+					 int ht40, int vht, int vht_chwidth)
 {
 	struct wpa_ssid *ssid;
 
@@ -5521,8 +5570,9 @@ static int p2p_ctrl_group_add_persistent(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
-	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq, 0, ht40, vht,
-					     NULL, 0, 0);
+	return wpas_p2p_group_add_persistent(wpa_s, ssid, 0, freq,
+					     vht_center_freq2, 0, ht40, vht,
+					     vht_chwidth, NULL, 0, 0);
 }
 
 
@@ -5531,11 +5581,14 @@ static int p2p_ctrl_group_add(struct wpa_supplicant *wpa_s, char *cmd)
 	int freq = 0, persistent = 0, group_id = -1;
 	int vht = wpa_s->conf->p2p_go_vht;
 	int ht40 = wpa_s->conf->p2p_go_ht40 || vht;
+	int max_oper_chwidth, chwidth = 0, freq2 = 0;
 	char *token, *context = NULL;
 
 	while ((token = str_token(cmd, " ", &context))) {
 		if (sscanf(token, "freq=%d", &freq) == 1 ||
-		    sscanf(token, "persistent=%d", &group_id) == 1) {
+		    sscanf(token, "freq2=%d", &freq2) == 1 ||
+		    sscanf(token, "persistent=%d", &group_id) == 1 ||
+		    sscanf(token, "max_oper_chwidth=%d", &chwidth) == 1) {
 			continue;
 		} else if (os_strcmp(token, "ht40") == 0) {
 			ht40 = 1;
@@ -5552,11 +5605,17 @@ static int p2p_ctrl_group_add(struct wpa_supplicant *wpa_s, char *cmd)
 		}
 	}
 
+	max_oper_chwidth = parse_freq(chwidth, freq2);
+	if (max_oper_chwidth < 0)
+		return -1;
+
 	if (group_id >= 0)
 		return p2p_ctrl_group_add_persistent(wpa_s, group_id,
-						     freq, ht40, vht);
+						     freq, freq2, ht40, vht,
+						     max_oper_chwidth);
 
-	return wpas_p2p_group_add(wpa_s, persistent, freq, ht40, vht);
+	return wpas_p2p_group_add(wpa_s, persistent, freq, freq2, ht40, vht,
+				  max_oper_chwidth);
 }
 
 
@@ -6540,6 +6599,53 @@ static int wpa_supplicant_signal_poll(struct wpa_supplicant *wpa_s, char *buf,
 	if (si.avg_beacon_signal) {
 		ret = os_snprintf(pos, end - pos,
 				  "AVG_BEACON_RSSI=%d\n", si.avg_beacon_signal);
+		if (os_snprintf_error(end - pos, ret))
+			return -1;
+		pos += ret;
+	}
+
+	return pos - buf;
+}
+
+
+static int wpas_ctrl_iface_get_pref_freq_list(
+	struct wpa_supplicant *wpa_s, char *cmd, char *buf, size_t buflen)
+{
+	unsigned int freq_list[100], num = 100, i;
+	int ret;
+	enum wpa_driver_if_type iface_type;
+	char *pos, *end;
+
+	pos = buf;
+	end = buf + buflen;
+
+	/* buf: "<interface_type>" */
+	if (os_strcmp(cmd, "STATION") == 0)
+		iface_type = WPA_IF_STATION;
+	else if (os_strcmp(cmd, "AP") == 0)
+		iface_type = WPA_IF_AP_BSS;
+	else if (os_strcmp(cmd, "P2P_GO") == 0)
+		iface_type = WPA_IF_P2P_GO;
+	else if (os_strcmp(cmd, "P2P_CLIENT") == 0)
+		iface_type = WPA_IF_P2P_CLIENT;
+	else if (os_strcmp(cmd, "IBSS") == 0)
+		iface_type = WPA_IF_IBSS;
+	else if (os_strcmp(cmd, "TDLS") == 0)
+		iface_type = WPA_IF_TDLS;
+	else
+		return -1;
+
+	wpa_printf(MSG_DEBUG,
+		   "CTRL_IFACE: GET_PREF_FREQ_LIST iface_type=%d (%s)",
+		   iface_type, buf);
+
+	ret = wpa_drv_get_pref_freq_list(wpa_s, iface_type, &num, freq_list);
+	if (ret)
+		return -1;
+
+	for (i = 0; i < num; i++) {
+		ret = os_snprintf(pos, end - pos, "%s%u",
+				  i > 0 ? "," : "", freq_list[i]);
 		if (os_snprintf_error(end - pos, ret))
 			return -1;
 		pos += ret;
@@ -8647,6 +8753,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "MAC_RAND_SCAN ", 14) == 0) {
 		if (wpas_ctrl_iface_mac_rand_scan(wpa_s, buf + 14))
 			reply_len = -1;
+	} else if (os_strncmp(buf, "GET_PREF_FREQ_LIST ", 19) == 0) {
+		reply_len = wpas_ctrl_iface_get_pref_freq_list(
+			wpa_s, buf + 19, reply, reply_size);
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;
