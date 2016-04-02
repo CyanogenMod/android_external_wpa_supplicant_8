@@ -28,6 +28,7 @@
 #include "crypto.h"
 #include "sha1.h"
 #include "tls.h"
+#include "tls_openssl.h"
 
 #if OPENSSL_VERSION_NUMBER < 0x10000000L
 /* ERR_remove_thread_state replaces ERR_remove_state and the latter is
@@ -1639,6 +1640,32 @@ static int tls_verify_cb(int preverify_ok, X509_STORE_CTX *x509_ctx)
 				       "Server certificate chain probe",
 				       TLS_FAIL_SERVER_CHAIN_PROBE);
 	}
+
+#ifdef OPENSSL_IS_BORINGSSL
+	if (depth == 0 && (conn->flags & TLS_CONN_REQUEST_OCSP) &&
+	    preverify_ok) {
+		enum ocsp_result res;
+
+		res = check_ocsp_resp(conn->ssl_ctx, conn->ssl, err_cert,
+				      conn->peer_issuer,
+				      conn->peer_issuer_issuer);
+		if (res == OCSP_REVOKED) {
+			preverify_ok = 0;
+			openssl_tls_fail_event(conn, err_cert, err, depth, buf,
+					       "certificate revoked",
+					       TLS_FAIL_REVOKED);
+			if (err == X509_V_OK)
+				X509_STORE_CTX_set_error(
+					x509_ctx, X509_V_ERR_CERT_REVOKED);
+		} else if (res != OCSP_GOOD &&
+			   (conn->flags & TLS_CONN_REQUIRE_OCSP)) {
+			preverify_ok = 0;
+			openssl_tls_fail_event(conn, err_cert, err, depth, buf,
+					       "bad certificate status response",
+					       TLS_FAIL_UNSPECIFIED);
+		}
+	}
+#endif /* OPENSSL_IS_BORINGSSL */
 
 	if (preverify_ok && context->event_cb != NULL)
 		context->event_cb(context->cb_ctx,
@@ -3583,6 +3610,11 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 		SSL_clear_options(conn->ssl, SSL_OP_NO_TLSv1_2);
 #endif /* SSL_OP_NO_TLSv1_2 */
 
+#ifdef OPENSSL_IS_BORINGSSL
+	if (params->flags & TLS_CONN_REQUEST_OCSP) {
+		SSL_enable_ocsp_stapling(conn->ssl);
+	}
+#else /* OPENSSL_IS_BORINGSSL */
 #ifdef HAVE_OCSP
 	if (params->flags & TLS_CONN_REQUEST_OCSP) {
 		SSL_CTX *ssl_ctx = tls_ctx;
@@ -3590,7 +3622,18 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 		SSL_CTX_set_tlsext_status_cb(ssl_ctx, ocsp_resp_cb);
 		SSL_CTX_set_tlsext_status_arg(ssl_ctx, conn);
 	}
+#else /* HAVE_OCSP */
+	if (params->flags & TLS_CONN_REQUIRE_OCSP) {
+		wpa_printf(MSG_INFO,
+			   "OpenSSL: No OCSP support included - reject configuration");
+		return -1;
+	}
+	if (params->flags & TLS_CONN_REQUEST_OCSP) {
+		wpa_printf(MSG_DEBUG,
+			   "OpenSSL: No OCSP support included - allow optional OCSP case to continue");
+	}
 #endif /* HAVE_OCSP */
+#endif /* OPENSSL_IS_BORINGSSL */
 
 	conn->flags = params->flags;
 
