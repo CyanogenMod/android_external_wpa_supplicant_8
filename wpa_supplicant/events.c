@@ -987,7 +987,7 @@ static struct wpa_ssid * wpa_scan_res_match(struct wpa_supplicant *wpa_s,
 			continue;
 		}
 
-		if (ssid->pbss != bss_is_pbss(bss)) {
+		if (ssid->pbss != 2 && ssid->pbss != bss_is_pbss(bss)) {
 			wpa_dbg(wpa_s, MSG_DEBUG, "   skip - PBSS mismatch (ssid %d bss %d)",
 				ssid->pbss, bss_is_pbss(bss));
 			continue;
