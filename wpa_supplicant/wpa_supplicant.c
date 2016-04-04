@@ -5684,7 +5684,11 @@ int wpa_supplicant_ctrl_iface_ctrl_rsp_handle(struct wpa_supplicant *wpa_s,
 		eap->identity = (u8 *) os_strdup(value);
 		eap->identity_len = os_strlen(value);
 		eap->pending_req_identity = 0;
-		if (ssid == wpa_s->current_ssid)
+		if (ssid == wpa_s->current_ssid
+#ifndef CONFIG_EAP_PROXY
+			&& wpa_s->wpa_state < WPA_ASSOCIATING
+#endif
+		)
 			wpa_s->reassociate = 1;
 		break;
 	case WPA_CTRL_REQ_EAP_PASSWORD:
