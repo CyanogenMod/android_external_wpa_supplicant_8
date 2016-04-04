@@ -568,3 +568,16 @@ int hostapd_ctrl_iface_stop_ap(struct hostapd_data *hapd)
 {
 	return hostapd_drv_stop_ap(hapd);
 }
+
+
+int hostapd_ctrl_iface_pmksa_list(struct hostapd_data *hapd, char *buf,
+				  size_t len)
+{
+	return wpa_auth_pmksa_list(hapd->wpa_auth, buf, len);
+}
+
+
+void hostapd_ctrl_iface_pmksa_flush(struct hostapd_data *hapd)
+{
+	wpa_auth_pmksa_flush(hapd->wpa_auth);
+}

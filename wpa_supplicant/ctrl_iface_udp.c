@@ -1,6 +1,6 @@
 /*
  * WPA Supplicant / UDP socket -based control interface
- * Copyright (c) 2004-2005, Jouni Malinen <j@w1.fi>
+ * Copyright (c) 2004-2016, Jouni Malinen <j@w1.fi>
  *
  * This software may be distributed under the terms of the BSD license.
  * See README for more details.
@@ -378,6 +378,7 @@ struct ctrl_iface_priv *
 wpa_supplicant_ctrl_iface_init(struct wpa_supplicant *wpa_s)
 {
 	struct ctrl_iface_priv *priv;
+	char port_str[40];
 	int port = WPA_CTRL_IFACE_PORT;
 	char *pos;
 #ifdef CONFIG_CTRL_IFACE_UDP_IPV6
@@ -439,10 +440,18 @@ try_again:
 #endif /* CONFIG_CTRL_IFACE_UDP_IPV6 */
 	if (bind(priv->sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		port--;
-		if ((WPA_CTRL_IFACE_PORT - port) < WPA_CTRL_IFACE_PORT_LIMIT &&
-		    !pos)
+		if ((WPA_CTRL_IFACE_PORT - port) < WPA_CTRL_IFACE_PORT_LIMIT)
 			goto try_again;
 		wpa_printf(MSG_ERROR, "bind(AF_INET): %s", strerror(errno));
+		goto fail;
+	}
+
+	/* Update the ctrl_interface value to match the selected port */
+	os_snprintf(port_str, sizeof(port_str), "udp:%d", port);
+	os_free(wpa_s->conf->ctrl_interface);
+	wpa_s->conf->ctrl_interface = os_strdup(port_str);
+	if (!wpa_s->conf->ctrl_interface) {
+		wpa_msg(wpa_s, MSG_ERROR, "Failed to malloc ctrl_interface");
 		goto fail;
 	}
 
@@ -593,7 +602,11 @@ static void wpa_supplicant_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 	struct ctrl_iface_global_priv *priv = sock_ctx;
 	char buf[256], *pos;
 	int res;
+#ifdef CONFIG_CTRL_IFACE_UDP_IPV6
+	struct sockaddr_in6 from;
+#else /* CONFIG_CTRL_IFACE_UDP_IPV6 */
 	struct sockaddr_in from;
+#endif /* CONFIG_CTRL_IFACE_UDP_IPV6 */
 	socklen_t fromlen = sizeof(from);
 	char *reply = NULL;
 	size_t reply_len;
@@ -608,6 +621,7 @@ static void wpa_supplicant_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 	}
 
 #ifndef CONFIG_CTRL_IFACE_UDP_REMOTE
+#ifndef CONFIG_CTRL_IFACE_UDP_IPV6
 	if (from.sin_addr.s_addr != htonl((127 << 24) | 1)) {
 		/*
 		 * The OS networking stack is expected to drop this kind of
@@ -619,6 +633,7 @@ static void wpa_supplicant_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 			   "source %s", inet_ntoa(from.sin_addr));
 		return;
 	}
+#endif /* CONFIG_CTRL_IFACE_UDP_IPV6 */
 #endif /* CONFIG_CTRL_IFACE_UDP_REMOTE */
 
 	buf[res] = '\0';

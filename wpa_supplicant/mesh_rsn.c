@@ -27,12 +27,12 @@
 
 #define MESH_AUTH_TIMEOUT 10
 #define MESH_AUTH_RETRY 3
-#define MESH_AUTH_BLOCK_DURATION 3600
 
 void mesh_auth_timer(void *eloop_ctx, void *user_data)
 {
 	struct wpa_supplicant *wpa_s = eloop_ctx;
 	struct sta_info *sta = user_data;
+	struct hostapd_data *hapd;
 
 	if (sta->sae->state != SAE_ACCEPTED) {
 		wpa_printf(MSG_DEBUG, "AUTH: Re-authenticate with " MACSTR
@@ -43,23 +43,20 @@ void mesh_auth_timer(void *eloop_ctx, void *user_data)
 		if (sta->sae_auth_retry < MESH_AUTH_RETRY) {
 			mesh_rsn_auth_sae_sta(wpa_s, sta);
 		} else {
+			hapd = wpa_s->ifmsh->bss[0];
+
 			if (sta->sae_auth_retry > MESH_AUTH_RETRY) {
-				ap_free_sta(wpa_s->ifmsh->bss[0], sta);
+				ap_free_sta(hapd, sta);
 				return;
 			}
 
 			/* block the STA if exceeded the number of attempts */
 			wpa_mesh_set_plink_state(wpa_s, sta, PLINK_BLOCKED);
 			sta->sae->state = SAE_NOTHING;
-			if (wpa_s->mesh_auth_block_duration <
-			    MESH_AUTH_BLOCK_DURATION)
-				wpa_s->mesh_auth_block_duration += 60;
-			eloop_register_timeout(wpa_s->mesh_auth_block_duration,
-					       0, mesh_auth_timer, wpa_s, sta);
 			wpa_msg(wpa_s, MSG_INFO, MESH_SAE_AUTH_BLOCKED "addr="
 				MACSTR " duration=%d",
 				MAC2STR(sta->addr),
-				wpa_s->mesh_auth_block_duration);
+				hapd->conf->ap_max_inactivity);
 		}
 		sta->sae_auth_retry++;
 	}
@@ -291,6 +288,7 @@ int mesh_rsn_auth_sae_sta(struct wpa_supplicant *wpa_s,
 {
 	struct hostapd_data *hapd = wpa_s->ifmsh->bss[0];
 	struct wpa_ssid *ssid = wpa_s->current_ssid;
+	struct rsn_pmksa_cache_entry *pmksa;
 	unsigned int rnd;
 	int ret;
 
@@ -305,6 +303,29 @@ int mesh_rsn_auth_sae_sta(struct wpa_supplicant *wpa_s,
 		if (sta->sae == NULL)
 			return -1;
 	}
+
+	pmksa = wpa_auth_pmksa_get(hapd->wpa_auth, sta->addr);
+	if (pmksa) {
+		if (!sta->wpa_sm)
+			sta->wpa_sm = wpa_auth_sta_init(hapd->wpa_auth,
+							sta->addr, NULL);
+		if (!sta->wpa_sm) {
+			wpa_printf(MSG_ERROR,
+				   "mesh: Failed to initialize RSN state machine");
+			return -1;
+		}
+
+		wpa_printf(MSG_DEBUG,
+			   "AUTH: Mesh PMKSA cache entry found for " MACSTR
+			   " - try to use PMKSA caching instead of new SAE authentication",
+			   MAC2STR(sta->addr));
+		wpa_auth_pmksa_set_to_sm(pmksa, sta->wpa_sm, hapd->wpa_auth,
+					 sta->sae->pmkid, sta->sae->pmk);
+		sae_accept_sta(hapd, sta);
+		sta->mesh_sae_pmksa_caching = 1;
+		return 0;
+	}
+	sta->mesh_sae_pmksa_caching = 0;
 
 	if (mesh_rsn_build_sae_commit(wpa_s, ssid, sta))
 		return -1;
@@ -513,6 +534,17 @@ int mesh_rsn_process_ampe(struct wpa_supplicant *wpa_s, struct sta_info *sta,
 	const u8 *aad[] = { sta->addr, wpa_s->own_addr, cat };
 	const size_t aad_len[] = { ETH_ALEN, ETH_ALEN,
 				   (elems->mic - 2) - cat };
+
+	if (!sta->sae) {
+		struct hostapd_data *hapd = wpa_s->ifmsh->bss[0];
+
+		if (!wpa_auth_pmksa_get(hapd->wpa_auth, sta->addr)) {
+			wpa_printf(MSG_INFO,
+				   "Mesh RSN: SAE is not prepared yet");
+			return -1;
+		}
+		mesh_rsn_auth_sae_sta(wpa_s, sta);
+	}
 
 	if (chosen_pmk && os_memcmp(chosen_pmk, sta->sae->pmkid, PMKID_LEN)) {
 		wpa_msg(wpa_s, MSG_DEBUG,

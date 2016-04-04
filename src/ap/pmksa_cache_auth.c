@@ -92,6 +92,20 @@ void pmksa_cache_free_entry(struct rsn_pmksa_cache *pmksa,
 }
 
 
+/**
+ * pmksa_cache_auth_flush - Flush all PMKSA cache entries
+ * @pmksa: Pointer to PMKSA cache data from pmksa_cache_auth_init()
+ */
+void pmksa_cache_auth_flush(struct rsn_pmksa_cache *pmksa)
+{
+	while (pmksa->pmksa) {
+		wpa_printf(MSG_DEBUG, "RSN: Flush PMKSA cache entry for "
+			   MACSTR, MAC2STR(pmksa->pmksa->spa));
+		pmksa_cache_free_entry(pmksa, pmksa->pmksa);
+	}
+}
+
+
 static void pmksa_cache_expire(void *eloop_ctx, void *timeout_ctx)
 {
 	struct rsn_pmksa_cache *pmksa = eloop_ctx;
@@ -167,8 +181,6 @@ void pmksa_cache_to_eapol_data(struct hostapd_data *hapd,
 			       struct rsn_pmksa_cache_entry *entry,
 			       struct eapol_state_machine *eapol)
 {
-	struct sta_info *sta;
-
 	if (entry == NULL || eapol == NULL)
 		return;
 
@@ -199,8 +211,9 @@ void pmksa_cache_to_eapol_data(struct hostapd_data *hapd,
 	}
 
 	eapol->eap_type_authsrv = entry->eap_type_authsrv;
-	sta = (struct sta_info *) eapol->sta;
-	ap_sta_set_vlan(hapd, sta, entry->vlan_desc);
+#ifndef CONFIG_NO_VLAN
+	ap_sta_set_vlan(hapd, eapol->sta, entry->vlan_desc);
+#endif /* CONFIG_NO_VLAN */
 
 	eapol->acct_multi_session_id = entry->acct_multi_session_id;
 }
@@ -546,4 +559,49 @@ int pmksa_cache_auth_radius_das_disconnect(struct rsn_pmksa_cache *pmksa,
 	}
 
 	return found ? 0 : -1;
+}
+
+
+/**
+ * pmksa_cache_auth_list - Dump text list of entries in PMKSA cache
+ * @pmksa: Pointer to PMKSA cache data from pmksa_cache_auth_init()
+ * @buf: Buffer for the list
+ * @len: Length of the buffer
+ * Returns: Number of bytes written to buffer
+ *
+ * This function is used to generate a text format representation of the
+ * current PMKSA cache contents for the ctrl_iface PMKSA command.
+ */
+int pmksa_cache_auth_list(struct rsn_pmksa_cache *pmksa, char *buf, size_t len)
+{
+	int i, ret;
+	char *pos = buf;
+	struct rsn_pmksa_cache_entry *entry;
+	struct os_reltime now;
+
+	os_get_reltime(&now);
+	ret = os_snprintf(pos, buf + len - pos,
+			  "Index / SPA / PMKID / expiration (in seconds) / opportunistic\n");
+	if (os_snprintf_error(buf + len - pos, ret))
+		return pos - buf;
+	pos += ret;
+	i = 0;
+	entry = pmksa->pmksa;
+	while (entry) {
+		ret = os_snprintf(pos, buf + len - pos, "%d " MACSTR " ",
+				  i, MAC2STR(entry->spa));
+		if (os_snprintf_error(buf + len - pos, ret))
+			return pos - buf;
+		pos += ret;
+		pos += wpa_snprintf_hex(pos, buf + len - pos, entry->pmkid,
+					PMKID_LEN);
+		ret = os_snprintf(pos, buf + len - pos, " %d %d\n",
+				  (int) (entry->expiration - now.sec),
+				  entry->opportunistic);
+		if (os_snprintf_error(buf + len - pos, ret))
+			return pos - buf;
+		pos += ret;
+		entry = entry->next;
+	}
+	return pos - buf;
 }

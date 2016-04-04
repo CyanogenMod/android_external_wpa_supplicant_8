@@ -312,7 +312,12 @@ endif
 ifdef CONFIG_IBSS_RSN
 NEED_RSN_AUTHENTICATOR=y
 CFLAGS += -DCONFIG_IBSS_RSN
+CFLAGS += -DCONFIG_NO_VLAN
 OBJS += ibss_rsn.o
+endif
+
+ifdef CONFIG_MATCH_IFACE
+CFLAGS += -DCONFIG_MATCH_IFACE
 endif
 
 ifdef CONFIG_P2P
@@ -1637,6 +1642,7 @@ endif
 OBJS += $(FST_OBJS)
 OBJS_t += $(FST_OBJS)
 OBJS_t2 += $(FST_OBJS)
+OBJS_nfc += $(FST_OBJS)
 endif
 
 ifndef LDO

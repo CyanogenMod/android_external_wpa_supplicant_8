@@ -2727,6 +2727,40 @@ static int wpa_supplicant_ctrl_iface_mesh_group_remove(
 	return 0;
 }
 
+
+static int wpa_supplicant_ctrl_iface_mesh_peer_remove(
+	struct wpa_supplicant *wpa_s, char *cmd)
+{
+	u8 addr[ETH_ALEN];
+
+	if (hwaddr_aton(cmd, addr) < 0)
+		return -1;
+
+	return wpas_mesh_peer_remove(wpa_s, addr);
+}
+
+
+static int wpa_supplicant_ctrl_iface_mesh_peer_add(
+	struct wpa_supplicant *wpa_s, char *cmd)
+{
+	u8 addr[ETH_ALEN];
+	int duration;
+	char *pos;
+
+	pos = os_strstr(cmd, " duration=");
+	if (pos) {
+		*pos = '\0';
+		duration = atoi(pos + 10);
+	} else {
+		duration = -1;
+	}
+
+	if (hwaddr_aton(cmd, addr))
+		return -1;
+
+	return wpas_mesh_peer_add(wpa_s, addr, duration);
+}
+
 #endif /* CONFIG_MESH */
 
 
@@ -2969,22 +3003,29 @@ static int wpa_supplicant_ctrl_iface_update_network(
 	struct wpa_supplicant *wpa_s, struct wpa_ssid *ssid,
 	char *name, char *value)
 {
-	if (wpa_config_set(ssid, name, value, 0) < 0) {
+	int ret;
+
+	ret = wpa_config_set(ssid, name, value, 0);
+	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Failed to set network "
 			   "variable '%s'", name);
 		return -1;
 	}
+	if (ret == 1)
+		return 0; /* No change to the previously configured value */
 
 	if (os_strcmp(name, "bssid") != 0 &&
-	    os_strcmp(name, "priority") != 0)
+	    os_strcmp(name, "priority") != 0) {
 		wpa_sm_pmksa_cache_flush(wpa_s->wpa, ssid);
 
-	if (wpa_s->current_ssid == ssid || wpa_s->current_ssid == NULL) {
-		/*
-		 * Invalidate the EAP session cache if anything in the current
-		 * or previously used configuration changes.
-		 */
-		eapol_sm_invalidate_cached_session(wpa_s->eapol);
+		if (wpa_s->current_ssid == ssid ||
+		    wpa_s->current_ssid == NULL) {
+			/*
+			 * Invalidate the EAP session cache if anything in the
+			 * current or previously used configuration changes.
+			 */
+			eapol_sm_invalidate_cached_session(wpa_s->eapol);
+		}
 	}
 
 	if ((os_strcmp(name, "psk") == 0 &&
@@ -8328,6 +8369,29 @@ static int wpas_ctrl_iface_mac_rand_scan(struct wpa_supplicant *wpa_s,
 }
 
 
+static int wpas_ctrl_iface_pmksa(struct wpa_supplicant *wpa_s,
+				 char *buf, size_t buflen)
+{
+	size_t reply_len;
+
+	reply_len = wpa_sm_pmksa_cache_list(wpa_s->wpa, buf, buflen);
+#ifdef CONFIG_AP
+	reply_len += wpas_ap_pmksa_cache_list(wpa_s, &buf[reply_len],
+					      buflen - reply_len);
+#endif /* CONFIG_AP */
+	return reply_len;
+}
+
+
+static void wpas_ctrl_iface_pmksa_flush(struct wpa_supplicant *wpa_s)
+{
+	wpa_sm_pmksa_cache_flush(wpa_s->wpa, NULL);
+#ifdef CONFIG_AP
+	wpas_ap_pmksa_cache_flush(wpa_s);
+#endif /* CONFIG_AP */
+}
+
+
 static int wpas_ctrl_cmd_debug_level(const char *cmd)
 {
 	if (os_strcmp(cmd, "PING") == 0 ||
@@ -8399,10 +8463,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		reply_len = wpa_supplicant_ctrl_iface_status(
 			wpa_s, buf + 6, reply, reply_size);
 	} else if (os_strcmp(buf, "PMKSA") == 0) {
-		reply_len = wpa_sm_pmksa_cache_list(wpa_s->wpa, reply,
-						    reply_size);
+		reply_len = wpas_ctrl_iface_pmksa(wpa_s, reply, reply_size);
 	} else if (os_strcmp(buf, "PMKSA_FLUSH") == 0) {
-		wpa_sm_pmksa_cache_flush(wpa_s->wpa, NULL);
+		wpas_ctrl_iface_pmksa_flush(wpa_s);
 	} else if (os_strncmp(buf, "SET ", 4) == 0) {
 		if (wpa_supplicant_ctrl_iface_set(wpa_s, buf + 4))
 			reply_len = -1;
@@ -8569,6 +8632,12 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 	} else if (os_strncmp(buf, "MESH_GROUP_REMOVE ", 18) == 0) {
 		if (wpa_supplicant_ctrl_iface_mesh_group_remove(wpa_s,
 								buf + 18))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "MESH_PEER_REMOVE ", 17) == 0) {
+		if (wpa_supplicant_ctrl_iface_mesh_peer_remove(wpa_s, buf + 17))
+			reply_len = -1;
+	} else if (os_strncmp(buf, "MESH_PEER_ADD ", 14) == 0) {
+		if (wpa_supplicant_ctrl_iface_mesh_peer_add(wpa_s, buf + 14))
 			reply_len = -1;
 #endif /* CONFIG_MESH */
 #ifdef CONFIG_P2P

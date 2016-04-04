@@ -44,6 +44,7 @@ struct wpa_driver_associate_params;
 struct ctrl_iface_priv;
 struct ctrl_iface_global_priv;
 struct wpas_dbus_priv;
+struct wpas_binder_priv;
 
 /**
  * struct wpa_interface - Parameters for wpa_supplicant_add_iface()
@@ -228,6 +229,17 @@ struct wpa_params {
 	char *conf_p2p_dev;
 #endif /* CONFIG_P2P */
 
+#ifdef CONFIG_MATCH_IFACE
+	/**
+	 * match_ifaces - Interface descriptions to match
+	 */
+	struct wpa_interface *match_ifaces;
+
+	/**
+	 * match_iface_count - Number of defined matching interfaces
+	 */
+	int match_iface_count;
+#endif /* CONFIG_MATCH_IFACE */
 };
 
 struct p2p_srv_bonjour {
@@ -253,6 +265,7 @@ struct wpa_global {
 	struct wpa_params params;
 	struct ctrl_iface_global_priv *ctrl_iface;
 	struct wpas_dbus_priv *dbus;
+	struct wpas_binder_priv *binder;
 	void **drv_priv;
 	size_t drv_count;
 	struct os_time suspend_time;
@@ -458,6 +471,9 @@ struct wpa_supplicant {
 	unsigned char own_addr[ETH_ALEN];
 	unsigned char perm_addr[ETH_ALEN];
 	char ifname[100];
+#ifdef CONFIG_MATCH_IFACE
+	int matched;
+#endif /* CONFIG_MATCH_IFACE */
 #ifdef CONFIG_CTRL_IFACE_DBUS
 	char *dbus_path;
 #endif /* CONFIG_CTRL_IFACE_DBUS */
@@ -468,6 +484,9 @@ struct wpa_supplicant {
 	char *preq_notify_peer;
 #endif /* CONFIG_AP */
 #endif /* CONFIG_CTRL_IFACE_DBUS_NEW */
+#ifdef CONFIG_CTRL_IFACE_BINDER
+	const void *binder_object_key;
+#endif /* CONFIG_CTRL_IFACE_BINDER */
 	char bridge_ifname[16];
 
 	char *confname;
@@ -480,7 +499,8 @@ struct wpa_supplicant {
 	u8 pending_bssid[ETH_ALEN]; /* If wpa_state == WPA_ASSOCIATING, this
 				     * field contains the target BSSID. */
 	int reassociate; /* reassociation requested */
-	int reassoc_same_bss; /* reassociating to the same bss */
+	unsigned int reassoc_same_bss:1; /* reassociating to the same BSS */
+	unsigned int reassoc_same_ess:1; /* reassociating to the same ESS */
 	int disconnected; /* all connections disabled; i.e., do no reassociate
 			   * before this has been cleared */
 	struct wpa_ssid *current_ssid;
@@ -754,7 +774,6 @@ struct wpa_supplicant {
 	unsigned int mesh_if_created:1;
 	unsigned int mesh_ht_enabled:1;
 	unsigned int mesh_vht_enabled:1;
-	int mesh_auth_block_duration; /* sec */
 #endif /* CONFIG_MESH */
 
 	unsigned int off_channel_freq;
@@ -1109,6 +1128,8 @@ void free_hw_features(struct wpa_supplicant *wpa_s);
 
 void wpa_show_license(void);
 
+struct wpa_interface * wpa_supplicant_match_iface(struct wpa_global *global,
+						  const char *ifname);
 struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 						 struct wpa_interface *iface,
 						 struct wpa_supplicant *parent);

@@ -27,10 +27,6 @@ CFLAGS += -I$(abspath ../src/utils)
 
 export BINDIR ?= /usr/local/bin/
 
-# Uncomment following line and set the path to your kernel tree include
-# directory if your C library does not include all header files.
-# CFLAGS += -DUSE_KERNEL_HEADERS -I/usr/src/linux/include
-
 -include .config
 
 ifndef CONFIG_NO_GITVER
@@ -194,12 +190,18 @@ ifdef CONFIG_NO_VLAN
 CFLAGS += -DCONFIG_NO_VLAN
 else
 OBJS += ../src/ap/vlan_init.o
+OBJS += ../src/ap/vlan_ifconfig.o
 OBJS += ../src/ap/vlan.o
-ifdef CONFIG_VLAN_NETLINK
 ifdef CONFIG_FULL_DYNAMIC_VLAN
+# Define CONFIG_FULL_DYNAMIC_VLAN to have hostapd manipulate bridges
+# and VLAN interfaces for the VLAN feature.
+CFLAGS += -DCONFIG_FULL_DYNAMIC_VLAN
+OBJS += ../src/ap/vlan_full.o
+ifdef CONFIG_VLAN_NETLINK
 OBJS += ../src/ap/vlan_util.o
+else
+OBJS += ../src/ap/vlan_ioctl.o
 endif
-CFLAGS += -DCONFIG_VLAN_NETLINK
 endif
 endif
 
@@ -905,12 +907,6 @@ endif
 
 ifdef CONFIG_DRIVER_RADIUS_ACL
 CFLAGS += -DCONFIG_DRIVER_RADIUS_ACL
-endif
-
-ifdef CONFIG_FULL_DYNAMIC_VLAN
-# define CONFIG_FULL_DYNAMIC_VLAN to have hostapd manipulate bridges
-# and vlan interfaces for the vlan feature.
-CFLAGS += -DCONFIG_FULL_DYNAMIC_VLAN
 endif
 
 ifdef NEED_BASE64
