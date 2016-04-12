@@ -3541,6 +3541,19 @@ struct wpa_driver_ops {
 	int (*abort_scan)(void *priv);
 
 	/**
+	 * get_ext_capab - Get extended capabilities for the specified interface
+	 * @priv: Private driver interface data
+	 * @type: Interface type for which to get extended capabilities
+	 * @ext_capab: Extended capabilities fetched
+	 * @ext_capab_mask: Extended capabilities mask
+	 * @ext_capab_len: Length of the extended capabilities
+	 * Returns: 0 on success or -1 on failure
+	 */
+	int (*get_ext_capab)(void *priv, enum wpa_driver_if_type type,
+			     const u8 **ext_capab, const u8 **ext_capab_mask,
+			     unsigned int *ext_capab_len);
+
+	/**
 	 * p2p_lo_start - Start offloading P2P listen to device
 	 * @priv: Private driver interface data
 	 * @freq: Listening frequency (MHz) for P2P listen
