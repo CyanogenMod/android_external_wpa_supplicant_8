@@ -307,11 +307,6 @@ struct wpa_radio {
 
 #define MAX_ACTIVE_WORKS 2
 
-enum wpa_radio_work_band {
-	BAND_2_4_GHZ = BIT(0),
-	BAND_5_GHZ = BIT(1),
-	BAND_60_GHZ = BIT(2),
-};
 
 /**
  * struct wpa_radio_work - Radio work item
@@ -356,6 +351,9 @@ struct wpa_external_work {
 	char type[100];
 	unsigned int timeout;
 };
+
+enum wpa_radio_work_band wpas_freq_to_band(int freq);
+unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s, const int *freqs);
 
 /**
  * offchannel_send_action_result - Result of offchannel send Action frame
@@ -437,6 +435,7 @@ struct wpa_supplicant {
 	struct wpa_radio *radio; /* shared radio context */
 	struct dl_list radio_list; /* list head: struct wpa_radio::ifaces */
 	struct wpa_supplicant *parent;
+	struct wpa_supplicant *p2pdev;
 	struct wpa_supplicant *next;
 	struct l2_packet_data *l2;
 	struct l2_packet_data *l2_br;

@@ -2296,9 +2296,11 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 		}
 		params.bssid_hint = bss->bssid;
 		params.freq_hint = bss->freq;
+		params.pbss = bss_is_pbss(bss);
 	} else {
 		params.ssid = ssid->ssid;
 		params.ssid_len = ssid->ssid_len;
+		params.pbss = ssid->pbss;
 	}
 
 	if (ssid->mode == WPAS_MODE_IBSS && ssid->bssid_set &&
@@ -2382,8 +2384,8 @@ static void wpas_start_assoc_cb(struct wpa_radio_work *work, int deinit)
 
 	params.p2p = ssid->p2p_group;
 
-	if (wpa_s->parent->set_sta_uapsd)
-		params.uapsd = wpa_s->parent->sta_uapsd;
+	if (wpa_s->p2pdev->set_sta_uapsd)
+		params.uapsd = wpa_s->p2pdev->sta_uapsd;
 	else
 		params.uapsd = -1;
 
@@ -3384,6 +3386,7 @@ wpa_supplicant_alloc(struct wpa_supplicant *parent)
 	wpa_s->scan_interval = 5;
 	wpa_s->new_connection = 1;
 	wpa_s->parent = parent ? parent : wpa_s;
+	wpa_s->p2pdev = wpa_s->parent;
 	wpa_s->sched_scanning = 0;
 
 	return wpa_s;
@@ -3893,7 +3896,7 @@ static int wpas_set_wowlan_triggers(struct wpa_supplicant *wpa_s,
 }
 
 
-static enum wpa_radio_work_band wpas_freq_to_band(int freq)
+enum wpa_radio_work_band wpas_freq_to_band(int freq)
 {
 	if (freq < 3000)
 		return BAND_2_4_GHZ;
@@ -3903,8 +3906,7 @@ static enum wpa_radio_work_band wpas_freq_to_band(int freq)
 }
 
 
-static unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s,
-				   const int *freqs)
+unsigned int wpas_get_bands(struct wpa_supplicant *wpa_s, const int *freqs)
 {
 	int i;
 	unsigned int band = 0;
@@ -4697,6 +4699,8 @@ static void wpa_supplicant_deinit_iface(struct wpa_supplicant *wpa_s,
 
 	iface = global->ifaces;
 	while (iface) {
+		if (iface->p2pdev == wpa_s)
+			iface->p2pdev = iface->parent;
 		if (iface == wpa_s || iface->parent != wpa_s) {
 			iface = iface->next;
 			continue;
@@ -6039,3 +6043,4 @@ void wpas_rrm_handle_link_measurement_request(struct wpa_supplicant *wpa_s,
 	}
 	wpabuf_free(buf);
 }
+
