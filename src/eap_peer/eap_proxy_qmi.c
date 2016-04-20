@@ -1174,7 +1174,7 @@ static u8 *eap_proxy_getKey(struct eap_proxy_sm *eap_proxy)
 	if (QMI_NO_ERR != qmiRetCode || key_resp_msg.resp.result != QMI_RESULT_SUCCESS_V01) {
 		wpa_printf(MSG_ERROR, "QMI-ERROR Unable to get session keys;"
 				 " err_code=%d qmiErr=%d\n", qmiRetCode, key_resp_msg.resp.error);
-		eap_proxy->key == NULL;
+		eap_proxy->key = NULL;
 		return NULL;
 	}
 	wpa_printf(MSG_ERROR, "eap_proxy: %s:session_key_len =%d", __func__, key_resp_msg.session_key_len);
