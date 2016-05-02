@@ -184,6 +184,13 @@ static int wpa_supplicant_conf_ap(struct wpa_supplicant *wpa_s,
 		return -1;
 	}
 
+	if (ssid->pbss > 1) {
+		wpa_printf(MSG_ERROR, "Invalid pbss value(%d) for AP mode",
+			   ssid->pbss);
+		return -1;
+	}
+	bss->pbss = ssid->pbss;
+
 	wpa_supplicant_conf_ap_ht(wpa_s, ssid, conf);
 
 	if (ieee80211_is_dfs(ssid->frequency) && wpa_s->conf->country[0]) {
@@ -412,8 +419,6 @@ no_wps:
 		bss->vendor_elements =
 			wpabuf_dup(wpa_s->conf->ap_vendor_elements);
 	}
-
-	bss->pbss = ssid->pbss;
 
 	return 0;
 }
