@@ -916,7 +916,8 @@ static void handle_qmi_eap_reply(
 			eap_proxy->qmi_state = QMI_STATE_RESP_TIME_OUT;
 			return;
 		}
-		if(QMI_AUTH_SEND_EAP_PACKET_REQ_V01 != msg_id)
+		if((QMI_AUTH_SEND_EAP_PACKET_REQ_V01 != msg_id) &&
+		   (QMI_AUTH_SEND_EAP_PACKET_EXT_REQ_V01 != msg_id))
 		{
 			wpa_printf(MSG_ERROR, "eap_proxy: Invalid msgId =%d\n", msg_id);
 			eap_proxy->qmi_state = QMI_STATE_RESP_TIME_OUT;
@@ -925,9 +926,10 @@ static void handle_qmi_eap_reply(
 
 		/* ensure the reply packet exists  */
 		if (rspData->eap_response_pkt_len <= 0 ||
-		    rspData->eap_response_pkt_len > QMI_AUTH_EAP_RESP_PACKET_MAX_V01) {
+		    rspData->eap_response_pkt_len > QMI_AUTH_EAP_RESP_PACKET_EXT_MAX_V01) {
 			wpa_printf(MSG_ERROR, "eap_proxy: Reply packet is of"
-				   "invalid length\n");
+				"invalid length %d error %d result %d\n",
+				rspData->eap_response_pkt_len, rspData->resp.error, rspData->resp.result);
 			eap_proxy->qmi_state = QMI_STATE_RESP_TIME_OUT;
 			return;
 		}
@@ -972,8 +974,9 @@ static enum eap_proxy_status eap_proxy_process(struct eap_proxy_sm  *eap_proxy,
 	auth_send_eap_packet_resp_msg_v01 eap_send_packet_resp;
 	qmi_txn_handle async_txn_hdl = 0;
 
-	os_memset(&eap_send_packet_req, 0, sizeof(auth_send_eap_packet_req_msg_v01));
-	os_memset(&eap_send_packet_resp, 0, sizeof(auth_send_eap_packet_resp_msg_v01));
+	auth_send_eap_packet_ext_req_msg_v01 eap_send_packet_ext_req;
+	auth_send_eap_packet_ext_resp_msg_v01 eap_send_packet_ext_resp;
+
 
 	hdr = (struct eap_hdr *)eapReqData;
 	if ((EAP_CODE_REQUEST == hdr->code) &&
@@ -1005,8 +1008,15 @@ static enum eap_proxy_status eap_proxy_process(struct eap_proxy_sm  *eap_proxy,
 	wpa_printf(MSG_ERROR, "eap_proxy: ***********Dump ReqData len %d***********", eapReqDataLen);
 	dump_buff(eapReqData, eapReqDataLen);
 	if (eapReqDataLen <= QMI_AUTH_EAP_REQ_PACKET_MAX_V01) {
+		os_memset(&eap_send_packet_req, 0, sizeof(auth_send_eap_packet_req_msg_v01));
+		os_memset(&eap_send_packet_resp, 0, sizeof(auth_send_eap_packet_resp_msg_v01));
 		eap_send_packet_req.eap_request_pkt_len = eapReqDataLen ;
 		memcpy(eap_send_packet_req.eap_request_pkt, eapReqData, eapReqDataLen);
+	} else if (eapReqDataLen <= QMI_AUTH_EAP_REQ_PACKET_EXT_MAX_V01) {
+		os_memset(&eap_send_packet_ext_req, 0, sizeof(auth_send_eap_packet_ext_req_msg_v01));
+		os_memset(&eap_send_packet_ext_resp, 0, sizeof(auth_send_eap_packet_ext_resp_msg_v01));
+		eap_send_packet_ext_req.eap_request_ext_pkt_len = eapReqDataLen;
+		memcpy(eap_send_packet_ext_req.eap_request_ext_pkt, eapReqData, eapReqDataLen);
 	} else {
 			wpa_printf(MSG_ERROR, "eap_proxy: Error in eap_send_packet_req\n");
 			return EAP_PROXY_FAILURE;
@@ -1022,15 +1032,27 @@ static enum eap_proxy_status eap_proxy_process(struct eap_proxy_sm  *eap_proxy,
 	wpa_printf (MSG_ERROR, "eap_proxy: In eap_proxy_process case %d\n", hdr->code);
 	eap_proxy->qmi_state = QMI_STATE_RESP_PENDING;
 
-	qmiErrorCode = qmi_client_send_msg_async(eap_proxy->qmi_auth_svc_client_ptr[eap_proxy->user_selected_sim],
-						 QMI_AUTH_SEND_EAP_PACKET_REQ_V01,
-						 (void *) &eap_send_packet_req,
-						 sizeof(auth_send_eap_packet_req_msg_v01),
-						 (void *) &eap_send_packet_resp,
-						 sizeof(auth_send_eap_packet_resp_msg_v01),
-						 &handle_qmi_eap_reply, eap_proxy,
-						 &async_txn_hdl);
-
+	if(eapReqDataLen <= QMI_AUTH_EAP_REQ_PACKET_MAX_V01) {
+		qmiErrorCode = qmi_client_send_msg_async(
+				eap_proxy->qmi_auth_svc_client_ptr[eap_proxy->user_selected_sim],
+				QMI_AUTH_SEND_EAP_PACKET_REQ_V01,
+				(void *) &eap_send_packet_req,
+				sizeof(auth_send_eap_packet_req_msg_v01),
+				(void *) &eap_send_packet_resp,
+				sizeof(auth_send_eap_packet_resp_msg_v01),
+				&handle_qmi_eap_reply, eap_proxy,
+				&async_txn_hdl);
+	} else if(eapReqDataLen <= QMI_AUTH_EAP_REQ_PACKET_EXT_MAX_V01) {
+		qmiErrorCode = qmi_client_send_msg_async(
+				eap_proxy->qmi_auth_svc_client_ptr[eap_proxy->user_selected_sim],
+				QMI_AUTH_SEND_EAP_PACKET_EXT_REQ_V01,
+				(void *) &eap_send_packet_ext_req,
+				sizeof(auth_send_eap_packet_ext_req_msg_v01),
+				(void *) &eap_send_packet_ext_resp,
+				sizeof(auth_send_eap_packet_ext_resp_msg_v01),
+				&handle_qmi_eap_reply, eap_proxy,
+				&async_txn_hdl);
+	}
 
 	if (QMI_NO_ERR != qmiErrorCode) {
 		wpa_printf(MSG_ERROR, "QMI-ERROR Error in sending EAP packet;"
