@@ -820,8 +820,12 @@ static int features_info_handler(struct nl_msg *msg, void *arg)
 
 		attr = tb_vendor[QCA_WLAN_VENDOR_ATTR_FEATURE_FLAGS];
 		if (attr) {
-			info->flags = nla_data(attr);
-			info->flags_len = nla_len(attr);
+			int len = nla_len(attr);
+			info->flags = os_malloc(len);
+			if (info->flags != NULL) {
+				os_memcpy(info->flags, nla_data(attr), len);
+				info->flags_len = len;
+			}
 		}
 		attr = tb_vendor[QCA_WLAN_VENDOR_ATTR_CONCURRENCY_CAPA];
 		if (attr)
@@ -886,6 +890,7 @@ static void qca_nl80211_get_features(struct wpa_driver_nl80211_data *drv)
 		drv->capa.flags |= WPA_DRIVER_FLAGS_OFFCHANNEL_SIMULTANEOUS;
 	if (check_feature(QCA_WLAN_VENDOR_FEATURE_P2P_LISTEN_OFFLOAD, &info))
 		drv->capa.flags |= WPA_DRIVER_FLAGS_P2P_LISTEN_OFFLOAD;
+	os_free(info.flags);
 }
 
 #endif /* CONFIG_DRIVER_NL80211_QCA */
