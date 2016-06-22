@@ -778,6 +778,19 @@ int eap_auth_end_eap_session(qmi_client_type qmi_auth_svc_client_ptr)
         return 0;
 }
 
+static void eap_proxy_schedule_thread(void *eloop_ctx, void *timeout_ctx)
+{
+        struct eap_proxy_sm *eap_proxy = eloop_ctx;
+        pthread_attr_t attr;
+        int ret = -1;
+
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        ret = pthread_create(&eap_proxy->thread_id, &attr, eap_proxy_post_init, eap_proxy);
+        if(ret < 0)
+               wpa_printf(MSG_ERROR, "eap_proxy: starting thread is failed %d\n", ret);
+}
+
 struct eap_proxy_sm *
 eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
                void *msg_ctx)
@@ -786,8 +799,6 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
         int qmiRetCode;
         struct eap_proxy_sm *eap_proxy;
         qmi_idl_service_object_type    qmi_client_service_obj;
-        pthread_attr_t attr;
-        int ret = -1;
 
         eap_proxy =  os_malloc(sizeof(struct eap_proxy_sm));
         if (NULL == eap_proxy) {
@@ -813,11 +824,7 @@ eap_proxy_init(void *eapol_ctx, struct eapol_callbacks *eapol_cb,
         * parent process that created the qmi client context.
         */
 
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        ret = pthread_create(&eap_proxy->thread_id, &attr, eap_proxy_post_init, eap_proxy);
-        if(ret < 0)
-               wpa_printf(MSG_ERROR, "eap_proxy: starting thread is failed %d\n", ret);
+        eloop_register_timeout(0, 0, eap_proxy_schedule_thread, eap_proxy, NULL);
         return eap_proxy;
 }
 
