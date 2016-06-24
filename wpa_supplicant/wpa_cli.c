@@ -2885,6 +2885,20 @@ static int wpa_cli_cmd_get_pref_freq_list(struct wpa_ctrl *ctrl, int argc,
 }
 
 
+static int wpa_cli_cmd_p2p_lo_start(struct wpa_ctrl *ctrl, int argc,
+				    char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "P2P_LO_START", 4, argc, argv);
+}
+
+
+static int wpa_cli_cmd_p2p_lo_stop(struct wpa_ctrl *ctrl, int argc,
+				   char *argv[])
+{
+	return wpa_cli_cmd(ctrl, "P2P_LO_STOP", 0, argc, argv);
+}
+
+
 enum wpa_cli_cmd_flags {
 	cli_cmd_flag_none		= 0x00,
 	cli_cmd_flag_sensitive		= 0x01
@@ -3468,6 +3482,12 @@ static const struct wpa_cli_cmd wpa_cli_commands[] = {
 	{ "get_pref_freq_list", wpa_cli_cmd_get_pref_freq_list, NULL,
 	  cli_cmd_flag_none,
 	  "<interface type> = retrieve preferred freq list for the specified interface type" },
+	{ "p2p_lo_start", wpa_cli_cmd_p2p_lo_start, NULL,
+	  cli_cmd_flag_none,
+	  "<freq> <period> <interval> <count> = start P2P listen offload" },
+	{ "p2p_lo_stop", wpa_cli_cmd_p2p_lo_stop, NULL,
+	  cli_cmd_flag_none,
+	  "= stop P2P listen offload" },
 	{ NULL, NULL, NULL, cli_cmd_flag_none, NULL }
 };
 
