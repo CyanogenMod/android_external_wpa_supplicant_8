@@ -2229,8 +2229,7 @@ static int cmd_osu_select(struct hs20_osu_client *ctx, const char *dir,
 		fprintf(f, "</table></a><br><small>BSSID: %s<br>\n"
 			"SSID: %s<br>\n",
 			last->bssid, last->osu_ssid);
-		if (last->osu_nai)
-			fprintf(f, "NAI: %s<br>\n", last->osu_nai);
+		fprintf(f, "NAI: %s<br>\n", last->osu_nai);
 		fprintf(f, "URL: %s<br>\n"
 			"methods:%s%s<br>\n"
 			"</small></p>\n",
