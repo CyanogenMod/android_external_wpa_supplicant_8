@@ -207,6 +207,11 @@ int hostapd_build_ap_extra_ies(struct hostapd_data *hapd,
 		if (wpabuf_resize(&proberesp, add) == 0)
 			wpabuf_put_buf(proberesp, hapd->conf->vendor_elements);
 	}
+	if (hapd->conf->assocresp_elements) {
+		size_t add = wpabuf_len(hapd->conf->assocresp_elements);
+		if (wpabuf_resize(&assocresp, add) == 0)
+			wpabuf_put_buf(assocresp, hapd->conf->assocresp_elements);
+	}
 
 	*beacon_ret = beacon;
 	*proberesp_ret = proberesp;
