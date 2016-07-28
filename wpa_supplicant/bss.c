@@ -322,12 +322,6 @@ static int wpa_bss_in_use(struct wpa_supplicant *wpa_s, struct wpa_bss *bss)
 
 	return !is_zero_ether_addr(bss->bssid) &&
 		(os_memcmp(bss->bssid, wpa_s->bssid, ETH_ALEN) == 0 ||
-#ifdef MTK_HARDWARE
-		 /* if we're trying to connect this ssid, don't remove it from scan result */
-		 (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_P2P_CAPABLE) && wpa_s->current_ssid &&
-		 	 wpa_s->current_ssid->ssid_len > 0 &&
-		  	os_strncmp(wpa_s->current_ssid->ssid, bss->ssid, wpa_s->current_ssid->ssid_len) == 0) ||
-#endif
 		 os_memcmp(bss->bssid, wpa_s->pending_bssid, ETH_ALEN) == 0);
 }
 
