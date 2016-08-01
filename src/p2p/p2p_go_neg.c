@@ -15,6 +15,9 @@
 #include "wps/wps_defs.h"
 #include "p2p_i.h"
 #include "p2p.h"
+#ifdef MTK_HARDWARE
+#include "wpa_supplicant_i.h"
+#endif
 
 
 static int p2p_go_det(u8 own_intent, u8 peer_value)
@@ -363,6 +366,67 @@ static struct wpabuf * p2p_build_go_neg_resp(struct p2p_data *p2p,
 	return buf;
 }
 
+#ifdef MTK_HARDWARE
+/*
+ * get freq by name: "wlan0" or "p2p0"
+ */
+int wpas_get_freq_by_ifname(struct wpa_supplicant *wpa_s,
+				char *ifname)
+{
+	struct wpa_supplicant *ifs;
+	int freq = -1;
+	u8 bssid[ETH_ALEN];
+	for (ifs = wpa_s->global->ifaces; ifs; ifs = ifs->next) {
+
+		if (ifs->current_ssid == NULL || ifs->assoc_freq == 0)
+			continue;
+
+		if (os_strcmp(ifs->ifname, ifname)) {
+			wpa_dbg(wpa_s, MSG_DEBUG, "%s: not Target ifname %s - %s",
+						__func__, ifs->ifname, ifname);
+			continue;
+		}
+
+		if (ifs->current_ssid->mode == WPAS_MODE_AP ||
+		    ifs->current_ssid->mode == WPAS_MODE_P2P_GO)
+			freq = ifs->current_ssid->frequency;
+		else if (ifs->driver->get_bssid && ifs->driver->get_bssid(ifs->drv_priv, bssid) == 0)
+			freq = ifs->assoc_freq;
+		else
+			continue;
+	}
+
+	return freq;
+}
+
+int p2p_attempt_shared_freq(struct p2p_data *p2p,
+		   struct p2p_channels *intersection) {
+	struct wpa_supplicant *wpa_s = p2p->cfg->cb_ctx;
+	int shared_freq = wpas_get_freq_by_ifname(wpa_s, "wlan0");
+	if (shared_freq > 0) {
+		u8 shared_channel = 0;
+		u8 shared_class = 0;
+
+		if (p2p_freq_to_channel(shared_freq, &shared_class, &shared_channel) < 0)
+			return 0;
+		if (shared_channel && shared_class) {
+			p2p_dbg(p2p, "Get shared freq: %d, Channel: %d, Class: %d",
+					shared_freq, shared_channel, shared_class);
+			if (p2p_channels_includes(intersection, shared_class, shared_channel)) {
+				p2p_dbg(p2p, "Shared channel is supported in intersection");
+				p2p->op_channel = shared_channel;
+				p2p->op_reg_class = shared_class;
+				return 0;
+			} else
+				p2p_dbg(p2p, "Get shared freq: %d. Channel: %d, Class: %d "
+						"not supported by us/peer", shared_freq,
+						shared_channel, shared_class);
+		}
+	}
+	return -1;
+}
+#endif
+
 
 /**
  * p2p_reselect_channel - Re-select operating channel based on peer information
@@ -407,6 +471,11 @@ void p2p_reselect_channel(struct p2p_data *p2p,
 		p2p->op_channel = op_channel;
 		return;
 	}
+#ifdef MTK_HARDWARE
+	if (!p2p_attempt_shared_freq(p2p, intersection)) {
+		return;
+	}
+#endif
 
 	/* First, try to pick the best channel from another band */
 	freq = p2p_channel_to_freq(p2p->op_reg_class, p2p->op_channel);
