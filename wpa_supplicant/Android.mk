@@ -30,6 +30,7 @@ L_CFLAGS += -DANDROID_P2P
 
 ifeq ($(BOARD_WPA_SUPPLICANT_PRIVATE_LIB),)
 L_CFLAGS += -DANDROID_LIB_STUB
+L_CFLAGS += -DANDROID_PLIB_STUB
 endif
 
 # Disable roaming in wpa_supplicant
