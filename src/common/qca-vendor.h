@@ -166,7 +166,11 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_DFS_OFFLOAD_CAC_ABORTED = 58,
 	QCA_NL80211_VENDOR_SUBCMD_DFS_OFFLOAD_CAC_NOP_FINISHED = 59,
 	QCA_NL80211_VENDOR_SUBCMD_DFS_OFFLOAD_RADAR_DETECTED = 60,
-	/* 61-90 - reserved for QCA */
+	/* 61-73 - reserved for QCA */
+	/* Wi-Fi configuration subcommands */
+	QCA_NL80211_VENDOR_SUBCMD_SET_WIFI_CONFIGURATION = 74,
+	QCA_NL80211_VENDOR_SUBCMD_GET_WIFI_CONFIGURATION = 75,
+	/* 76-90 - reserved for QCA */
 	QCA_NL80211_VENDOR_SUBCMD_DATA_OFFLOAD = 91,
 	QCA_NL80211_VENDOR_SUBCMD_OCB_SET_CONFIG = 92,
 	QCA_NL80211_VENDOR_SUBCMD_OCB_SET_UTC_TIME = 93,
@@ -579,6 +583,90 @@ enum qca_vendor_attr_txpower_decr_db {
 	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_MAX =
 	QCA_WLAN_VENDOR_ATTR_TXPOWER_DECR_DB_AFTER_LAST - 1
+};
+
+/* Attributes for data used by
+ * QCA_NL80211_VENDOR_SUBCMD_SET_WIFI_CONFIGURATION and
+ * QCA_NL80211_VENDOR_SUBCMD_GET_WIFI_CONFIGURATION subcommands.
+ */
+enum qca_wlan_vendor_attr_config {
+	QCA_WLAN_VENDOR_ATTR_CONFIG_INVALID,
+	/* Unsigned 32-bit value to set the DTIM period.
+	 * Whether the wifi chipset wakes at every dtim beacon or a multiple of
+	 * the DTIM period. If DTIM is set to 3, the STA shall wake up every 3
+	 * DTIM beacons.
+	 */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_DYNAMIC_DTIM,
+	/* Unsigned 32-bit value to set the wifi_iface stats averaging factor
+	 * used to calculate statistics like average the TSF offset or average
+	 * number of frame leaked.
+	 * For instance, upon Beacon frame reception:
+	 * current_avg = ((beacon_TSF - TBTT) * factor + previous_avg * (0x10000 - factor) ) / 0x10000
+	 * For instance, when evaluating leaky APs:
+	 * current_avg = ((num frame received within guard time) * factor + previous_avg * (0x10000 - factor)) / 0x10000
+	 */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_STATS_AVG_FACTOR,
+	/* Unsigned 32-bit value to configure guard time, i.e., when
+	 * implementing IEEE power management based on frame control PM bit, how
+	 * long the driver waits before shutting down the radio and after
+	 * receiving an ACK frame for a Data frame with PM bit set.
+	 */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_GUARD_TIME,
+	/* Unsigned 32-bit value to change the FTM capability dynamically */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_FINE_TIME_MEASUREMENT,
+	/* Unsigned 16-bit value to configure maximum TX rate dynamically */
+	QCA_WLAN_VENDOR_ATTR_CONF_TX_RATE,
+	/* Unsigned 32-bit value to configure the number of continuous
+	 * Beacon Miss which shall be used by the firmware to penalize
+	 * the RSSI.
+	 */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_PENALIZE_AFTER_NCONS_BEACON_MISS,
+	/* Unsigned 8-bit value to configure the channel avoidance indication
+	 * behavior. Firmware to send only one indication and ignore duplicate
+	 * indications when set to avoid multiple Apps wakeups.
+	 */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_CHANNEL_AVOIDANCE_IND,
+	/* 8-bit unsigned value to configure the maximum TX MPDU for
+	 * aggregation. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_TX_MPDU_AGGREGATION,
+	/* 8-bit unsigned value to configure the maximum RX MPDU for
+	 * aggregation. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_RX_MPDU_AGGREGATION,
+	/* 8-bit unsigned value to configure the Non aggregrate/11g sw
+	 * retry threshold (0 disable, 31 max). */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_NON_AGG_RETRY,
+	/* 8-bit unsigned value to configure the aggregrate sw
+	 * retry threshold (0 disable, 31 max). */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_AGG_RETRY,
+	/* 8-bit unsigned value to configure the MGMT frame
+	 * retry threshold (0 disable, 31 max). */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_MGMT_RETRY,
+	/* 8-bit unsigned value to configure the CTRL frame
+	 * retry threshold (0 disable, 31 max). */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_CTRL_RETRY,
+	/* 8-bit unsigned value to configure the propagation delay for
+	 * 2G/5G band (0~63, units in us) */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_PROPAGATION_DELAY,
+	/* Unsigned 32-bit value to configure the number of unicast TX fail
+	 * packet count. The peer is disconnected once this threshold is
+	 * reached. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_TX_FAIL_COUNT,
+	/* Attribute used to set scan default IEs to the driver.
+	 *
+	 * These IEs can be used by scan operations that will be initiated by
+	 * the driver/firmware.
+	 *
+	 * For further scan requests coming to the driver, these IEs should be
+	 * merged with the IEs received along with scan request coming to the
+	 * driver. If a particular IE is present in the scan default IEs but not
+	 * present in the scan request, then that IE should be added to the IEs
+	 * sent in the Probe Request frames for that scan request. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_SCAN_DEFAULT_IES,
+
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_CONFIG_MAX =
+	QCA_WLAN_VENDOR_ATTR_CONFIG_AFTER_LAST - 1,
 };
 
 /**
