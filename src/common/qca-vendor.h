@@ -115,6 +115,73 @@ enum qca_radiotap_vendor_ids {
  *	indicated through an event using the same sub command through
  *	@QCA_WLAN_VENDOR_ATTR_SAP_CONDITIONAL_CHAN_SWITCH_STATUS. Attributes are
  *	listed in qca_wlan_vendor_attr_sap_conditional_chan_switch.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_GPIO_CONFIG_COMMAND: Set GPIO pins. This uses the
+ *	attributes defined in enum qca_wlan_gpio_attr.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_GET_HW_CAPABILITY: Fetch hardware capabilities.
+ *	This uses @QCA_WLAN_VENDOR_ATTR_GET_HW_CAPABILITY to indicate which
+ *	capabilities are to be fetched and other
+ *	enum qca_wlan_vendor_attr_get_hw_capability attributes to return the
+ *	requested capabilities.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_LL_STATS_EXT: Link layer statistics extension.
+ *	enum qca_wlan_vendor_attr_ll_stats_ext attributes are used with this
+ *	command and event.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_LOC_GET_CAPA: Get capabilities for
+ *	indoor location features. Capabilities are reported in
+ *	QCA_WLAN_VENDOR_ATTR_LOC_CAPA.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_FTM_START_SESSION: Start an FTM
+ *	(fine timing measurement) session with one or more peers.
+ *	Specify Session cookie in QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE and
+ *	peer information in QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS.
+ *	On success, 0 or more QCA_NL80211_VENDOR_SUBCMD_FTM_MEAS_RESULT
+ *	events will be reported, followed by
+ *	QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE event to indicate
+ *	end of session.
+ *	Refer to IEEE P802.11-REVmc/D7.0, 11.24.6
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_FTM_ABORT_SESSION: Abort a running session.
+ *	A QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE will be reported with
+ *	status code indicating session was aborted.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_FTM_MEAS_RESULT: Event with measurement
+ *	results for one peer. Results are reported in
+ *	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEER_RESULTS.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE: Event triggered when
+ *	FTM session is finished, either successfully or aborted by
+ *	request.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_FTM_CFG_RESPONDER: Configure FTM responder
+ *	mode. QCA_WLAN_VENDOR_ATTR_FTM_RESPONDER_ENABLE specifies whether
+ *	to enable or disable the responder. LCI/LCR reports can be
+ *	configured with QCA_WLAN_VENDOR_ATTR_FTM_LCI and
+ *	QCA_WLAN_VENDOR_ATTR_FTM_LCR. Can be called multiple
+ *	times to update the LCI/LCR reports.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS: Perform a standalone AOA (angle of
+ *	arrival) measurement with a single peer. Specify peer MAC address in
+ *	QCA_WLAN_VENDOR_ATTR_MAC_ADDR and measurement type in
+ *	QCA_WLAN_VENDOR_ATTR_AOA_TYPE. Measurement result is reported in
+ *	QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS_RESULT event.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_AOA_ABORT_MEAS: Abort an AOA measurement. Specify
+ *	peer MAC address in QCA_WLAN_VENDOR_ATTR_MAC_ADDR.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS_RESULT: Event that reports
+ *	the AOA measurement result.
+ *	Peer MAC address reported in QCA_WLAN_VENDOR_ATTR_MAC_ADDR.
+ *	success/failure status is reported in
+ *	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS.
+ *	Measurement data is reported in QCA_WLAN_VENDOR_ATTR_AOA_MEAS_RESULT.
+ *	The antenna array(s) used in the measurement are reported in
+ *	QCA_WLAN_VENDOR_ATTR_LOC_ANTENNA_ARRAY_MASK.
+ *
+ * @QCA_NL80211_VENDOR_SUBCMD_ENCRYPTION_TEST: Encrypt/decrypt the given
+ *	data as per the given parameters.
  */
 enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_UNSPEC = 0,
@@ -200,6 +267,20 @@ enum qca_nl80211_vendor_subcmds {
 	QCA_NL80211_VENDOR_SUBCMD_P2P_LISTEN_OFFLOAD_START = 122,
 	QCA_NL80211_VENDOR_SUBCMD_P2P_LISTEN_OFFLOAD_STOP = 123,
 	QCA_NL80211_VENDOR_SUBCMD_SAP_CONDITIONAL_CHAN_SWITCH = 124,
+	QCA_NL80211_VENDOR_SUBCMD_GPIO_CONFIG_COMMAND = 125,
+	QCA_NL80211_VENDOR_SUBCMD_GET_HW_CAPABILITY = 126,
+	QCA_NL80211_VENDOR_SUBCMD_LL_STATS_EXT = 127,
+	/* FTM/indoor location subcommands */
+	QCA_NL80211_VENDOR_SUBCMD_LOC_GET_CAPA = 128,
+	QCA_NL80211_VENDOR_SUBCMD_FTM_START_SESSION = 129,
+	QCA_NL80211_VENDOR_SUBCMD_FTM_ABORT_SESSION = 130,
+	QCA_NL80211_VENDOR_SUBCMD_FTM_MEAS_RESULT = 131,
+	QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE = 132,
+	QCA_NL80211_VENDOR_SUBCMD_FTM_CFG_RESPONDER = 133,
+	QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS = 134,
+	QCA_NL80211_VENDOR_SUBCMD_AOA_ABORT_MEAS = 135,
+	QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS_RESULT = 136,
+	QCA_NL80211_VENDOR_SUBCMD_ENCRYPTION_TEST = 137,
 };
 
 
@@ -229,6 +310,77 @@ enum qca_wlan_vendor_attr {
 	QCA_WLAN_VENDOR_ATTR_MAX_CONCURRENT_CHANNELS_5_0_BAND = 11,
 	/* Unsigned 32-bit value from enum qca_set_band. */
 	QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE = 12,
+	/* Dummy (NOP) attribute for 64 bit padding */
+	QCA_WLAN_VENDOR_ATTR_PAD = 13,
+	/* Unique FTM session cookie (Unsigned 64 bit). Specified in
+	 * QCA_NL80211_VENDOR_SUBCMD_FTM_START_SESSION. Reported in
+	 * the session in QCA_NL80211_VENDOR_SUBCMD_FTM_MEAS_RESULT and
+	 * QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_SESSION_COOKIE = 14,
+	/* Indoor location capabilities, returned by
+	 * QCA_NL80211_VENDOR_SUBCMD_LOC_GET_CAPA.
+	 * see enum qca_wlan_vendor_attr_loc_capa.
+	 */
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA = 15,
+	/* Array of nested attributes containing information about each peer
+	 * in FTM measurement session. See enum qca_wlan_vendor_attr_peer_info
+	 * for supported attributes for each peer.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEERS = 16,
+	/* Array of nested attributes containing measurement results for
+	 * one or more peers, reported by the
+	 * QCA_NL80211_VENDOR_SUBCMD_FTM_MEAS_RESULT event.
+	 * See enum qca_wlan_vendor_attr_peer_result for list of supported
+	 * attributes.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PEER_RESULTS = 17,
+	/* Flag attribute for enabling or disabling responder functionality. */
+	QCA_WLAN_VENDOR_ATTR_FTM_RESPONDER_ENABLE = 18,
+	/* Used in the QCA_NL80211_VENDOR_SUBCMD_FTM_CFG_RESPONDER
+	 * command to specify the LCI report that will be sent by
+	 * the responder during a measurement exchange. The format is
+	 * defined in IEEE P802.11-REVmc/D7.0, 9.4.2.22.10.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_LCI = 19,
+	/* Used in the QCA_NL80211_VENDOR_SUBCMD_FTM_CFG_RESPONDER
+	 * command to specify the location civic report that will
+	 * be sent by the responder during a measurement exchange.
+	 * The format is defined in IEEE P802.11-REVmc/D7.0, 9.4.2.22.13.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_LCR = 20,
+	/* Session/measurement completion status code,
+	 * reported in QCA_NL80211_VENDOR_SUBCMD_FTM_SESSION_DONE and
+	 * QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS_RESULT
+	 * see enum qca_vendor_attr_loc_session_status.
+	 */
+	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS = 21,
+	/* Initial dialog token used by responder (0 if not specified),
+	 * unsigned 8 bit value.
+	 */
+	QCA_WLAN_VENDOR_ATTR_FTM_INITIAL_TOKEN = 22,
+	/* AOA measurement type. Requested in QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS
+	 * and optionally in QCA_NL80211_VENDOR_SUBCMD_FTM_START_SESSION if
+	 * AOA measurements are needed as part of an FTM session.
+	 * Reported by QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS_RESULT. See
+	 * enum qca_wlan_vendor_attr_aoa_type.
+	 */
+	QCA_WLAN_VENDOR_ATTR_AOA_TYPE = 23,
+	/* A bit mask (unsigned 32 bit value) of antenna arrays used
+	 * by indoor location measurements. Refers to the antenna
+	 * arrays described by QCA_VENDOR_ATTR_LOC_CAPA_ANTENNA_ARRAYS.
+	 */
+	QCA_WLAN_VENDOR_ATTR_LOC_ANTENNA_ARRAY_MASK = 24,
+	/* AOA measurement data. Its contents depends on the AOA measurement
+	 * type and antenna array mask:
+	 * QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE: array of U16 values,
+	 * phase of the strongest CIR path for each antenna in the measured
+	 * array(s).
+	 * QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE_AMP: array of 2 U16
+	 * values, phase and amplitude of the strongest CIR path for each
+	 * antenna in the measured array(s).
+	 */
+	QCA_WLAN_VENDOR_ATTR_AOA_MEAS_RESULT = 25,
 	/* keep last */
 	QCA_WLAN_VENDOR_ATTR_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_MAX	= QCA_WLAN_VENDOR_ATTR_AFTER_LAST - 1,
@@ -706,6 +858,443 @@ enum qca_wlan_vendor_attr_sap_conditional_chan_switch {
 	QCA_WLAN_VENDOR_ATTR_SAP_CONDITIONAL_CHAN_SWITCH_AFTER_LAST,
 	QCA_WLAN_VENDOR_ATTR_SAP_CONDITIONAL_CHAN_SWITCH_MAX =
 	QCA_WLAN_VENDOR_ATTR_SAP_CONDITIONAL_CHAN_SWITCH_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_gpio_attr - Parameters for GPIO configuration
+ */
+enum qca_wlan_gpio_attr {
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_INVALID = 0,
+	/* Unsigned 32-bit attribute for GPIO command */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_COMMAND,
+	/* Unsigned 32-bit attribute for GPIO PIN number to configure */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_PINNUM,
+	/* Unsigned 32-bit attribute for GPIO value to configure */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_VALUE,
+	/* Unsigned 32-bit attribute for GPIO pull type */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_PULL_TYPE,
+	/* Unsigned 32-bit attribute for GPIO interrupt mode */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_INTR_MODE,
+
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_LAST,
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_MAX =
+	QCA_WLAN_VENDOR_ATTR_GPIO_PARAM_LAST - 1
+};
+
+/**
+ * enum qca_wlan_vendor_attr_get_hw_capability - Wi-Fi hardware capability
+ */
+enum qca_wlan_vendor_attr_get_hw_capability {
+	QCA_WLAN_VENDOR_ATTR_HW_CAPABILITY_INVALID,
+	/* Antenna isolation
+	 * An attribute used in the response.
+	 * The content of this attribute is encoded in a byte array. Each byte
+	 * value is an antenna isolation value. The array length is the number
+	 * of antennas.
+	 */
+	QCA_WLAN_VENDOR_ATTR_ANTENNA_ISOLATION,
+	/* Request HW capability
+	 * An attribute used in the request.
+	 * The content of this attribute is a u32 array for one or more of
+	 * hardware capabilities (attribute IDs) that are being requested. Each
+	 * u32 value has a value from this
+	 * enum qca_wlan_vendor_attr_get_hw_capability
+	 * identifying which capabilities are requested.
+	 */
+	QCA_WLAN_VENDOR_ATTR_GET_HW_CAPABILITY,
+
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_HW_CAPABILITY_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_HW_CAPABILITY_MAX =
+	QCA_WLAN_VENDOR_ATTR_HW_CAPABILITY_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ll_stats_ext - Attributes for MAC layer monitoring
+ *    offload which is an extension for LL_STATS.
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_CFG_PERIOD: Monitoring period. Unit in ms.
+ *    If MAC counters do not exceed the threshold, FW will report monitored
+ *    link layer counters periodically as this setting. The first report is
+ *    always triggered by this timer.
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_CFG_THRESHOLD: It is a percentage (1-99).
+ *    For each MAC layer counter, FW holds two copies. One is the current value.
+ *    The other is the last report. Once a current counter's increment is larger
+ *    than the threshold, FW will indicate that counter to host even if the
+ *    monitoring timer does not expire.
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_PEER_PS_CHG: Peer STA power state change
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_TID: TID of MSDU
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_NUM_MSDU: Count of MSDU with the same
+ *    failure code.
+ * @QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_TX_STATUS: TX failure code
+ *    1: TX packet discarded
+ *    2: No ACK
+ *    3: Postpone
+ */
+enum qca_wlan_vendor_attr_ll_stats_ext {
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_INVALID = 0,
+
+	/* Attributes for configurations */
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_CFG_PERIOD,
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_CFG_THRESHOLD,
+
+	/* Attributes for events */
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_PEER_PS_CHG,
+
+	/* TX failure event */
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_TID,
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_NUM_MSDU,
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_TX_STATUS,
+
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_LAST,
+	QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_MAX =
+		QCA_WLAN_VENDOR_ATTR_LL_STATS_EXT_LAST - 1
+};
+
+/* Attributes for FTM commands and events */
+
+/**
+ * enum qca_wlan_vendor_attr_loc_capa - Indoor location capabilities
+ *
+ * @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAGS: Various flags. See
+ *	enum qca_wlan_vendor_attr_loc_capa_flags.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_SESSIONS: Maximum number
+ *	of measurement sessions that can run concurrently.
+ *	Default is one session (no session concurrency).
+ * @QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_PEERS: The total number of unique
+ *	peers that are supported in running sessions. For example,
+ *	if the value is 8 and maximum number of sessions is 2, you can
+ *	have one session with 8 unique peers, or 2 sessions with 4 unique
+ *	peers each, and so on.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_BURSTS_EXP: Maximum number
+ *	of bursts per peer, as an exponent (2^value). Default is 0,
+ *	meaning no multi-burst support.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_MEAS_PER_BURST: Maximum number
+ *	of measurement exchanges allowed in a single burst.
+ * @QCA_WLAN_VENDOR_ATTR_AOA_CAPA_SUPPORTED_TYPES: Supported AOA measurement
+ *	types. A bit mask (unsigned 32 bit value), each bit corresponds
+ *	to an AOA type as defined by enum qca_vendor_attr_aoa_type.
+ */
+enum qca_wlan_vendor_attr_loc_capa {
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_INVALID,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAGS,
+	QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_SESSIONS,
+	QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_PEERS,
+	QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_NUM_BURSTS_EXP,
+	QCA_WLAN_VENDOR_ATTR_FTM_CAPA_MAX_MEAS_PER_BURST,
+	QCA_WLAN_VENDOR_ATTR_AOA_CAPA_SUPPORTED_TYPES,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_MAX =
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_loc_capa_flags: Indoor location capability flags
+ *
+ * @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_RESPONDER: Set if driver
+ *	can be configured as an FTM responder (for example, an AP that
+ *	services FTM requests). QCA_NL80211_VENDOR_SUBCMD_FTM_CFG_RESPONDER
+ *	will be supported if set.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_INITIATOR: Set if driver
+ *	can run FTM sessions. QCA_NL80211_VENDOR_SUBCMD_FTM_START_SESSION
+ *	will be supported if set.
+* @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_ASAP: Set if FTM responder
+ *	supports immediate (ASAP) response.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_AOA: Set if driver supports standalone
+ *	AOA measurement using QCA_NL80211_VENDOR_SUBCMD_AOA_MEAS.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_AOA_IN_FTM: Set if driver supports
+ *	requesting AOA measurements as part of an FTM session.
+ */
+enum qca_wlan_vendor_attr_loc_capa_flags {
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_RESPONDER = 1 << 0,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_FTM_INITIATOR = 1 << 1,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_ASAP = 1 << 2,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_AOA = 1 << 3,
+	QCA_WLAN_VENDOR_ATTR_LOC_CAPA_FLAG_AOA_IN_FTM = 1 << 4,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_peer_info: Information about
+ *	a single peer in a measurement session.
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR: The MAC address of the peer.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAGS: Various flags related
+ *	to measurement. See enum qca_wlan_vendor_attr_ftm_peer_meas_flags.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_PARAMS: Nested attribute of
+ *	FTM measurement parameters, as specified by IEEE P802.11-REVmc/D7.0
+ *	9.4.2.167. See enum qca_wlan_vendor_attr_ftm_meas_param for
+ *	list of supported attributes.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID: Initial token ID for
+ *	secure measurement.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_AOA_BURST_PERIOD: Request AOA
+ *	measurement every <value> bursts. If 0 or not specified,
+ *	AOA measurements will be disabled for this peer.
+ */
+enum qca_wlan_vendor_attr_ftm_peer_info {
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_INVALID,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAC_ADDR,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAGS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_PARAMS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_AOA_BURST_PERIOD,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MAX =
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_peer_meas_flags: Measurement request flags,
+ *	per-peer
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_ASAP: If set, request
+ *	immediate (ASAP) response from peer.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCI: If set, request
+ *	LCI report from peer. The LCI report includes the absolute
+ *	location of the peer in "official" coordinates (similar to GPS).
+ *	See IEEE P802.11-REVmc/D7.0, 11.24.6.7 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCR: If set, request
+ *	Location civic report from peer. The LCR includes the location
+ *	of the peer in free-form format. See IEEE P802.11-REVmc/D7.0,
+ *	11.24.6.7 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_SECURE: If set,
+ *	request a secure measurement.
+ *	QCA_WLAN_VENDOR_ATTR_FTM_PEER_SECURE_TOKEN_ID must also be provided.
+ */
+enum qca_wlan_vendor_attr_ftm_peer_meas_flags {
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_ASAP	= 1 << 0,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCI	= 1 << 1,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_LCR	= 1 << 2,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_MEAS_FLAG_SECURE	= 1 << 3,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_meas_param: Measurement parameters
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST: Number of measurements
+ *	to perform in a single burst.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP: Number of bursts to
+ *	perform, specified as an exponent (2^value).
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION: Duration of burst
+ *	instance, as specified in IEEE P802.11-REVmc/D7.0, 9.4.2.167.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD: Time between bursts,
+ *	as specified in IEEE P802.11-REVmc/D7.0, 9.4.2.167. Must
+ *	be larger than QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION.
+ */
+enum qca_wlan_vendor_attr_ftm_meas_param {
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_INVALID,
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MEAS_PER_BURST,
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_NUM_BURSTS_EXP,
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_DURATION,
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_BURST_PERIOD,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_MAX =
+	QCA_WLAN_VENDOR_ATTR_FTM_PARAM_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_peer_result: Per-peer results
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MAC_ADDR: MAC address of the reported
+ *	 peer.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS: Status of measurement
+ *	request for this peer.
+ *	See enum qca_wlan_vendor_attr_ftm_peer_result_status.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_FLAGS: Various flags related
+ *	to measurement results for this peer.
+ *	See enum qca_wlan_vendor_attr_ftm_peer_result_flags.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_VALUE_SECONDS: Specified when
+ *	request failed and peer requested not to send an additional request
+ *	for this number of seconds.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_LCI: LCI report when received
+ *	from peer. In the format specified by IEEE P802.11-REVmc/D7.0,
+ *	9.4.2.22.10.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_LCR: Location civic report when
+ *	received from peer. In the format specified by IEEE P802.11-REVmc/D7.0,
+ *	9.4.2.22.13.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS_PARAMS: Reported when peer
+ *	overridden some measurement request parameters. See
+ *	enum qca_wlan_vendor_attr_ftm_meas_param.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_AOA_MEAS: AOA measurement
+ *	for this peer. Same contents as @QCA_WLAN_VENDOR_ATTR_AOA_MEAS_RESULT.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS: Array of measurement
+ *	results. Each entry is a nested attribute defined
+ *	by enum qca_wlan_vendor_attr_ftm_meas.
+ */
+enum qca_wlan_vendor_attr_ftm_peer_result {
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_INVALID,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MAC_ADDR,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_FLAGS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_VALUE_SECONDS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_LCI,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_LCR,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS_PARAMS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_AOA_MEAS,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MAX =
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_peer_result_status
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_OK: Request sent ok and results
+ *	will be provided. Peer may have overridden some measurement parameters,
+ *	in which case overridden parameters will be report by
+ *	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_MEAS_PARAM attribute.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INCAPABLE: Peer is incapable
+ *	of performing the measurement request. No more results will be sent
+ *	for this peer in this session.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_FAILED: Peer reported request
+ *	failed, and requested not to send an additional request for number
+ *	of seconds specified by QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_VALUE_SECONDS
+ *	attribute.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INVALID: Request validation
+ *	failed. Request was not sent over the air.
+ */
+enum qca_wlan_vendor_attr_ftm_peer_result_status {
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_OK,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INCAPABLE,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_FAILED,
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_STATUS_INVALID,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_peer_result_flags: Various flags
+ *  for measurement result, per-peer
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_FLAG_DONE: If set,
+ *	measurement completed for this peer. No more results will be reported
+ *	for this peer in this session.
+ */
+enum qca_wlan_vendor_attr_ftm_peer_result_flags {
+	QCA_WLAN_VENDOR_ATTR_FTM_PEER_RES_FLAG_DONE = 1 << 0,
+};
+
+/**
+ * enum qca_vendor_attr_loc_session_status: Session completion status code
+ *
+ * @QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_OK: Session completed
+ *	successfully.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_ABORTED: Session aborted
+ *	by request.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_INVALID: Session request
+ *	was invalid and was not started.
+ * @QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_FAILED: Session had an error
+ *	and did not complete normally (for example out of resources).
+ */
+enum qca_vendor_attr_loc_session_status {
+	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_OK,
+	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_ABORTED,
+	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_INVALID,
+	QCA_WLAN_VENDOR_ATTR_LOC_SESSION_STATUS_FAILED,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_ftm_meas: Single measurement data
+ *
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T1: Time of departure (TOD) of FTM packet as
+ *	recorded by responder, in picoseconds.
+ *	See IEEE P802.11-REVmc/D7.0, 11.24.6.4 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T2: Time of arrival (TOA) of FTM packet at
+ *	initiator, in picoseconds.
+ *	See IEEE P802.11-REVmc/D7.0, 11.24.6.4 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T3: TOD of ACK packet as recorded by
+ *	initiator, in picoseconds.
+ *	See IEEE P802.11-REVmc/D7.0, 11.24.6.4 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T4: TOA of ACK packet at
+ *	responder, in picoseconds.
+ *	See IEEE P802.11-REVmc/D7.0, 11.24.6.4 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_RSSI: RSSI (signal level) as recorded
+ *	during this measurement exchange. Optional and will be provided if
+ *	the hardware can measure it.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_TOD_ERR: TOD error reported by
+ *	responder. Not always provided.
+ *	See IEEE P802.11-REVmc/D7.0, 9.6.8.33 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_TOA_ERR: TOA error reported by
+ *	responder. Not always provided.
+ *	See IEEE P802.11-REVmc/D7.0, 9.6.8.33 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_INITIATOR_TOD_ERR: TOD error measured by
+ *	initiator. Not always provided.
+ *	See IEEE P802.11-REVmc/D7.0, 9.6.8.33 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_INITIATOR_TOA_ERR: TOA error measured by
+ *	initiator. Not always provided.
+ *	See IEEE P802.11-REVmc/D7.0, 9.6.8.33 for more information.
+ * @QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PAD: Dummy attribute for padding.
+ */
+enum qca_wlan_vendor_attr_ftm_meas {
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_INVALID,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T1,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T2,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T3,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_T4,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_RSSI,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_TOD_ERR,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_TOA_ERR,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_INITIATOR_TOD_ERR,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_INITIATOR_TOA_ERR,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_PAD,
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_MAX =
+	QCA_WLAN_VENDOR_ATTR_FTM_MEAS_AFTER_LAST - 1,
+};
+
+/**
+ * enum qca_wlan_vendor_attr_aoa_type - AOA measurement type
+ *
+ * @QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE: Phase of the strongest
+ *	CIR (channel impulse response) path for each antenna.
+ * @QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE_AMP: Phase and amplitude
+ *	of the strongest CIR path for each antenna.
+ */
+enum qca_wlan_vendor_attr_aoa_type {
+	QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE,
+	QCA_WLAN_VENDOR_ATTR_AOA_TYPE_TOP_CIR_PHASE_AMP,
+	QCA_WLAN_VENDOR_ATTR_AOA_TYPE_MAX
+};
+
+/**
+ * enum qca_wlan_vendor_attr_encryption_test - Attributes to
+ * validate encryption engine
+ *
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_NEEDS_DECRYPTION: Flag attribute.
+ *	This will be included if the request is for decryption; if not included,
+ *	the request is treated as a request for encryption by default.
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_CIPHER: Unsigned 32-bit value
+ *	indicating the key cipher suite. Takes same values as
+ *	NL80211_ATTR_KEY_CIPHER.
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_KEYID: Unsigned 8-bit value
+ *	Key Id to be used for encryption
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_TK: Array of 8-bit values.
+ *	Key (TK) to be used for encryption/decryption
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_PN: Array of 8-bit values.
+ *	Packet number to be specified for encryption/decryption
+ *	6 bytes for TKIP/CCMP/GCMP.
+ * @QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_DATA: Array of 8-bit values
+ *	representing the 802.11 packet (header + payload + FCS) that
+ *	needs to be encrypted/decrypted.
+ *	Encrypted/decrypted response from the driver will also be sent
+ *	to userspace with the same attribute.
+ */
+enum qca_wlan_vendor_attr_encryption_test {
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_INVALID = 0,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_NEEDS_DECRYPTION,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_CIPHER,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_KEYID,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_TK,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_PN,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_DATA,
+
+	/* keep last */
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_AFTER_LAST,
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_MAX =
+	QCA_WLAN_VENDOR_ATTR_ENCRYPTION_TEST_AFTER_LAST - 1
 };
 
 #endif /* QCA_VENDOR_H */
