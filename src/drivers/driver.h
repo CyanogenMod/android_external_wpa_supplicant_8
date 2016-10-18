@@ -3578,6 +3578,23 @@ struct wpa_driver_ops {
 	 * Returns: 0 on success or -1 on failure
 	 */
 	int (*p2p_lo_stop)(void *priv);
+
+	/**
+	 * set_default_scan_ies - Set default scan IEs
+	 * @priv: Private driver interface data
+	 * @ies: Scan default IEs buffer
+	 * @ies_len: Length of IEs in bytes
+	 * Returns: 0 on success or -1 on failure
+	 *
+	 * The driver can use these by default when there are no scan IEs coming
+	 * in the subsequent scan requests. Also in case of one or more of IEs
+	 * given in set_default_scan_ies() are missing in the subsequent scan
+	 * request, the driver should merge the missing scan IEs in the scan
+	 * request from the IEs set by set_default_scan_ies() in the Probe
+	 * Request frames sent.
+	 */
+	int (*set_default_scan_ies)(void *priv, const u8 *ies, size_t ies_len);
+
 };
 
 
@@ -4452,6 +4469,12 @@ union wpa_event_data {
 		 * status_code - Status Code from (Re)association Response
 		 */
 		u16 status_code;
+
+		/**
+		 * timed_out - Whether failure is due to timeout (etc.) rather
+		 * than explicit rejection response from the AP.
+		 */
+		int timed_out;
 	} assoc_reject;
 
 	struct timeout_event {
