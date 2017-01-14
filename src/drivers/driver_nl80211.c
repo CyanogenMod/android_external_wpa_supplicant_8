@@ -709,7 +709,7 @@ static int send_and_recv_msgs_global(struct nl80211_global *global,
 }
 
 
-static int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
+extern int send_and_recv_msgs(struct wpa_driver_nl80211_data *drv,
 			      struct nl_msg *msg,
 			      int (*valid_handler)(struct nl_msg *, void *),
 			      void *valid_data)
